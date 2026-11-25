@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+/* Bundled card fonts (same files satori uses for the PNG cards). Real Comic
+   Sans wins in the stack when the visitor's OS ships it. */
+@font-face {
+  font-family: "Bangers";
+  src: url("../../core/images/fonts/Bangers-Regular.ttf") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Comic Neue";
+  src: url("../../core/images/fonts/ComicNeue-Regular.ttf") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Comic Neue";
+  src: url("../../core/images/fonts/ComicNeue-Bold.ttf") format("truetype");
+  font-weight: 700;
+}
+
+/* Palette lifted from src/core/images: ivory panels, vibrant gradient bg,
+   thick black borders, hard offset shadows. */
+@theme {
+  --color-ink: #1c1917;
+  --color-ink-soft: #6d6353;
+  --color-paper: #fffbef;
+  --color-paper-dim: #efe7d2;
+  --color-accent: #ff6b35;
+  --color-sun: #ffd23f;
+  --font-comic: "Comic Sans MS", "Comic Sans", "Comic Neue", cursive;
+  --font-display: "Bangers", "Comic Sans MS", cursive;
+}
+
+:root {
+  color-scheme: light;
+  /* Random vibrant hue per page load, set in main.tsx (mirrors randomVibrantPair). */
+  --hue: 210;
+  /* Contrast-checked text/outline colors for copy sitting directly on the
+     gradient — main.tsx picks white-on-dark or ink-on-light per hue. */
+  --on-bg-text: #fff;
+  --on-bg-outline: #000;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-comic);
+  color: var(--color-ink);
+  background-color: hsl(var(--hue) 90% 62%);
+  /* Diagonal comic stripes over the two-tone gradient, like ComicBackground. */
+  background-image: repeating-linear-gradient(
+      45deg,
+      rgb(0 0 0 / 0.08) 0px,
+      rgb(0 0 0 / 0.08) 16px,
+      rgb(0 0 0 / 0) 16px,
+      rgb(0 0 0 / 0) 32px
+    ),
+    linear-gradient(
+      135deg,
+      hsl(var(--hue) 90% 62%),
+      hsl(calc(var(--hue) + 45) 90% 52%)
+    );
+  background-attachment: fixed;
+}
+
+/* Ivory comic panel: Panel() from comic-bg.tsx. */
+.comic-panel {
+  background: var(--color-paper);
+  border: 4px solid #000;
+  border-radius: 16px;
+  box-shadow: 6px 6px 0 rgb(0 0 0 / 0.55);
+}
+
+/* Bangers headline with a faked black outline (layered text-shadow — reliable
+   where -webkit-text-stroke + paint-order isn't). */
+.comic-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--color-sun);
+  text-shadow:
+    -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000,
+    0 -2px 0 #000, 0 2px 0 #000, -2px 0 0 #000, 2px 0 0 #000,
+    4px 4px 0 #000;
+}
+
+.tilt {
+  transform: rotate(-2deg);
+}
+
+/* Body copy sitting directly on the vibrant gradient (outside any panel):
+   contrast-picked color with a thin opposite outline so it reads on any hue. */
+.on-bg {
+  color: var(--on-bg-text);
+  font-weight: 700;
+  text-shadow:
+    1.5px 1.5px 0 var(--on-bg-outline), -1px -1px 0 var(--on-bg-outline),
+    1px -1px 0 var(--on-bg-outline), -1px 1px 0 var(--on-bg-outline),
+    0 1.5px 0 var(--on-bg-outline), 1.5px 0 0 var(--on-bg-outline);
+}
+
+/* Subtitles / secondary copy on the gradient (used to be text-ink-soft on the
+   bg): contrast-checked color plus a hairline opposite outline — mid-luminance
+   hues can't reach readable contrast with any single solid color because the
+   gradient spans a light and a dark stop at once. */
+.on-bg-soft {
+  color: var(--on-bg-text);
+  font-weight: 700;
+  text-shadow:
+    1px 1px 0 var(--on-bg-outline), -1px -1px 0 var(--on-bg-outline),
+    1px -1px 0 var(--on-bg-outline), -1px 1px 0 var(--on-bg-outline);
+}
+
+.comic-btn {
+  font-family: var(--font-comic);
+  font-weight: 700;
+  color: #000;
+  background: var(--color-sun);
+  border: 3px solid #000;
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 #000;
+  cursor: pointer;
+  transition: transform 0.05s, box-shadow 0.05s;
+}
+.comic-btn:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: #fff;
+}
+.comic-btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 #000;
+}
+.comic-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.comic-btn--ghost {
+  background: var(--color-paper);
+}
+.comic-btn--ghost:hover:not(:disabled) {
+  background: var(--color-paper-dim);
+  color: #000;
+}
+
+.comic-input {
+  font-family: var(--font-comic);
+  color: var(--color-ink);
+  background: #fff;
+  border: 3px solid #000;
+  border-radius: 8px;
+}
+.comic-input:focus {
+  outline: none;
+  box-shadow: 3px 3px 0 var(--color-accent);
+}

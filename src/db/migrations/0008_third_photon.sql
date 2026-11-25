@@ -1,0 +1,1 @@
+ALTER TABLE `elections` ADD `voting_starts_at` integer;

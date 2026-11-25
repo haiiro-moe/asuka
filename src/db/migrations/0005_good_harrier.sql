@@ -1,0 +1,1 @@
+ALTER TABLE `guild_config` ADD `club_admin_role_id` text;

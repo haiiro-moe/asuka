@@ -1,0 +1,1 @@
+ALTER TABLE `guild_config` ADD `club_directory_message_id` text;

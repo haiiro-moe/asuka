@@ -1,0 +1,2 @@
+ALTER TABLE `guild_config` ADD `link_fixer_enabled` integer DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `guild_config` ADD `link_fixer_disabled_platforms` text DEFAULT '["youtube"]' NOT NULL;

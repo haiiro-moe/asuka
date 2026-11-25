@@ -1,0 +1,1 @@
+ALTER TABLE `guild_config` ADD `announcement_channel_id` text;
