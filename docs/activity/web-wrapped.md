@@ -157,7 +157,7 @@ true to show:
 | `emoji` | the top three, and how many custom emoji went unused |
 | `channels` | the top five as rank bars; a thread as its name with `thread in #parent` |
 | `rhythm` | the busiest UTC hour as columns, the busiest weekday |
-| `pair` | the best pair (named only because both opted in), replies, voice hours when not null |
+| `pair` | the best pair, replies, voice hours when not null |
 | `club` | the best club, its founder, members and messages |
 | `president` | the president, days, terms, elections, candidates, the mirror bars |
 | `outro` | the server card (`s/:token/card.png`), that the member's own envelope is in their DMs if they opted in, and `/wrapped me` |

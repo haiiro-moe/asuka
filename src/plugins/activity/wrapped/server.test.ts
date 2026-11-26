@@ -90,11 +90,19 @@ test("topChannels lists a thread as its own channel with its parent's name", () 
   ]);
 });
 
-test("bestPair is named only when both members opted in", () => {
+test("bestPair is named whatever the members chose: neither, one or both opted in", () => {
   seed();
-  expect(buildServerWrapped(2026, { names })!.bestPair).toBeNull();
+  const pair = {
+    aId: "u1",
+    aName: "name-u1",
+    bId: "u2",
+    bName: "name-u2",
+    replies: 3,
+    voiceHours: 1,
+  };
+  expect(buildServerWrapped(2026, { names })!.bestPair).toEqual(pair);
   setOptIn("u1", true);
-  expect(buildServerWrapped(2026, { names })!.bestPair).toBeNull();
+  expect(buildServerWrapped(2026, { names })!.bestPair).toEqual(pair);
   setOptIn("u2", true);
   expect(buildServerWrapped(2026, { names })!.bestPair).toEqual({
     aId: "u1",
@@ -208,8 +216,9 @@ test("the public server route returns the snapshot for its token, 404 otherwise,
   const text = await ok.text();
   const body = JSON.parse(text) as { data: { messages: number } };
   expect(body.data.messages).toBe(9);
-  // Nobody opted in: no member id, and nothing from the personal snapshots.
-  for (const id of ["u1", "u2", "u3"]) expect(text).not.toContain(`"${id}"`);
+  // Nobody opted in, yet the best pair is named; no other member id, and nothing from the personal snapshots.
+  expect(text).toContain('"aId":"u1"');
+  expect(text).not.toContain('"u3"');
   expect(text).not.toContain("soulmate");
 
   for (const bad of [token.slice(0, -1), "nope"]) {
@@ -242,7 +251,7 @@ async function processYear(client: ReturnType<typeof fakeClient>["client"]) {
   await waitForWrappedRun();
 }
 
-test("a member who opts out after processing is not named: the public route and the card route drop the pair", async () => {
+test("a member who opts out after processing changes nothing: the public route and the card route still name the pair", async () => {
   seed();
   setOptIn("u1", true);
   setOptIn("u2", true);
@@ -254,23 +263,23 @@ test("a member who opts out after processing is not named: the public route and 
   const route = wrappedRoutes.find((r) => r.path === "/api/activity/wrapped/s/:token")!;
   const card = wrappedRoutes.find((r) => r.path === "/api/activity/wrapped/s/:token/card.png")!;
 
-  // Both still opted in: the pair is served.
+  // Both opted in: the pair is served.
   const named = await (await route.handle(new Request("http://x/"), { ...ctx, params: { token } })).text();
   expect(named).toContain('"aId":"u1"');
   expect(named).toContain("name-u2");
 
   setOptIn("u2", false);
+  setOptIn("u1", false);
   const text = await (await route.handle(new Request("http://x/"), { ...ctx, params: { token } })).text();
-  for (const leak of ['"u1"', '"u2"', "name-u1", "name-u2"]) expect(text).not.toContain(leak);
-  expect((JSON.parse(text) as { data: { bestPair: unknown } }).data.bestPair).toBeNull();
+  expect(text).toBe(named);
+  expect((JSON.parse(text) as { data: { bestPair: { aId: string; bId: string } } }).data.bestPair).toMatchObject({ aId: "u1", bId: "u2" });
 
-  // The card route reads through the same check; its JSON fallback shows it.
+  // The card route reads the same snapshot.
   const render = spyOn(images, "renderWrappedServerCardPng").mockResolvedValue(null);
   try {
-    const fallback = await (await card.handle(new Request("http://x/"), { ...ctx, params: { token } })).text();
+    await card.handle(new Request("http://x/"), { ...ctx, params: { token } });
     expect(render).toHaveBeenCalledTimes(1);
-    expect((render.mock.calls[0]![0] as { bestPair: unknown }).bestPair).toBeNull();
-    for (const leak of ['"u1"', '"u2"', "name-u1", "name-u2"]) expect(fallback).not.toContain(leak);
+    expect((render.mock.calls[0]![0] as { bestPair: { aId: string } }).bestPair.aId).toBe("u1");
   } finally {
     render.mockRestore();
   }

@@ -125,8 +125,8 @@ export interface WrappedTitle {
 
 /**
  * The whole server's year: the public server Wrapped at `/wrapped/s/<token>`.
- * Only three kinds of people are named: the best pair (only when both opted
- * in), the best club's founder and the president.
+ * Only three kinds of people are named: the best pair, the best club's
+ * founder and the president.
  */
 export interface ServerWrapped {
   /** The UTC calendar year. */
@@ -155,7 +155,7 @@ export interface ServerWrapped {
   busiestWeekday: string | null;
   /**
    * The pair with the most replies and voice time together (replies only while
-   * voice is not ready, and then `voiceHours` is null); null unless both opted in.
+   * voice is not ready, and then `voiceHours` is null); null when there is no pair.
    */
   bestPair: { aId: string; aName: string | null; bId: string; bName: string | null; replies: number; voiceHours: number | null } | null;
   /** The approved club with the most messages; null when no club wrote anything. */

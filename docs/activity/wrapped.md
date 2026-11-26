@@ -22,8 +22,12 @@ The tables (`activity_wrapped_runs`, `activity_wrapped_links`, `activity_wrapped
   does an admin's resend (`POST .../resend/:userId`), which refuses a member who is not opted in.
 - **A link shows only its holder's snapshot.** It is reusable: opening it counts the open and
   never deletes it. An unknown, truncated or other member's token gets a 404 and no data.
-- **Naming on the server story**: only the best pair (only when both opted in), the best club's
-  founder and the president are named. No member's personal snapshot is part of it.
+- **Opt-in is for DMs only.** It decides whether the bot sends a member their DM and nothing else:
+  everyone is in the data, the stats, the personal links, `/wrapped me` and the server story whether
+  or not they opted in, and nobody can opt out of that. The exclusion list (excluded channels) is
+  the only way to keep anything out of the data.
+- **Naming on the server story**: only the best pair, the best club's
+  founder and the president are named, whoever opted in. No member's personal snapshot is part of it.
 - **Years are UTC calendar years**: from 1 Jan 00:00:00 UTC (inclusive) to the next 1 Jan
   (exclusive). A message at 23:59:59Z on 31 Dec counts for that year.
 - **Threads are channels**: anything ranked by channel groups by the message's own channel. Excluded
@@ -182,7 +186,7 @@ names are stored in the snapshot and the public story never calls Discord. Tests
 | `topEmoji` (3), `unusedCustomEmoji` | text and reactions merged; the guild's custom emoji with no use that year |
 | `topChannels` (5) | by the message's own channel; a thread carries its parent's name |
 | `busiestHour`, `busiestWeekday` | UTC, by messages |
-| `bestPair` | the pair with the highest weight of replies between them (1 each, either way) and voice time together (1 per 10 minutes). The top pair only, and only when both opted in; otherwise null (no runner-up is named instead). Opt-ins are checked again every time the story is served (`getServerWrappedByToken`, used by both public routes): if either member opted out since the snapshot was built, `bestPair` is served as null, without ids or names |
+| `bestPair` | the pair with the highest weight of replies between them (1 each, either way) and voice time together (1 per 10 minutes). The top pair only; null when there is no pair (no runner-up is named instead). Opt-in plays no part: the snapshot is served as stored, so opting in or out later changes nothing (`getServerWrappedByToken`, used by both public routes) |
 | `bestClub` | the approved club with most messages, with its founder's name |
 | `president` | whoever held the chair longest that year: name, terms, days, `serverActivityPercent`, and the elections that started that year with the distinct members who stood |
 
@@ -400,7 +404,7 @@ R-P1..R-P7 in the plan's DECISIONS.md. Code: `wrapped/preview.ts`.
   DMs still cover the sample only.
 - **Opt-ins are ignored** when generating. The status reports `wouldSkip` (processed members not
   opted in) and a per-member flag for the sample; each member preview says "would not be sent: not
-  opted in" when that applies. The best pair is still named only when both opted in.
+  opted in" when that applies. The best pair is named regardless of opt-in.
 - **Delivery.** When processing is done the bot DMs the admin, and only the admin: the intro
   (`wrapped.preview-intro`), then for each sampled member with activity the exact DM they would get
   (`wrapped.dm` with their private link) under a "preview for <name>" label (`wrapped.preview-for` or

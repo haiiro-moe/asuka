@@ -88,7 +88,7 @@ nothing is sent until an admin says so. Use the **data** tab of the diagnostics 
 1. **Process** (`/wrapped start`): builds every member's snapshot and the server's, makes the links.
    Nobody is written to and nothing is announced.
 2. **Send DMs** (`/wrapped send`): DMs each opted-in member their personal link,
-   `/wrapped/<token>`. Members opt in with the sign-up message or `/wrapped optin`.
+   `/wrapped/<token>`. Members opt in with the sign-up message or `/wrapped optin`. Opt-in is for the DM only: everyone is in the data and the server story, and the exclusion list is the only way to keep a channel out.
 3. **Post the announcement** (`/wrapped announce`): posts the public server link,
    `/wrapped/s/<token>`, to the announcement channel.
 

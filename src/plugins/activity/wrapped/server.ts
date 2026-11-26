@@ -2,9 +2,9 @@
  * The server-wide Wrapped: the whole server's year as one public story at
  * `/wrapped/s/<token>`.
  *
- * Only three kinds of people are named in it: the best pair (only when both
- * members opted in to Wrapped), the best club's founder and the president,
- * whose roles are public. Names are resolved when the snapshot is built and
+ * Only three kinds of people are named in it: the best pair, the best club's
+ * founder and the president. The Wrapped DM opt-in plays no part here: it
+ * decides only who is sent a DM, never who is in the data. Names are resolved when the snapshot is built and
  * stored in it, so opening the public story never calls Discord.
  *
  * Every number is aggregated in SQL. See docs/activity/wrapped.md.
@@ -32,7 +32,6 @@ import {
 import type { ClubYearStats, TermInYear } from "./extras.ts";
 import { VOICE_OVERLAP_SECONDS_PER_POINT } from "./data.ts";
 import { newToken } from "./links.ts";
-import { isOptedIn } from "./optin.ts";
 import { getPreviewServerByToken } from "./preview.ts";
 
 /** Weekday names by SQLite `strftime('%w')` (0 = Sunday). */
@@ -52,8 +51,6 @@ export interface ServerWrappedDeps {
   guildEmojiIds?: string[];
   /** Name lookup (default: every name null). */
   names?: ServerNameLookup;
-  /** Opt-in check for the best pair (default: the opt-in table). */
-  isOptedIn?: (userId: string) => boolean;
   /** Whether voice figures may be shown (default: `voiceReadinessForYear(year)`, checked once). */
   voiceReady?: boolean;
   /** Year aggregates already computed by a run. */
@@ -75,8 +72,7 @@ const NO_NAMES: ServerNameLookup = { member: () => null, channel: () => null };
  * - `topChannels` (5): grouped by the message's own channel, so a thread is a
  *   channel of its own and carries its parent's name.
  * - `bestPair`: the two members with the highest weight of replies between
- *   them (1 each) and voice time together (1 per 10 minutes); null unless both
- *   opted in. It is the top pair or nobody: no runner-up is named instead.
+ *   them (1 each) and voice time together (1 per 10 minutes). It is the top pair or nobody: no runner-up is named instead.
  * - `bestClub`: the approved club with the most messages, with its founder's name.
  * - `president`: whoever held the chair longest that year, with the number of
  *   elections that started that year and the members who stood in them.
@@ -84,13 +80,12 @@ const NO_NAMES: ServerNameLookup = { member: () => null, channel: () => null };
  * Excluded channels are left out everywhere.
  *
  * @param year - The UTC calendar year.
- * @param deps - Names, the guild's emoji and the opt-in check.
+ * @param deps - Names, the guild's emoji and the year aggregates.
  * @returns The snapshot, or null when nobody wrote or spoke that year.
  */
 export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): ServerWrapped | null {
   const { from, to } = yearPeriod(year);
   const names = deps.names ?? NO_NAMES;
-  const optedIn = deps.isOptedIn ?? isOptedIn;
   const voiceReady = deps.voiceReady ?? voiceReadinessForYear(year).ready;
   const m = schema.activityMessages;
   const v = schema.activityVoice;
@@ -147,7 +142,7 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
 
   const pair = bestPairOf(from, to, voiceReady);
   const bestPair =
-    pair && optedIn(pair.aId) && optedIn(pair.bId)
+    pair
       ? {
           aId: pair.aId,
           aName: names.member(pair.aId),
@@ -329,20 +324,13 @@ export function storeServerWrapped(year: number, data: ServerWrapped): string {
  * or an admin's private preview story (`preview: true`) while that preview
  * exists and is younger than 14 days.
  *
- * The stored best pair is checked against the opt-ins again on every read: a
- * member who opted out after the snapshot was built must not stay named, so
- * when either member is no longer opted in `bestPair` is replaced by null and
- * neither id nor name leaves this function.
+ * The snapshot is served as stored: the Wrapped DM opt-in never changes it.
  *
  * @param token - The token from the URL.
- * @param optedIn - Opt-in check (default: the opt-in table).
  * @returns The year and snapshot, or null for an unknown or truncated token, or
  *   a year with no snapshot yet.
  */
-export function getServerWrappedByToken(
-  token: string,
-  optedIn: (userId: string) => boolean = isOptedIn,
-): { year: number; data: ServerWrapped; preview: boolean } | null {
+export function getServerWrappedByToken(token: string): { year: number; data: ServerWrapped; preview: boolean } | null {
   if (typeof token !== "string" || token.length !== 43) return null;
   const row = db.select().from(schema.activityWrappedServer).where(eq(schema.activityWrappedServer.token, token)).get();
   let found: { year: number; data: ServerWrapped; preview: boolean } | null = null;
@@ -352,8 +340,6 @@ export function getServerWrappedByToken(
     if (priv) found = { ...priv, data: structuredClone(priv.data), preview: true };
   }
   if (!found) return null;
-  const pair = found.data.bestPair;
-  if (pair && !(optedIn(pair.aId) && optedIn(pair.bId))) found.data.bestPair = null;
   return found;
 }
 
