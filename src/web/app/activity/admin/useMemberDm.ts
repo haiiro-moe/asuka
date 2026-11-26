@@ -1,22 +1,16 @@
 /**
- * The per-member Wrapped actions shared by the failed-DM rows and the member id field: `resend` (DMs one
- * member their link, opted in or not) and `open link` (fetches their link, making the snapshot first if
- * they have none, and opens it in a new tab).
+ * The per-member Wrapped actions of the send window: `resend` (DMs one failed member their link again;
+ * the server refuses a member who is not opted in, a link already sent, and any resend while a send is
+ * running) and `open link` (fetches their link, making the snapshot first if they have none, and opens
+ * it in a new tab).
  *
  * @module
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { resendOutcome, type ResendResult } from "./failed.ts";
 import { call } from "./http.ts";
 
-/** What `POST /api/activity/wrapped/resend/:userId` answers. */
-export type ResendResult = "sent" | "failed" | "no-link";
-
-/** The narrator words for a resend's answer. */
-export const RESEND_WORDS: Record<ResendResult, string> = {
-  sent: "Sent.",
-  failed: "Failed again. Their DMs are probably closed.",
-  "no-link": "They have no link that year.",
-};
+export { RESEND_WORDS, type ResendResult } from "./failed.ts";
 
 /** What {@link useMemberDm} returns. */
 export interface MemberDm {
@@ -28,7 +22,7 @@ export interface MemberDm {
   error: string | null;
   /** The last fetched link, kept on the page in case the new tab was blocked. */
   link: string | null;
-  /** Resends the member's DM. */
+  /** Resends the member's DM. A second call while one is in flight does nothing. */
   resend: (userId: string) => Promise<void>;
   /** Fetches the member's link and opens it in a new tab. */
   openLink: (userId: string) => Promise<void>;
@@ -40,25 +34,34 @@ export interface MemberDm {
  * The actions for one member at a time.
  *
  * @param year - The run's year, sent as `?year=`; null leaves it to the server (the latest run's).
- * @param onResent - Called after every resend that got an answer, so the list can be fetched again.
+ * @param onResent - Called with the answer after every resend that got one, so the list can be fetched again.
  */
-export function useMemberDm(year: number | null, onResent?: () => void): MemberDm {
+export function useMemberDm(year: number | null, onResent?: (result: ResendResult) => void): MemberDm {
   const [busy, setBusy] = useState<"resend" | "link" | null>(null);
   const [result, setResult] = useState<ResendResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
+  // a ref, not state: two clicks in one frame both see the state from before the first
+  const resending = useRef(false);
   const query = year != null ? `?year=${year}` : "";
 
   const resend = async (userId: string) => {
+    if (resending.current) return;
+    resending.current = true;
     setBusy("resend");
     setResult(null);
     setError(null);
-    const res = await call<{ result: ResendResult }>("POST", `/api/activity/wrapped/resend/${userId}${query}`);
-    setBusy(null);
-    if (res.body?.result) {
-      setResult(res.body.result);
-      onResent?.();
-    } else setError(res.error ?? "no answer");
+    try {
+      const res = await call<{ result: ResendResult }>("POST", `/api/activity/wrapped/resend/${userId}${query}`);
+      const out = resendOutcome(res.status, res.body, res.error);
+      if (out.result) {
+        setResult(out.result);
+        onResent?.(out.result);
+      } else setError(out.error);
+    } finally {
+      resending.current = false;
+      setBusy(null);
+    }
   };
 
   const openLink = async (userId: string) => {
@@ -71,7 +74,15 @@ export function useMemberDm(year: number | null, onResent?: () => void): MemberD
     setBusy(null);
     if (!res.ok || !res.body?.url) {
       tab?.close();
-      setError(res.status === 404 ? "they had no activity that year" : (res.error ?? "no answer"));
+      setError(
+        res.status === 404
+          ? "they had no activity that year"
+          : res.status === 401
+            ? "your session ended"
+            : res.status === 403
+              ? "you do not have access"
+              : (res.error ?? "no answer"),
+      );
       return;
     }
     setLink(res.body.url);

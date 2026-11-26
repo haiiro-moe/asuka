@@ -20,7 +20,7 @@ src/web/app/activity/admin/
   DataTab.tsx          backfill window, Wrapped overview, steps, sign-ups
   BackfillModal.tsx
   WrappedOverview.tsx  ProcessStep.tsx  SendStep.tsx  AnnounceStep.tsx
-  MemberDmActions.tsx  failed-DM list rows and the member id field
+  MemberDmActions.tsx  failed-DM list rows (resend, open link) and the member id field (open link)
   useMemberDm.ts       resend and open link for one member
   SignupsWindow.tsx
   PreviewSection.tsx   the private preview window: start form, status, links, discard
@@ -161,9 +161,19 @@ opened in a new tab and kept on the row as `their link`). `failedListView` gives
 quiet line `And more: the list is capped at 200.` when `truncated`, and the narrator line `No failed
 DMs. Everyone who opted in got theirs.` when empty. The list is fetched again when
 `failedListKey(s)` changes (a send finishes, a new run starts, the failed count moves outside a
-send) and after every resend. Under it, `MemberDmActions` keeps a member id field with the same two
-actions for someone not on the list, such as a member who never opted in and asked for their link
-(a resend reaches them anyway, because an admin asked).
+send) and after every resend.
+
+`resend` exists only on these rows, and `showResend` hides it while the run is `sending`. The
+server refuses a resend with a 409 and a `result` for a member who is not opted in
+(`not-opted-in`), a link already sent (`already-sent`) and any resend while a send runs
+(`sending`); `resendOutcome` reads the result (a 409 included) and `RESEND_WORDS` words each one
+(the first two point at `/wrapped me`). A 401 reads `your session ended`, a 403 `you do not have
+access`. Each row holds a busy lock (a ref, so two clicks in one frame send once), and after a
+resend answered `sent` its `resend` stays disabled until the list answer changes.
+
+Under the list, `MemberDmActions` keeps a member id field with `open link` only, for someone not on
+the list; it never DMs anyone, and its line says a member who lost their link can use `/wrapped
+me`.
 
 ### Sign-ups
 

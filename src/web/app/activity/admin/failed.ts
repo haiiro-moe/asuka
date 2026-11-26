@@ -61,3 +61,52 @@ export function failedListKey(s: WrappedRunStatus | null): string {
   if (s.status === "sending") return `${s.id}:${s.year}:sending`;
   return `${s.id}:${s.year}:${s.status}:${s.failed}`;
 }
+
+/**
+ * What `POST /api/activity/wrapped/resend/:userId` answers: `sent`, `failed` and `no-link` with a 200,
+ * and with a 409 `not-opted-in` (the member is not opted in to the DM), `already-sent` (their link went
+ * out already) or `sending` (a send is running).
+ */
+export type ResendResult = "sent" | "failed" | "no-link" | "not-opted-in" | "already-sent" | "sending";
+
+/** The narrator words for a resend's answer. */
+export const RESEND_WORDS: Record<ResendResult, string> = {
+  sent: "Sent.",
+  failed: "Failed again. Their DMs are probably closed.",
+  "no-link": "They have no link that year.",
+  "not-opted-in": "They have not opted in, so no DM goes out. They can use /wrapped me.",
+  "already-sent": "Their link went out already. A member who lost it can use /wrapped me.",
+  sending: "A send is running. Try again when it finishes.",
+};
+
+const RESEND_RESULTS = new Set<string>(Object.keys(RESEND_WORDS));
+
+/** The outcome of one resend: a known answer, or the failure text. */
+export type ResendOutcome = { result: ResendResult; error: null } | { result: null; error: string };
+
+/**
+ * Reads a resend's answer: a known `result` in the body wins (a 409 carries one too); otherwise the
+ * failure in plain words.
+ *
+ * @param status - The HTTP status; 0 when the request never reached the server.
+ * @param body - The parsed body, or null.
+ * @param error - The request helper's failure cause, or null.
+ */
+export function resendOutcome(status: number, body: unknown, error: string | null): ResendOutcome {
+  const result = (body as { result?: unknown } | null)?.result;
+  if (typeof result === "string" && RESEND_RESULTS.has(result)) return { result: result as ResendResult, error: null };
+  if (status === 401) return { result: null, error: "your session ended" };
+  if (status === 403) return { result: null, error: "you do not have access" };
+  return { result: null, error: error || "no answer" };
+}
+
+/**
+ * Whether a failed-list row offers `resend`: never while a send is running (the server refuses then),
+ * and not again after a resend that worked until the list is fetched again.
+ *
+ * @param s - The run status, or null while it is unknown.
+ * @param sentSinceFetch - True when this row's resend answered `sent` since the list was last fetched.
+ */
+export function showResend(s: WrappedRunStatus | null, sentSinceFetch: boolean): { show: boolean; disabled: boolean } {
+  return { show: s?.status !== "sending", disabled: sentSinceFetch };
+}

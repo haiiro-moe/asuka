@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { run } from "./fixtures.ts";
-import { FAILED_LIST_CAP, failedListKey, failedListView, showFailedList } from "./failed.ts";
+import { FAILED_LIST_CAP, RESEND_WORDS, failedListKey, failedListView, resendOutcome, showFailedList, showResend } from "./failed.ts";
 
 test("failedListView gives one row per failed member, in order", () => {
   const view = failedListView({
@@ -50,4 +50,29 @@ test("failedListKey changes when a send finishes or a resend lands, not during a
   expect(failedListKey(run({ status: "done", failed: 4 }))).not.toBe(done);
   expect(failedListKey(run({ id: 2, status: "done", failed: 5 }))).not.toBe(done);
   expect(failedListKey(null)).toBe("none");
+});
+
+test("resendOutcome reads every known result, also from a 409", () => {
+  expect(resendOutcome(200, { result: "sent" }, null)).toEqual({ result: "sent", error: null });
+  expect(resendOutcome(409, { result: "not-opted-in" }, "conflict")).toEqual({ result: "not-opted-in", error: null });
+  expect(resendOutcome(409, { result: "already-sent" }, "conflict")).toEqual({ result: "already-sent", error: null });
+  expect(resendOutcome(409, { result: "sending" }, "conflict")).toEqual({ result: "sending", error: null });
+});
+
+test("resendOutcome gives plain words for a failure", () => {
+  expect(resendOutcome(401, null, "unauthorized")).toEqual({ result: null, error: "your session ended" });
+  expect(resendOutcome(403, { error: "forbidden" }, "forbidden")).toEqual({ result: null, error: "you do not have access" });
+  expect(resendOutcome(409, { result: "weird" }, "conflict")).toEqual({ result: null, error: "conflict" });
+  expect(resendOutcome(0, null, null)).toEqual({ result: null, error: "no answer" });
+});
+
+test("RESEND_WORDS points a member who lost their link at /wrapped me", () => {
+  expect(RESEND_WORDS["already-sent"]).toContain("/wrapped me");
+  expect(RESEND_WORDS["not-opted-in"]).toContain("/wrapped me");
+});
+
+test("showResend hides during a send and locks after a resend that worked", () => {
+  expect(showResend(run({ status: "sending" }), false).show).toBe(false);
+  expect(showResend(run({ status: "done" }), false)).toEqual({ show: true, disabled: false });
+  expect(showResend(run({ status: "done" }), true)).toEqual({ show: true, disabled: true });
 });

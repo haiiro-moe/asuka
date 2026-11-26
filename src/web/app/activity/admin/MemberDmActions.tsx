@@ -1,23 +1,24 @@
 /**
  * Per-member Wrapped DM controls of the send window: the outcome line shared by both, the failed-DM
- * list (one row per member with `resend` and `open link`) and a member id field for someone who is not
- * on the list (a member who never opted in and asked for their link, say).
+ * list (one row per member with `resend` and `open link`; `resend` is hidden while a send runs) and a
+ * member id field with `open link` only, for someone who is not on the list. A member who lost their
+ * link uses `/wrapped me`; the admin can still open it for them.
  *
  * @module
  */
 import { useEffect, useRef, useState } from "react";
-import type { WrappedFailedList } from "../../../../plugins/activity/types/wrapped.ts";
+import type { WrappedFailedList, WrappedRunStatus } from "../../../../plugins/activity/types/wrapped.ts";
 import { UserName } from "../../names.tsx";
 import { InkButton, InkLink, PromptField, Saved } from "../../ui/index.ts";
 import { useActivity } from "../useActivity.ts";
-import { failedListView } from "./failed.ts";
+import { failedListView, showResend } from "./failed.ts";
 import { DataTable, Quiet, ViewState } from "./parts.tsx";
 import { RESEND_WORDS, useMemberDm, type MemberDm } from "./useMemberDm.ts";
 
 /** A Discord user id: digits only. */
 const USER_ID = /^\d{1,25}$/;
 
-/** The answer of the last action: sent (foam), failed again (love), the link, or the failure. */
+/** The answer of the last action: sent (foam), refused or failed again (love), the link, or the failure. */
 function Outcome({ dm }: { dm: MemberDm }) {
   return (
     <>
@@ -41,9 +42,26 @@ function Outcome({ dm }: { dm: MemberDm }) {
   );
 }
 
+/** Props of the failed-list row. */
+interface FailedRowProps {
+  userId: string;
+  year: number | null;
+  /** The run status, to hide `resend` while a send runs. */
+  status: WrappedRunStatus | null;
+  /** The list answer the row was drawn from; a new one unlocks `resend` again. */
+  list: WrappedFailedList;
+  onResent: () => void;
+}
+
 /** One failed member: name, `resend`, `open link` and the outcome. */
-function FailedRow({ userId, year, onResent }: { userId: string; year: number | null; onResent: () => void }) {
-  const dm = useMemberDm(year, onResent);
+function FailedRow({ userId, year, status, list, onResent }: FailedRowProps) {
+  const [sentFor, setSentFor] = useState<WrappedFailedList | null>(null);
+  const dm = useMemberDm(year, (result) => {
+    // lock against the list this click saw; the refetch below brings a new one and unlocks it
+    if (result === "sent") setSentFor(list);
+    onResent();
+  });
+  const gate = showResend(status, sentFor === list);
   return (
     <tr>
       <td>
@@ -51,9 +69,17 @@ function FailedRow({ userId, year, onResent }: { userId: string; year: number | 
       </td>
       <td>
         <span className="flex flex-wrap items-center gap-2">
-          <InkButton tone="pine" onClick={() => dm.resend(userId)} busy={dm.busy === "resend"} busyLabel="sending">
-            resend
-          </InkButton>
+          {gate.show && (
+            <InkButton
+              tone="pine"
+              onClick={() => dm.resend(userId)}
+              disabled={gate.disabled}
+              busy={dm.busy === "resend"}
+              busyLabel="sending"
+            >
+              resend
+            </InkButton>
+          )}
           <InkButton tone="flat" onClick={() => dm.openLink(userId)} busy={dm.busy === "link"} busyLabel="fetching">
             open link
           </InkButton>
@@ -70,6 +96,8 @@ export interface FailedDmListProps {
   year: number;
   /** Changes whenever the list should be fetched again ({@link failedListKey}). */
   refetchKey: string;
+  /** The run status; `resend` is hidden while it is `sending`. */
+  status: WrappedRunStatus | null;
 }
 
 /**
@@ -79,7 +107,7 @@ export interface FailedDmListProps {
  *
  * @param props - See {@link FailedDmListProps}.
  */
-export function FailedDmList({ year, refetchKey }: FailedDmListProps) {
+export function FailedDmList({ year, refetchKey, status }: FailedDmListProps) {
   const state = useActivity<WrappedFailedList>(`/api/activity/wrapped/failed?year=${year}`);
   const { reload } = state;
   const seen = useRef(refetchKey);
@@ -105,7 +133,7 @@ export function FailedDmList({ year, refetchKey }: FailedDmListProps) {
               }
             >
               {view.rows.map((id) => (
-                <FailedRow key={id} userId={id} year={year} onResent={reload} />
+                <FailedRow key={id} userId={id} year={year} status={status} list={list} onResent={reload} />
               ))}
             </DataTable>
             {view.more && <Quiet>{view.more}</Quiet>}
@@ -117,14 +145,14 @@ export function FailedDmList({ year, refetchKey }: FailedDmListProps) {
 }
 
 /**
- * A member id field with `resend` and `open link`, for a member who is not on the failed list. A resend
- * reaches them whether or not they opted in, because an admin asked for that member.
+ * A member id field with `open link`, for a member who is not on the failed list. It never DMs anyone:
+ * a member who lost their link can use `/wrapped me`.
  *
- * @param props - `year`: the run's year; `onResent`: called after a resend got an answer.
+ * @param props - `year`: the run's year.
  */
-export function MemberDmActions({ year, onResent }: { year: number | null; onResent?: () => void }) {
+export function MemberDmActions({ year }: { year: number | null }) {
   const [text, setText] = useState("");
-  const dm = useMemberDm(year, onResent);
+  const dm = useMemberDm(year);
   const id = text.trim();
   const bad = id !== "" && !USER_ID.test(id);
   return (
@@ -141,15 +169,14 @@ export function MemberDmActions({ year, onResent }: { year: number | null; onRes
         error={bad ? "A member id is digits only." : null}
       />
       <div className="btns items-center">
-        <InkButton tone="pine" onClick={() => dm.resend(id)} disabled={!id || bad} busy={dm.busy === "resend"} busyLabel="sending">
-          resend
-        </InkButton>
         <InkButton tone="flat" onClick={() => dm.openLink(id)} disabled={!id || bad} busy={dm.busy === "link"} busyLabel="fetching">
           open link
         </InkButton>
         <Outcome dm={dm} />
       </div>
-      {dm.error == null && dm.result == null && dm.link == null && <Quiet>Sends even to a member who did not opt in.</Quiet>}
+      {dm.error == null && dm.link == null && (
+        <Quiet>Opens their link for you. Nothing is sent. A member who lost their link can use /wrapped me.</Quiet>
+      )}
     </>
   );
 }

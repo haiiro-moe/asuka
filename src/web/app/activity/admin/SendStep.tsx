@@ -1,8 +1,8 @@
 /**
  * Step 2 of a Wrapped run, send dms: DMs the links of opted-in members, one a second, after a confirm.
  * Optionally posts the server Wrapped announcement when the DMs finish (the chip, on by default). Below
- * it, the failed DMs, one row per member with `resend` and `open link`, and a member id field for
- * someone who is not on that list.
+ * it, the failed DMs, one row per member with `resend` and `open link`, and a member id field with
+ * `open link` only, for someone who is not on that list.
  *
  * @module
  */
@@ -97,9 +97,9 @@ export function SendStep({ ops }: { ops: OpsStatus }) {
         <>
           <Heading as="h3">failed dms</Heading>
           <Quiet>Members whose DM did not arrive and who are still opted in. Closed DMs, most likely.</Quiet>
-          <FailedDmList year={s.year} refetchKey={failedListKey(s)} />
+          <FailedDmList year={s.year} refetchKey={failedListKey(s)} status={s} />
           <Heading as="h3">someone not on the list</Heading>
-          <MemberDmActions year={s.year} onResent={ops.refresh} />
+          <MemberDmActions year={s.year} />
         </>
       )}
     </Window>
