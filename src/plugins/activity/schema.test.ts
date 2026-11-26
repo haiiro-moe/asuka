@@ -87,13 +87,13 @@ test("schema inserts and reads back one row per activity table", () => {
       ts: 1_800_000_000,
       userId: "u1",
       channelId: "c1",
-      emoji: "123456789012345678",
+      emoji: "custom:123456789012345678",
       name: "blobwave",
       count: 2,
     })
     .run();
   expect(db.select().from(schema.activityEmoji).all()).toMatchObject([
-    { messageId: "m-roundtrip", emoji: "123456789012345678", name: "blobwave", count: 2 },
+    { messageId: "m-roundtrip", emoji: "custom:123456789012345678", name: "blobwave", count: 2 },
   ]);
 
   db.insert(schema.activityReactions)
