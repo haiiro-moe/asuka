@@ -32,7 +32,7 @@ export interface ViewProps<T> {
  */
 export function View<T>({ state, isEmpty, empty = "Nothing counted in this period yet.", children }: ViewProps<T>) {
   const { data, error, loading, reload } = state;
-  if (error) {
+  if (error !== null) {
     const text = error === "unauthorized" ? "Your session ended. Sign in again." : `That did not load: ${error}.`;
     return <ErrorLine onRetry={reload}>{text}</ErrorLine>;
   }

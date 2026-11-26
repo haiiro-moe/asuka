@@ -33,7 +33,7 @@ export interface ViewStateProps<T> {
  */
 export function ViewState<T>({ state, what, isEmpty, empty, children }: ViewStateProps<T>) {
   if (state.loading && state.data == null) return <Loading className="px-2">Reading {what}</Loading>;
-  if (state.error != null) {
+  if (state.error !== null) {
     return (
       <ErrorLine className="px-2" onRetry={state.reload}>
         {what[0]?.toUpperCase()}
