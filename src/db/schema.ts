@@ -779,7 +779,7 @@ export const activityWrappedRuns = sqliteTable("activity_wrapped_runs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   year: integer("year").notNull(),
   status: text("status", {
-    enum: ["processing", "sending", "done", "failed"],
+    enum: ["processing", "processed", "sending", "done", "failed"],
   }).notNull(),
   /** Members the run covers. */
   total: integer("total").notNull().default(0),
@@ -792,10 +792,11 @@ export const activityWrappedRuns = sqliteTable("activity_wrapped_runs", {
   /** User id of the admin who started the run. */
   startedBy: text("started_by").notNull(),
   /**
-   * 1 = DM the links of opted-in members after processing, 0 = make the links
-   * only. Read again when an interrupted run is resumed.
+   * 1 = post the server Wrapped announcement (`wrapped.announce`) when the
+   * send step finishes, 0 = do not. Set by each send step and read again when
+   * an interrupted send is resumed.
    */
-  sendDms: integer("send_dms").notNull().default(1),
+  announce: integer("announce").notNull().default(1),
   startedAt: integer("started_at").notNull().default(now),
   updatedAt: integer("updated_at").notNull().default(now),
   finishedAt: integer("finished_at"),
@@ -840,4 +841,41 @@ export const activityWrappedLinks = sqliteTable(
 export const activityWrappedOptins = sqliteTable("activity_wrapped_optins", {
   userId: text("user_id").primaryKey(),
   optedInAt: integer("opted_in_at").notNull().default(now),
+});
+
+/**
+ * The server-wide Wrapped of one year: the public link `/wrapped/s/<token>`
+ * and its snapshot. One row per year; the token is reusable and kept when a
+ * later run refreshes the snapshot.
+ */
+export const activityWrappedServer = sqliteTable("activity_wrapped_server", {
+  /** The UTC calendar year. */
+  year: integer("year").primaryKey(),
+  /** Unguessable token in the public link's URL. */
+  token: text("token").notNull().unique(),
+  /** JSON snapshot of the server's year (`ServerWrapped`); null until a run or an admin builds it. */
+  data: text("data"),
+  createdAt: integer("created_at").notNull().default(now),
+  /** When the announcement with this link was last posted; null when never. */
+  announcedAt: integer("announced_at"),
+});
+
+/**
+ * The Wrapped sign-up message of a year (the "wrapped is coming" card) and
+ * whether sign-ups are closed. While closed, the opt-in buttons are disabled
+ * and opting in or out changes nothing.
+ */
+export const activityWrappedSignup = sqliteTable("activity_wrapped_signup", {
+  /** The UTC calendar year. */
+  year: integer("year").primaryKey(),
+  /** Channel the message was posted in; null when none was posted. */
+  channelId: text("channel_id"),
+  /** The posted message; null when none was posted. */
+  messageId: text("message_id"),
+  /** 1 = posted with the opt-in and opt-out buttons, 0 = information only. */
+  buttons: integer("buttons").notNull().default(1),
+  /** 1 = sign-ups are closed. */
+  closed: integer("closed").notNull().default(0),
+  postedAt: integer("posted_at"),
+  closedAt: integer("closed_at"),
 });

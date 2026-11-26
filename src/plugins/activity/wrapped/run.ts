@@ -1,30 +1,29 @@
 /**
- * Wrapped runs: the admin-started job that makes every member's snapshot and
- * link, then DMs the links of the members who opted in.
+ * Wrapped runs: three separate manual steps, each started by an admin.
  *
  * **Nothing here runs on its own.** There is no schedule and nothing starts at
- * load or boot: a run starts only from {@link startWrappedRun} (the admin route
- * or `/wrapped start`) and continues only from {@link resumeWrappedRun}.
+ * load or boot.
  *
- * A run has two phases, both persisted after every member so the dashboard
- * can poll the progress:
+ * 1. **Process** ({@link startWrappedRun}): for each member with activity that
+ *    UTC year who has not left (sorted by id) and whose link this run has not
+ *    processed yet, build the snapshot and upsert their link (an existing link
+ *    keeps its token), stamping it with the run id (`processedRunId`); then
+ *    build the server snapshot. The run ends `processed` ("ready to send") and
+ *    the admin who started it gets a `wrapped.processed` DM (or, when that DM
+ *    fails, the same card in the mod-log channel). Nobody else is written to.
+ * 2. **Send** ({@link startWrappedSend}): on a `processed` or `done` run,
+ *    failed and skipped links go back to pending, each pending link of an
+ *    opted-in member is DM'd (one per second), the others are marked
+ *    `skipped`, and links already `sent` are left alone. The run ends `done`,
+ *    then the announcement is posted when the send asked for it, and
+ *    `wrapped.run-finished` goes to the mod-log channel.
+ * 3. **Announce** ({@link postAnnouncement}): post the server Wrapped link to
+ *    the announcement channel, once per year (guarded by `announcedAt`). The
+ *    send step calls it when `announce` is on; an admin can also call it alone.
  *
- * 1. **processing**: for each member with activity that UTC year who has not
- *    left (sorted by id) and whose link this run has not processed yet, build
- *    the snapshot and upsert their link (an existing link keeps its token),
- *    stamping the link with the run id (`processedRunId`).
- * 2. **sending** (only when the run was started with `sendDms`): links that
- *    are failed or skipped go back to pending, then each pending link of an
- *    opted-in member is DM'd, one per second; a link of a member who has not
- *    opted in is marked `skipped` and never DM'd. Links already `sent` are
- *    left alone.
- *
- * A run whose row has not been updated for 120 seconds while processing or
- * sending (the bot restarted, say) reports `interrupted`; resuming it
- * continues the members whose link this run has not processed (taken from a
- * fresh member list, so members who became active meanwhile are included)
- * and the pending DMs only. Whether a run sends DMs is stored on the run
- * (`sendDms`), so a resumed run keeps the original choice.
+ * Counters are persisted after every member so the dashboard can poll them. A
+ * processing or sending run not updated for 120 seconds (the bot restarted,
+ * say) reports `interrupted`, and {@link resumeWrappedRun} continues that phase.
  *
  * See docs/activity/wrapped.md.
  *
@@ -32,15 +31,26 @@
  */
 import type { TextChannel } from "discord.js";
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { env } from "../../../config/env.ts";
 import { renderBotMessage } from "../../../core/messages.ts";
 import type { BotContext } from "../../../core/plugin.ts";
 import { nowSec } from "../../../core/util.ts";
 import { db, getConfig, schema } from "../../../db/index.ts";
 import type { WrappedRunStatus } from "../types/wrapped.ts";
-import { activeMemberIds, buildWrapped, leftMemberIds } from "./data.ts";
+import { withWrappedBanner } from "./banner.ts";
+import { activeMemberIds, buildWrapped, leftMemberIds, wrappedShared } from "./data.ts";
+import type { WrappedShared } from "./data.ts";
 import { sendWrappedDm } from "./dm.ts";
 import { getWrappedLink, linkUrl, upsertWrappedLink } from "./links.ts";
 import { isOptedIn, optedInCount } from "./optin.ts";
+import {
+  buildServerWrapped,
+  getOrCreateServerToken,
+  getServerRow,
+  serverWrappedDeps,
+  serverWrappedUrl,
+  storeServerWrapped,
+} from "./server.ts";
 
 export type { WrappedRunStatus, WrappedRunState } from "../types/wrapped.ts";
 
@@ -55,7 +65,7 @@ export const wrappedRunTiming = {
   staleSeconds: 120,
 };
 
-/** The run this process is working on, if any. */
+/** The work this process is doing, if any. */
 let active: { id: number; promise: Promise<void> } | null = null;
 
 type RunRow = typeof schema.activityWrappedRuns.$inferSelect;
@@ -65,22 +75,24 @@ function latestRun(): RunRow | undefined {
   return db.select().from(schema.activityWrappedRuns).orderBy(desc(schema.activityWrappedRuns.id)).limit(1).get();
 }
 
-/** True when a processing or sending row has gone quiet and no run is active in this process. */
-function isStale(row: RunRow): boolean {
-  return (
-    (row.status === "processing" || row.status === "sending") &&
-    active?.id !== row.id &&
-    nowSec() - row.updatedAt > wrappedRunTiming.staleSeconds
-  );
+/** A run that is processing or sending. */
+function isBusy(row: RunRow): boolean {
+  return row.status === "processing" || row.status === "sending";
 }
 
-/** Links of a year with a given DM status. */
-function linkCount(year: number, dmStatus: "pending" | "sent" | "failed" | "skipped"): number {
+/** True when a processing or sending row has gone quiet and no work is active in this process. */
+function isStale(row: RunRow): boolean {
+  return isBusy(row) && active?.id !== row.id && nowSec() - row.updatedAt > wrappedRunTiming.staleSeconds;
+}
+
+/** Links of a year, optionally with a given DM status. */
+function linkCount(year: number, dmStatus?: "pending" | "sent" | "failed" | "skipped"): number {
+  const l = schema.activityWrappedLinks;
   return (
     db
       .select({ n: count() })
-      .from(schema.activityWrappedLinks)
-      .where(and(eq(schema.activityWrappedLinks.year, year), eq(schema.activityWrappedLinks.dmStatus, dmStatus)))
+      .from(l)
+      .where(and(eq(l.year, year), dmStatus ? eq(l.dmStatus, dmStatus) : undefined))
       .get()?.n ?? 0
   );
 }
@@ -90,7 +102,7 @@ function linkCount(year: number, dmStatus: "pending" | "sent" | "failed" | "skip
  *
  * `skipped` (links of the run's year whose member had not opted in) and
  * `optedIn` (the current opt-in count) are read from the links and opt-in
- * tables, not from the run row.
+ * tables; `announcedAt` from the server Wrapped of the run's year.
  *
  * @returns The status of the newest run; `idle` with zero counters when no
  *   run exists; `interrupted` for a processing or sending run that has not
@@ -112,6 +124,8 @@ export function getWrappedStatus(): WrappedRunStatus {
       optedIn,
       startedAt: null,
       finishedAt: null,
+      announce: false,
+      announcedAt: null,
     };
   }
   return {
@@ -126,39 +140,49 @@ export function getWrappedStatus(): WrappedRunStatus {
     optedIn,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
+    announce: row.announce === 1,
+    announcedAt: getServerRow(row.year)?.announcedAt ?? null,
   };
+}
+
+/**
+ * The stored phase of the latest run, before staleness is applied (an
+ * interrupted run still shows `processing` or `sending` here).
+ *
+ * @returns The phase, or null when no run exists.
+ */
+export function latestRunPhase(): RunRow["status"] | null {
+  return latestRun()?.status ?? null;
 }
 
 /**
  * The work in progress, for tests and shutdown code that must wait for it.
  *
- * @returns A promise that settles when the active run (if any) ends.
+ * @returns A promise that settles when the active step (if any) ends.
  */
 export function waitForWrappedRun(): Promise<void> {
   return active?.promise ?? Promise.resolve();
 }
 
 /**
- * Start a Wrapped run in the background. Returns at once; the run's progress
- * is in {@link getWrappedStatus}.
+ * Step 1: start processing a year in the background. Returns at once; the
+ * progress is in {@link getWrappedStatus}. Nobody but the starting admin is
+ * written to, and no announcement is posted.
  *
  * The member list is taken now (members with activity that UTC year who have
  * not left), so `total` is known from the first poll. A previous run that was
  * interrupted is marked failed first.
  *
- * @param ctx - Bot context (the client sends the DMs and the mod-log post).
+ * @param ctx - Bot context.
  * @param opts.year - The UTC calendar year.
- * @param opts.startedBy - User id of the admin who started it.
- * @param opts.sendDms - False to make the links only (nobody is written to).
+ * @param opts.startedBy - User id of the admin who started it; they get the
+ *   `wrapped.processed` DM.
  * @returns `started`, or `already-running` when a run is processing or sending.
  */
-export function startWrappedRun(
-  ctx: BotContext,
-  opts: { year: number; startedBy: string; sendDms: boolean },
-): "started" | "already-running" {
+export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy: string }): "started" | "already-running" {
   if (active) return "already-running";
   const latest = latestRun();
-  if (latest && (latest.status === "processing" || latest.status === "sending")) {
+  if (latest && isBusy(latest)) {
     if (!isStale(latest)) return "already-running";
     db.update(schema.activityWrappedRuns)
       .set({ status: "failed", finishedAt: nowSec(), updatedAt: nowSec() })
@@ -176,22 +200,59 @@ export function startWrappedRun(
       total: members.length,
       processed: 0,
       startedBy: opts.startedBy,
-      sendDms: opts.sendDms ? 1 : 0,
       startedAt: now,
       updatedAt: now,
     })
     .returning({ id: schema.activityWrappedRuns.id })
     .get().id;
-  launch(ctx, { id, year: opts.year, startedBy: opts.startedBy, sendDms: opts.sendDms, phase: "processing", members });
+  launch({ id, work: () => processWork(ctx, { id, year: opts.year, startedBy: opts.startedBy, members }) });
   return "started";
 }
 
 /**
- * Continue an interrupted run. During processing: every member in a fresh
- * member list whose link this run has not processed (`processedRunId`), so a
- * member who became active meanwhile is included and one who left is not.
- * During sending: the DMs still pending. DMs follow only when the run was
- * started with `sendDms`, which is stored on the run (see {@link runSendsDms}).
+ * Step 2: DM the links of opted-in members, in the background, on the latest
+ * run. Allowed when that run is `processed`, or `done` (a later send reaches
+ * members who opted in since and retries failed links; sent links are never
+ * sent again).
+ *
+ * @param ctx - Bot context.
+ * @param opts.startedBy - The admin who started the send (named in the mod-log post).
+ * @param opts.announce - Post the server Wrapped announcement when the DMs
+ *   finish (default true; once per year).
+ * @returns `started`; `already-running` while a run is processing or sending;
+ *   `not-processed` when there is no processed run to send.
+ */
+export function startWrappedSend(
+  ctx: BotContext,
+  opts: { startedBy: string; announce?: boolean },
+): "started" | "already-running" | "not-processed" {
+  if (active) return "already-running";
+  const row = latestRun();
+  if (!row) return "not-processed";
+  if (isBusy(row) && !isStale(row)) return "already-running";
+  if (row.status !== "processed" && row.status !== "done") return "not-processed";
+
+  const announce = opts.announce !== false;
+  resetForSending(row.year);
+  updateRun(row.id, {
+    status: "sending",
+    announce: announce ? 1 : 0,
+    sent: linkCount(row.year, "sent"),
+    failed: 0,
+    finishedAt: null,
+  });
+  launch({ id: row.id, work: () => sendWork(ctx, { id: row.id, year: row.year, startedBy: opts.startedBy, announce }) });
+  return "started";
+}
+
+/**
+ * Continue an interrupted run, in the phase it stopped in.
+ *
+ * - Processing: every member in a fresh member list whose link this run has
+ *   not processed (`processedRunId`), so a member who became active meanwhile
+ *   is included and one who left is not; then the server snapshot, `processed`
+ *   and the starter's DM.
+ * - Sending: the links still pending, with the run's stored `announce`.
  *
  * @param ctx - Bot context.
  * @returns `resumed`, or `nothing-to-resume` when the latest run is not interrupted.
@@ -201,29 +262,51 @@ export function resumeWrappedRun(ctx: BotContext): "resumed" | "nothing-to-resum
   const row = latestRun();
   if (!row || !isStale(row)) return "nothing-to-resume";
 
-  db.update(schema.activityWrappedRuns)
-    .set({ updatedAt: nowSec() })
-    .where(eq(schema.activityWrappedRuns.id, row.id))
-    .run();
-  const sendDms = row.sendDms === 1;
+  updateRun(row.id, {});
   if (row.status === "processing") {
     const members = activeMemberIds(row.year);
-    launch(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, sendDms, phase: "processing", members });
+    launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members }) });
   } else {
-    launch(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, sendDms, phase: "sending", members: [] });
+    const announce = row.announce === 1;
+    launch({ id: row.id, work: () => sendWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, announce }) });
   }
   return "resumed";
 }
 
 /**
- * Whether a run DMs the links after processing (`sendDms` when it started).
+ * Step 3: post the server Wrapped announcement (`wrapped.announce`, with the
+ * title banner and a link button) to the announcement channel. Once per year:
+ * a year already announced is not announced again.
  *
- * @param id - The run's id.
- * @returns True or false; null when no such run exists.
+ * @param ctx - Bot context.
+ * @param year - The UTC calendar year.
+ * @returns `posted`; `already-announced`; `not-processed` when the year has no
+ *   server snapshot; `no-channel` when the announcement channel is unset,
+ *   unreachable or the post failed.
  */
-export function runSendsDms(id: number): boolean | null {
-  const row = runRow(id);
-  return row ? row.sendDms === 1 : null;
+export async function postAnnouncement(
+  ctx: BotContext,
+  year: number,
+): Promise<"posted" | "already-announced" | "not-processed" | "no-channel"> {
+  const server = getServerRow(year);
+  if (!server?.data) return "not-processed";
+  if (server.announcedAt !== null) return "already-announced";
+  const channelId = getConfig().announcementChannelId;
+  if (!channelId) return "no-channel";
+  try {
+    const channel = await ctx.client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased() || !("send" in channel)) return "no-channel";
+    const rendered = await renderBotMessage("wrapped.announce", ctx, { year, url: serverWrappedUrl(server.token) });
+    await (channel as TextChannel).send(await withWrappedBanner(rendered, year));
+  } catch (err) {
+    console.error("[wrapped] announcement failed:", err);
+    return "no-channel";
+  }
+  db.update(schema.activityWrappedServer)
+    .set({ announcedAt: nowSec() })
+    .where(eq(schema.activityWrappedServer.year, year))
+    .run();
+  return "posted";
 }
 
 /**
@@ -261,55 +344,64 @@ export async function resendWrappedDm(ctx: BotContext, userId: string, year: num
   return result;
 }
 
-/** What {@link launch} works on. */
-interface RunJob {
-  id: number;
-  year: number;
-  startedBy: string;
-  sendDms: boolean;
-  /** The phase to start in. */
-  phase: "processing" | "sending";
-  /** The fresh, sorted member list (processing only). */
-  members: string[];
-}
-
-/** Run a job in the background and remember it as the active run. */
-function launch(ctx: BotContext, job: RunJob): void {
+/** Run one step in the background and remember it as the active work. */
+function launch(job: { id: number; work: () => Promise<void> }): void {
   // Start on the next microtask, so `active` is set before any work runs.
   const promise = Promise.resolve()
-    .then(() => work(ctx, job))
+    .then(job.work)
     .finally(() => {
       if (active?.id === job.id) active = null;
     });
   active = { id: job.id, promise };
 }
 
-/** The body of a run: process, send, finish, report. Never throws. */
-async function work(ctx: BotContext, job: RunJob): Promise<void> {
+/** Mark a run failed and report it to the mod-log channel. Never throws. */
+async function failRun(ctx: BotContext, id: number, err: unknown): Promise<void> {
+  console.error(`[wrapped] run ${id} failed:`, err);
+  updateRun(id, { status: "failed", finishedAt: nowSec() });
+  const row = runRow(id);
+  await postModLog(ctx, "wrapped.run-failed", { processed: row?.processed ?? 0, total: row?.total ?? 0 });
+}
+
+/** The processing step: members, server snapshot, `processed`, the starter's DM. Never throws. */
+async function processWork(
+  ctx: BotContext,
+  job: { id: number; year: number; startedBy: string; members: string[] },
+): Promise<void> {
   try {
-    if (job.phase === "processing") {
-      await processMembers(job);
-      if (job.sendDms) {
-        resetForSending(job.year);
-        updateRun(job.id, { status: "sending" });
-      }
-    }
-    if (job.sendDms) await sendLinks(ctx, job);
-    updateRun(job.id, { status: "done", finishedAt: nowSec() });
-    const row = runRow(job.id);
-    await postModLog(ctx, "wrapped.run-finished", {
-      year: job.year,
-      admin: `<@${job.startedBy}>`,
-      sent: row?.sent ?? 0,
-      failed: row?.failed ?? 0,
-      skipped: linkCount(job.year, "skipped"),
-    });
+    const shared = await processMembers(job);
+    await storeServerSnapshot(ctx, job.year, shared);
+    updateRun(job.id, { status: "processed", finishedAt: nowSec() });
   } catch (err) {
-    console.error(`[wrapped] run ${job.id} failed:`, err);
-    updateRun(job.id, { status: "failed", finishedAt: nowSec() });
-    const row = runRow(job.id);
-    await postModLog(ctx, "wrapped.run-failed", { processed: row?.processed ?? 0, total: row?.total ?? 0 });
+    await failRun(ctx, job.id, err);
+    return;
   }
+  await notifyStarter(ctx, job.startedBy, job.year);
+}
+
+/** The send step: DMs, `done`, the announcement, the mod-log post. Never throws. */
+async function sendWork(ctx: BotContext, job: { id: number; year: number; startedBy: string; announce: boolean }): Promise<void> {
+  try {
+    await sendLinks(ctx, job);
+    updateRun(job.id, { status: "done", finishedAt: nowSec() });
+  } catch (err) {
+    await failRun(ctx, job.id, err);
+    return;
+  }
+  let announced = false;
+  if (job.announce) {
+    const result = await postAnnouncement(ctx, job.year);
+    announced = result === "posted" || result === "already-announced";
+  }
+  const row = runRow(job.id);
+  await postModLog(ctx, "wrapped.run-finished", {
+    year: job.year,
+    admin: `<@${job.startedBy}>`,
+    sent: row?.sent ?? 0,
+    failed: row?.failed ?? 0,
+    skipped: linkCount(job.year, "skipped"),
+    announcement: announced ? "announced in the announcements channel." : "not announced.",
+  });
 }
 
 /** Members of a year whose link was processed by run `id`. */
@@ -327,19 +419,64 @@ function processedByRun(id: number, year: number): Set<string> {
  * run has not processed yet, stamping the link with the run id and saving
  * progress after each. `processed` counts the links this run has processed;
  * `total` is that plus the members still to do, and never shrinks.
+ *
+ * @returns The year aggregates, computed once for every member.
  */
-async function processMembers(job: RunJob): Promise<void> {
+async function processMembers(job: { id: number; year: number; members: string[] }): Promise<WrappedShared> {
+  const shared = wrappedShared(job.year);
   const done = processedByRun(job.id, job.year);
   const todo = job.members.filter((userId) => !done.has(userId));
   let processed = done.size;
   updateRun(job.id, { processed, total: Math.max(runRow(job.id)?.total ?? 0, processed + todo.length) });
   for (const userId of todo) {
-    const data = buildWrapped(userId, job.year);
+    const data = buildWrapped(userId, job.year, shared);
     if (data) upsertWrappedLink(userId, job.year, data, job.id);
     processed += 1;
     updateRun(job.id, { processed });
     // Let the event loop breathe (gateway, web requests) between members.
     await sleep(0);
+  }
+  return shared;
+}
+
+/**
+ * Build and store the server Wrapped once per processing step, with names from
+ * the guild cache. The year's token is kept.
+ */
+async function storeServerSnapshot(ctx: BotContext, year: number, shared: WrappedShared): Promise<void> {
+  const deps = await serverWrappedDeps(ctx);
+  const data = buildServerWrapped(year, { ...deps, clubs: shared.clubs, terms: shared.terms });
+  if (data) storeServerWrapped(year, data);
+  else getOrCreateServerToken(year);
+}
+
+/**
+ * Tell the admin who started processing that it is done (`wrapped.processed`,
+ * with a link to the dashboard). When the DM cannot be delivered the same card
+ * goes to the mod-log channel; when that is unset, nothing. Never throws.
+ */
+async function notifyStarter(ctx: BotContext, userId: string, year: number): Promise<void> {
+  try {
+    const payload = await renderBotMessage("wrapped.processed", ctx, {
+      year,
+      links: linkCount(year),
+      optedIn: optedInCount(),
+      url: `${env.PUBLIC_URL}/#/activity-admin`,
+    });
+    try {
+      const user = await ctx.client.users.fetch(userId);
+      await user.send(payload);
+      return;
+    } catch {
+      // Closed DMs or an unknown user: fall back to the mod-log channel.
+    }
+    const channelId = getConfig().modLogChannelId;
+    if (!channelId) return;
+    const channel = await ctx.client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased() || !("send" in channel)) return;
+    await (channel as TextChannel).send(payload);
+  } catch (err) {
+    console.error("[wrapped] processed notice failed:", err);
   }
 }
 
@@ -355,7 +492,7 @@ function resetForSending(year: number): void {
  * DM every pending link of an opted-in member, one per `sendDelayMs`; mark the
  * pending links of the others skipped. Members who left are passed over.
  */
-async function sendLinks(ctx: BotContext, job: RunJob): Promise<void> {
+async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Promise<void> {
   const left = leftMemberIds();
   const pending = db
     .select({ userId: schema.activityWrappedLinks.userId, token: schema.activityWrappedLinks.token })

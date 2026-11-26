@@ -3,7 +3,7 @@
  *
  * Everything here is a read. The numbers come only from the member's own rows
  * (their messages, the emoji they used, the reactions they added, their voice
- * segments). The two friend fields read the counterpart ids on those rows
+ * segments). The soulmate and most-replied-to fields read the counterpart ids on those rows
  * (who they replied to and mentioned) and the voice segments that overlap the
  * member's own; the snapshot keeps only the winning id, never a number about
  * the other member. Excluded channels, and threads under them, are left out.
@@ -18,13 +18,17 @@ import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import type { Period } from "../time.ts";
 import type { WrappedData, WrappedEmoji } from "../types/wrapped.ts";
+import { clubFor, clubYearStats, presidencyFor, presidencyTermsIn, yearPeriod } from "./extras.ts";
+import type { ClubYearStats, TermInYear } from "./extras.ts";
+import { titleAwards, titlesFor } from "./titles.ts";
+import type { TitleAward } from "./titles.ts";
 
 /** How many emoji a snapshot lists. */
 const TOP_EMOJI = 3;
 
 /**
  * Seconds in voice together that weigh as much as one reply or one mention
- * when picking the closest friend (ten minutes).
+ * when picking the soulmate (ten minutes).
  */
 export const VOICE_OVERLAP_SECONDS_PER_POINT = 600;
 
@@ -38,7 +42,32 @@ const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "frida
  * @returns `from` = 1 Jan 00:00:00 UTC (inclusive), `to` = the next 1 Jan 00:00:00 UTC (exclusive).
  */
 export function yearBounds(year: number): Period {
-  return { from: Date.UTC(year, 0, 1) / 1000, to: Date.UTC(year + 1, 0, 1) / 1000 };
+  return yearPeriod(year);
+}
+
+/**
+ * Year aggregates shared by every member's snapshot: club stats, presidency
+ * terms and title winners. A run computes them once with
+ * {@link wrappedShared} and passes them to {@link buildWrapped}.
+ */
+export interface WrappedShared {
+  /** {@link clubYearStats} for the year. */
+  clubs: ClubYearStats[];
+  /** {@link presidencyTermsIn} for the year. */
+  terms: TermInYear[];
+  /** {@link titleAwards} for the year. */
+  awards: TitleAward[];
+}
+
+/**
+ * Compute the year aggregates every member's snapshot needs.
+ *
+ * @param year - The UTC calendar year.
+ */
+export function wrappedShared(year: number): WrappedShared {
+  const clubs = clubYearStats(year);
+  const terms = presidencyTermsIn(year);
+  return { clubs, terms, awards: titleAwards(year, { clubs, terms }) };
 }
 
 /**
@@ -107,22 +136,24 @@ export function leftMemberIds(): Set<string> {
  * - `topEmoji`: emoji in their message text plus reactions they added and did
  *   not remove, merged by emoji, at most three.
  * - `mostRepliedToId`: the member they replied to most (not themselves).
- * - `closestFriendId`: the counterpart with the highest weight, where each
+ * - `soulmateId`: the counterpart with the highest weight, where each
  *   reply and each mention the member sent is one point and every
  *   {@link VOICE_OVERLAP_SECONDS_PER_POINT} seconds in the same voice channel
  *   at the same time is one point. Reply pings are not mention rows, and bots
  *   are never recorded as targets, so neither is counted.
  * - `xpLevel`: the member's current level.
+ * - `club`, `presidency`, `titles`: see `extras.ts` and `titles.ts`.
  *
  * Ties go to the lowest hour, the earliest weekday (Monday first) and the
  * lowest id, so the result is stable.
  *
  * @param userId - The member.
  * @param year - The UTC calendar year.
+ * @param shared - The year aggregates, when the caller already has them (a run).
  * @returns The snapshot, or null when the member has no message, reaction or
  *   voice time that year.
  */
-export function buildWrapped(userId: string, year: number): WrappedData | null {
+export function buildWrapped(userId: string, year: number, shared?: WrappedShared): WrappedData | null {
   const { from, to } = yearBounds(year);
   const m = schema.activityMessages;
 
@@ -178,7 +209,7 @@ export function buildWrapped(userId: string, year: number): WrappedData | null {
   for (const row of replies) bump(row.toUserId!, row.n);
   for (const row of mentionCounts(userId, from, to)) bump(row.toUserId, row.n);
   for (const row of voiceOverlaps(userId, from, to)) bump(row.userId, row.seconds / VOICE_OVERLAP_SECONDS_PER_POINT);
-  const closestFriendId = pickTop(weights);
+  const soulmateId = pickTop(weights);
 
   const level =
     db.select({ level: schema.members.level }).from(schema.members).where(eq(schema.members.userId, userId)).get()?.level ?? 0;
@@ -190,10 +221,13 @@ export function buildWrapped(userId: string, year: number): WrappedData | null {
     topEmoji: topEmoji(userId, from, to),
     busiestHour,
     busiestDay,
-    closestFriendId,
+    soulmateId,
     mostRepliedToId,
     topChannelId,
     xpLevel: level,
+    club: clubFor(userId, year, (shared ??= wrappedShared(year)).clubs),
+    presidency: presidencyFor(userId, year, shared.terms),
+    titles: titlesFor(userId, year, shared.awards),
   };
 }
 

@@ -20,7 +20,9 @@ write API that every row goes through, the seed script and how the plugin is lai
 All are defined in `src/db/schema.ts` and created by migration `0016`. Migration `0017` adds
 `parent_channel_id` to `activity_mentions`, `activity_emoji` and `activity_reactions`. Migration
 `0018` adds `send_dms` to `activity_wrapped_runs` and `processed_run_id` to
-`activity_wrapped_links`.
+`activity_wrapped_links`. Migration `0019` adds `activity_wrapped_server` and
+`activity_wrapped_signup`, adds `announce` to `activity_wrapped_runs` and drops `send_dms` again
+(processing and sending became separate steps).
 
 ### Event log
 
@@ -40,9 +42,11 @@ All are defined in `src/db/schema.ts` and created by migration `0016`. Migration
 | Export | SQL table | One row per | Purpose |
 |---|---|---|---|
 | `activityBackfill` | `activity_backfill` | channel or thread | Backfill cursor. `beforeId` is where to continue, `doneAt` marks the message pass finished, `reactionsDoneAt` the optional reaction pass. |
-| `activityWrappedRuns` | `activity_wrapped_runs` | Wrapped run | A run's status (`processing`, `sending`, `done`, `failed`), whether it DMs the links (`sendDms`, 1 or 0) and its progress counters. |
+| `activityWrappedRuns` | `activity_wrapped_runs` | Wrapped run | A run's status (`processing`, `processed`, `sending`, `done`, `failed`), whether its send step announces the server Wrapped (`announce`, 1 or 0) and its progress counters. |
 | `activityWrappedLinks` | `activity_wrapped_links` | member and year | The member's personal link: its token, the JSON snapshot of their year, the DM status, how often the link was opened, and the run that last built the snapshot (`processedRunId`, so a resumed run knows who is left). |
 | `activityWrappedOptins` | `activity_wrapped_optins` | opted-in member | Members who want their Wrapped link by DM. |
+| `activityWrappedServer` | `activity_wrapped_server` | year | The server Wrapped: its reusable public token, the JSON snapshot of the server's year (null until built) and when it was announced (`announcedAt`). |
+| `activityWrappedSignup` | `activity_wrapped_signup` | year | The sign-up message (channel and message ids, posted with buttons or not) and whether sign-ups are closed. |
 
 ### Keys and indexes
 
@@ -56,6 +60,8 @@ All are defined in `src/db/schema.ts` and created by migration `0016`. Migration
 | `activity_backfill` | `channel_id` (primary key) | |
 | `activity_wrapped_links` | (`user_id`, `year`) (primary key); `token` | |
 | `activity_wrapped_optins` | `user_id` (primary key) | |
+| `activity_wrapped_server` | `year` (primary key); `token` | |
+| `activity_wrapped_signup` | `year` (primary key) | |
 
 The unique keys are what make writes idempotent. Live capture and the backfill can both see the
 same message, so they insert with `onConflictDoNothing()` and a message is never counted twice.

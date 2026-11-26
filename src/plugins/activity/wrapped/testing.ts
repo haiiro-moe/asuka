@@ -22,13 +22,20 @@ const touchedTables = [
   schema.activityWrappedRuns,
   schema.activityWrappedLinks,
   schema.activityWrappedOptins,
+  schema.activityWrappedServer,
+  schema.activityWrappedSignup,
   schema.members,
   schema.botMessages,
+  schema.clubMembers,
+  schema.clubs,
+  schema.candidates,
+  schema.elections,
 ];
 
 /** Empty every touched table and reset the config columns the tests change. */
 export function resetWrappedTables(): void {
   for (const table of touchedTables) db.delete(table).run();
+  db.update(schema.president).set({ userId: null, termStart: null }).where(eq(schema.president.id, 1)).run();
   db.update(schema.guildConfig)
     .set({ activityExcludedChannelIds: "", modLogChannelId: null, announcementChannelId: null })
     .where(eq(schema.guildConfig.id, 1))
@@ -80,6 +87,8 @@ export interface FakeClientLog {
   dms: { userId: string; payload: Record<string, unknown> }[];
   /** Channel posts, in order: the channel and the payload. */
   posts: { channelId: string; payload: Record<string, unknown> }[];
+  /** Posted messages by id (`msg-1`, ...): their current components and every edit. Delete one to fake a deleted message. */
+  messages: Map<string, { channelId: string; components: unknown; edits: Record<string, unknown>[] }>;
 }
 
 /**
@@ -92,7 +101,8 @@ export interface FakeClientLog {
 export function fakeClient(
   opts: { closedDms?: string[]; onDm?: (userId: string) => void } = {},
 ): { client: Client; log: FakeClientLog } {
-  const log: FakeClientLog = { dms: [], posts: [] };
+  const log: FakeClientLog = { dms: [], posts: [], messages: new Map() };
+  let messageSeq = 0;
   const closed = new Set(opts.closedDms ?? []);
   const client = {
     users: {
@@ -117,7 +127,25 @@ export function fakeClient(
           isTextBased: () => true,
           async send(payload: Record<string, unknown>) {
             log.posts.push({ channelId, payload });
-            return {};
+            messageSeq += 1;
+            const id = `msg-${messageSeq}`;
+            log.messages.set(id, { channelId, components: JSON.parse(JSON.stringify(payload.components ?? [])), edits: [] });
+            return { id };
+          },
+          messages: {
+            async fetch(messageId: string) {
+              const stored = log.messages.get(messageId);
+              if (!stored) throw discordError(10008, "Unknown Message");
+              return {
+                id: messageId,
+                components: stored.components as unknown[],
+                async edit(payload: Record<string, unknown>) {
+                  stored.edits.push(payload);
+                  if (payload.components) stored.components = JSON.parse(JSON.stringify(payload.components));
+                  return {};
+                },
+              };
+            },
           },
         };
       },

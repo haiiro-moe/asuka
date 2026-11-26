@@ -28,10 +28,13 @@ function snapshot(messages: number): WrappedData {
     topEmoji: [],
     busiestHour: null,
     busiestDay: null,
-    closestFriendId: null,
+    soulmateId: null,
     mostRepliedToId: null,
     topChannelId: null,
     xpLevel: 0,
+    club: null,
+    presidency: null,
+    titles: [],
   };
 }
 
@@ -119,7 +122,12 @@ async function callRoute(method: string, path: string, params: Record<string, st
 test("the public token routes are public, return only the token's snapshot, and 404 otherwise", async () => {
   const { wrappedRoutes } = await import("../api/wrapped.ts");
   const publicPaths = wrappedRoutes.filter((r) => r.access === "public").map((r) => r.path).sort();
-  expect(publicPaths).toEqual(["/api/activity/wrapped/t/:token", "/api/activity/wrapped/t/:token/card.png"]);
+  expect(publicPaths).toEqual([
+    "/api/activity/wrapped/s/:token",
+    "/api/activity/wrapped/s/:token/card.png",
+    "/api/activity/wrapped/t/:token",
+    "/api/activity/wrapped/t/:token/card.png",
+  ]);
   for (const r of wrappedRoutes.filter((r) => r.access !== "public")) expect(r.access).toBe("admin");
 
   const a = upsertWrappedLink("ua", 2026, snapshot(1));
@@ -128,7 +136,7 @@ test("the public token routes are public, return only the token's snapshot, and 
   expect(ok.status).toBe(200);
   const body = (await ok.json()) as { data: WrappedData; displayName: string };
   expect(body.data).toEqual(snapshot(1));
-  expect(JSON.stringify(body)).not.toContain("ub");
+  expect(JSON.stringify(body)).not.toContain('"ub"');
 
   for (const token of [a.slice(0, -1), newToken(), "x"]) {
     expect((await callRoute("GET", "/api/activity/wrapped/t/:token", { token })).status).toBe(404);

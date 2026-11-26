@@ -46,7 +46,7 @@ test("counts only the given member's messages", () => {
   expect(data.topEmoji).toEqual([]);
   // u2 replied to and mentioned u1, but u1 never wrote to anyone.
   expect(data.mostRepliedToId).toBeNull();
-  expect(data.closestFriendId).toBeNull();
+  expect(data.soulmateId).toBeNull();
   expect(buildWrapped("u2", 2026)!.messages).toBe(5);
 });
 
@@ -60,7 +60,7 @@ test("year bounds are UTC: 23:59:59Z on 31 Dec counts, 00:00:00Z on 1 Jan does n
   expect(buildWrapped("u1", 2025)).toBeNull();
 });
 
-test("closestFriendId is the counterpart with the highest reply, mention and voice weight", () => {
+test("soulmateId is the counterpart with the highest reply, mention and voice weight", () => {
   const t = at("2026-05-04T12:00:00Z");
   // Three replies to u2.
   for (let i = 0; i < 3; i++) recordMessage(msg("u1", t + i, { replyToUserId: "u2", replyToMessageId: `x${i}` }));
@@ -71,26 +71,26 @@ test("closestFriendId is the counterpart with the highest reply, mention and voi
 
   const data = buildWrapped("u1", 2026)!;
   expect(data.mostRepliedToId).toBe("u2");
-  expect(data.closestFriendId).toBe("u3");
+  expect(data.soulmateId).toBe("u3");
 });
 
-test("voice overlap alone can make a closest friend, and needs the same channel", () => {
+test("voice overlap alone can make a soulmate, and needs the same channel", () => {
   const t = at("2026-05-04T12:00:00Z");
   voice("u1", "v1", t, t + 7200);
   voice("u2", "v1", t + 600, t + 4200);
   voice("u3", "v2", t, t + 7200);
 
   const data = buildWrapped("u1", 2026)!;
-  expect(data.closestFriendId).toBe("u2");
+  expect(data.soulmateId).toBe("u2");
   expect(data.voiceHours).toBe(2);
   expect(data.messages).toBe(0);
 });
 
-test("replies to yourself do not make you your own friend", () => {
+test("replies to yourself do not make you your own soulmate", () => {
   recordMessage(msg("u1", at("2026-05-04T12:00:00Z"), { replyToUserId: "u1" }));
   const data = buildWrapped("u1", 2026)!;
   expect(data.mostRepliedToId).toBeNull();
-  expect(data.closestFriendId).toBeNull();
+  expect(data.soulmateId).toBeNull();
 });
 
 test("no activity that year returns null", () => {
@@ -184,6 +184,6 @@ test("rows in excluded channels and their threads are left out", () => {
   expect(data.topEmoji).toEqual([]);
   expect(data.voiceHours).toBe(0);
   expect(data.mostRepliedToId).toBeNull();
-  expect(data.closestFriendId).toBeNull();
+  expect(data.soulmateId).toBeNull();
   expect(data.topChannelId).toBe("c1");
 });

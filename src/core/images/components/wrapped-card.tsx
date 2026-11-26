@@ -59,7 +59,7 @@ function topEmojiText(data: WrappedData): string {
  * The shareable Wrapped card in haiiro, labelled `wrapped: ~/<year>`: a gold Jacquard
  * title, the member's full-colour avatar and name, their level, five stat rows
  * (messages, voice hours, busiest hour and weekday in UTC, top emoji) and a rose
- * narrator line. It shows only the member's own numbers: the friend fields of the
+ * narrator line. It shows only the member's own numbers: the soulmate and most-replied-to fields of the
  * snapshot are never drawn, since the card is meant to be shared.
  *
  * @param props - {@link WrappedCardProps}

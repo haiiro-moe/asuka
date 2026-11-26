@@ -10,7 +10,8 @@ import { wrappedListeners } from "./listeners.ts";
 import { linkUrl } from "./links.ts";
 import { isOptedIn, optedInCount, setOptIn, signupMessage } from "./optin.ts";
 import { startWrappedRun, waitForWrappedRun, wrappedRunTiming } from "./run.ts";
-import { allButtons, allStrings, at, fakeClient, fakeCtx, msg, resetWrappedTables } from "./testing.ts";
+import { closeSignups, getSignupState, postSignupMessage, reopenSignups, signupsClosed } from "./signup.ts";
+import { allButtons, allStrings, at, fakeClient, fakeCtx, msg, resetWrappedTables, setConfig } from "./testing.ts";
 
 beforeAll(() => {
   initDb();
@@ -56,13 +57,18 @@ async function handleClick(customId: string, userId: string) {
 }
 
 /** Run `/wrapped <sub>` as `userId`; `admin` decides the member's permissions. */
-async function slash(sub: string, userId: string, opts: { admin?: boolean; year?: number; send?: boolean } = {}) {
+async function slash(
+  sub: string,
+  userId: string,
+  opts: { admin?: boolean; year?: number; announce?: boolean; action?: string; fake?: ReturnType<typeof fakeClient> } = {},
+) {
   const replies: Reply[] = [];
   const interaction = {
     options: {
       getSubcommand: () => sub,
       getInteger: (name: string) => (name === "year" ? (opts.year ?? null) : null),
-      getBoolean: (name: string) => (name === "send" ? (opts.send ?? null) : null),
+      getBoolean: (name: string) => (name === "announce" ? (opts.announce ?? null) : null),
+      getString: (name: string) => (name === "action" ? (opts.action ?? null) : null),
     },
     user: { id: userId },
     member: { permissions: { has: () => opts.admin ?? false } },
@@ -80,7 +86,7 @@ async function slash(sub: string, userId: string, opts: { admin?: boolean; year?
       return {};
     },
   };
-  const { client, log } = fakeClient();
+  const { client, log } = opts.fake ?? fakeClient();
   await wrappedCommands[0]!.execute(interaction as never, fakeCtx(client));
   return { replies, log };
 }
@@ -158,7 +164,7 @@ test("/wrapped me before any run is not ready", async () => {
 test("/wrapped me returns the link for a member who is not opted in", async () => {
   recordMessage(msg("u1", at("2026-06-01T12:00:00Z")));
   const { client } = fakeClient();
-  startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin", sendDms: true });
+  startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin" });
   await waitForWrappedRun();
   const token = db
     .select()
@@ -174,14 +180,14 @@ test("/wrapped me returns the link for a member who is not opted in", async () =
 test("/wrapped me with no activity that year is an empty envelope", async () => {
   recordMessage(msg("u1", at("2026-06-01T12:00:00Z")));
   const { client } = fakeClient();
-  startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin", sendDms: false });
+  startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin" });
   await waitForWrappedRun();
   const { replies } = await slash("me", "u9");
   expect(textOf(replies[0]!)).toContain("you were not around in 2026");
 });
 
 test("admin subcommands are forbidden to members", async () => {
-  for (const sub of ["start", "status", "resume"]) {
+  for (const sub of ["start", "send", "announce", "signups", "status", "resume"]) {
     const { replies } = await slash(sub, "u1");
     expect(textOf(replies[0]!)).toContain("forbidden");
     expect(textOf(replies[0]!)).toContain("admin only.");
@@ -193,15 +199,29 @@ test("/wrapped start and status for an admin use the run functions", async () =>
   const none = await slash("status", "admin", { admin: true });
   expect(textOf(none.replies[0]!)).toContain("no run yet.");
 
+  const early = await slash("send", "admin", { admin: true });
+  expect(textOf(early.replies[0]!)).toContain("not processed");
+
   const started = await slash("start", "admin", { admin: true, year: 2026 });
-  expect(textOf(started.replies[0]!)).toContain("run started, nothing will be sent");
+  expect(textOf(started.replies[0]!)).toContain("processing started");
+  expect(textOf(started.replies[0]!)).toContain("» next: you get a dm when processing is done, then send the dms with /wrapped send.");
   const busy = await slash("start", "admin", { admin: true, year: 2026 });
   expect(textOf(busy.replies[0]!)).toContain("already running");
   await waitForWrappedRun();
 
+  const processed = await slash("status", "admin", { admin: true });
+  expect(textOf(processed.replies[0]!)).toContain("wrapped, processed");
+
+  setOptIn("u1", true);
+  const sending = await slash("send", "admin", { admin: true, announce: false });
+  expect(textOf(sending.replies[0]!)).toContain("» dms: opted-in members only (1 of 1)");
+  expect(textOf(sending.replies[0]!)).toContain("» announcement: off");
+  await waitForWrappedRun();
+
   const done = await slash("status", "admin", { admin: true });
   expect(textOf(done.replies[0]!)).toContain("wrapped, done");
-  expect(textOf(done.replies[0]!)).toContain("» 1 not opted in");
+  expect(textOf(done.replies[0]!)).toContain("» 1 sent");
+  expect(textOf(done.replies[0]!)).toContain("» not announced");
 });
 
 test("every wrapped.* default is a valid lowercase payload with no ! and no {param} left", async () => {
@@ -218,6 +238,9 @@ test("every wrapped.* default is a valid lowercase payload with no ! and no {par
       "wrapped.me-empty",
       "wrapped.run-finished",
       "wrapped.run-failed",
+      "wrapped.announce",
+      "wrapped.processed",
+      "wrapped.signup-closed",
     ].sort(),
   );
   const { client } = fakeClient();
@@ -233,4 +256,83 @@ test("every wrapped.* default is a valid lowercase payload with no ! and no {par
     const rendered = await renderBotMessage(def.key, fakeCtx(client), params);
     for (const s of allStrings(rendered.components)) expect(s).not.toMatch(/\{[a-zA-Z_]\w*\}/);
   }
+});
+
+test("postSignupMessage with buttons stores the message; without buttons it has no buttons", async () => {
+  const fake = fakeClient();
+  expect(await postSignupMessage(fakeCtx(fake.client), { year: 2026, buttons: true })).toBe("no-channel");
+  setConfig({ announcementChannelId: "ann" });
+  expect(await postSignupMessage(fakeCtx(fake.client), { year: 2026, buttons: true })).toBe("posted");
+  expect(allButtons(fake.log.posts[0]!.payload.components).map((b) => b.custom_id)).toEqual(["wrapped:optin", "wrapped:optout"]);
+  expect(getSignupState()).toEqual({ year: 2026, posted: true, buttons: true, closed: false, optedIn: 0 });
+
+  expect(await postSignupMessage(fakeCtx(fake.client), { year: 2026, buttons: false })).toBe("posted");
+  const plain = fake.log.posts[1]!.payload;
+  expect(allButtons(plain.components)).toEqual([]);
+  expect(textOf(plain as Reply)).toContain("wrapped is coming");
+  expect(getSignupState().buttons).toBe(false);
+});
+
+test("closeSignups disables both buttons; handlers change nothing while closed; reopenSignups restores them", async () => {
+  setConfig({ announcementChannelId: "ann" });
+  const fake = fakeClient();
+  const ctx = fakeCtx(fake.client);
+  await postSignupMessage(ctx, { year: 2026, buttons: true });
+  const messageId = [...fake.log.messages.keys()][0]!;
+  setOptIn("u2", true);
+
+  await closeSignups(ctx, 2026);
+  const closed = fake.log.messages.get(messageId)!;
+  expect(closed.edits.length).toBe(1);
+  expect(allButtons(closed.components).map((b) => [b.label, b.disabled])).toEqual([
+    ["opt in", true],
+    ["opt out", true],
+  ]);
+  expect(getSignupState().closed).toBe(true);
+
+  const click1 = await handleClick("wrapped:optin", "u1");
+  expect(textOf(click1[0]!)).toContain("sign-ups are closed");
+  expect(isOptedIn("u1")).toBe(false);
+  const click2 = await handleClick("wrapped:optout", "u2");
+  expect(textOf(click2[0]!)).toContain("your choice stands.");
+  expect(isOptedIn("u2")).toBe(true);
+  const cmd = await slash("optin", "u3");
+  expect(textOf(cmd.replies[0]!)).toContain("sign-ups are closed");
+  expect(isOptedIn("u3")).toBe(false);
+  // /wrapped me always works.
+  const me = await slash("me", "u3");
+  expect(textOf(me.replies[0]!)).toContain("not yet");
+
+  await reopenSignups(ctx, 2026);
+  expect(allButtons(fake.log.messages.get(messageId)!.components).map((b) => b.disabled)).toEqual([false, false]);
+  expect(getSignupState().closed).toBe(false);
+  await handleClick("wrapped:optin", "u1");
+  expect(isOptedIn("u1")).toBe(true);
+});
+
+test("closing with a deleted message does not throw and still closes sign-ups", async () => {
+  setConfig({ announcementChannelId: "ann" });
+  const fake = fakeClient();
+  const ctx = fakeCtx(fake.client);
+  await postSignupMessage(ctx, { year: 2026, buttons: true });
+  fake.log.messages.clear();
+  await closeSignups(ctx, 2026);
+  expect(getSignupState().closed).toBe(true);
+  // Closing a year with no message at all closes it too.
+  resetWrappedTables();
+  await closeSignups(ctx, 2026);
+  expect(signupsClosed()).toBe(true);
+});
+
+test("/wrapped signups posts, closes and reopens", async () => {
+  setConfig({ announcementChannelId: "ann" });
+  const fake = fakeClient();
+  const posted = await slash("signups", "admin", { admin: true, action: "post", fake });
+  expect(textOf(posted.replies[0]!)).toContain("sign-up posted");
+  const closed = await slash("signups", "admin", { admin: true, action: "close", fake });
+  expect(textOf(closed.replies[0]!)).toContain("sign-ups closed");
+  expect(signupsClosed()).toBe(true);
+  const reopened = await slash("signups", "admin", { admin: true, action: "reopen", fake });
+  expect(textOf(reopened.replies[0]!)).toContain("sign-ups open");
+  expect(signupsClosed()).toBe(false);
 });

@@ -1,11 +1,34 @@
-import type { TextChannel } from "discord.js";
-import { getConfig } from "../../../db/index.ts";
-import { renderWrappedCardPng } from "../../../core/images/index.tsx";
+import { renderWrappedCardPng, renderWrappedServerCardPng } from "../../../core/images/index.tsx";
 import type { ApiContext, ApiRoute, BotContext } from "../../../core/plugin.ts";
-import type { WrappedData, WrappedLinkResponse } from "../types/wrapped.ts";
+import type {
+  WrappedAnnounceResponse,
+  WrappedData,
+  WrappedLinkResponse,
+  WrappedResumeResponse,
+  WrappedRunStartResponse,
+  WrappedSendResponse,
+  ServerWrappedResponse,
+} from "../types/wrapped.ts";
+import {
+  buildServerWrapped,
+  getOrCreateServerToken,
+  getServerRow,
+  getServerWrappedByToken,
+  serverWrappedDeps,
+  serverWrappedUrl,
+  storeServerWrapped,
+} from "../wrapped/server.ts";
 import { ensureWrappedLink, getLinkByToken, linkUrl, peekLinkByToken } from "../wrapped/links.ts";
-import { currentUtcYear, optedInCount, signupMessage } from "../wrapped/optin.ts";
-import { getWrappedStatus, resendWrappedDm, resumeWrappedRun, runSendsDms, startWrappedRun } from "../wrapped/run.ts";
+import { currentUtcYear, optedInCount } from "../wrapped/optin.ts";
+import {
+  getWrappedStatus,
+  postAnnouncement,
+  resendWrappedDm,
+  resumeWrappedRun,
+  startWrappedRun,
+  startWrappedSend,
+} from "../wrapped/run.ts";
+import { closeSignups, getSignupState, postSignupMessage, reopenSignups } from "../wrapped/signup.ts";
 
 /** Lowest and highest year a run or link may be asked for. */
 const MIN_YEAR = 2015;
@@ -76,16 +99,16 @@ async function channelNames(
 
 /** The public response for a link: the snapshot plus display names resolved now. */
 async function linkResponse(ctx: BotContext, userId: string, data: WrappedData): Promise<WrappedLinkResponse> {
-  const [self, friend, repliedTo, channel] = await Promise.all([
+  const [self, soulmate, repliedTo, channel] = await Promise.all([
     memberInfo(ctx, userId),
-    data.closestFriendId ? memberInfo(ctx, data.closestFriendId) : null,
+    data.soulmateId ? memberInfo(ctx, data.soulmateId) : null,
     data.mostRepliedToId ? memberInfo(ctx, data.mostRepliedToId) : null,
     channelNames(ctx, data.topChannelId),
   ]);
   return {
     data,
     displayName: self.name ?? "you",
-    closestFriendName: friend?.name ?? null,
+    soulmateName: soulmate?.name ?? null,
     mostRepliedToName: repliedTo?.name ?? null,
     topChannelName: channel.name,
     topChannelParentName: channel.parentName,
@@ -101,10 +124,10 @@ const getRun: ApiRoute = {
 };
 
 /**
- * `POST /api/activity/wrapped/run` (admin): start a run. Body
- * `{ year?: number; sendDms?: boolean }`, defaulting to the current UTC year and
- * `true`. Responds 202 `{ result: "started", status }`, or 409
- * `{ result: "already-running", status }`.
+ * `POST /api/activity/wrapped/run` (admin): start processing a year (body
+ * `{ year?: number }`, default the current UTC year). Processing sends no DM to
+ * members and posts no announcement. Responds 202 or 409
+ * {@link WrappedRunStartResponse}.
  */
 const postRun: ApiRoute = {
   method: "POST",
@@ -115,28 +138,56 @@ const postRun: ApiRoute = {
     if (!body) return error(400, "body must be a JSON object");
     const year = body.year === undefined ? currentUtcYear() : parseYear(body.year);
     if (year === null) return error(400, `year must be a whole number from ${MIN_YEAR} to ${MAX_YEAR}`);
-    if (body.sendDms !== undefined && typeof body.sendDms !== "boolean") return error(400, "sendDms must be a boolean");
-    const sendDms = (body.sendDms as boolean | undefined) ?? true;
-    const result = startWrappedRun(ctx, { year, startedBy: ctx.session!.userId, sendDms });
-    return Response.json({ result, status: getWrappedStatus() }, { status: result === "started" ? 202 : 409 });
+    const result = startWrappedRun(ctx, { year, startedBy: ctx.session!.userId });
+    const out: WrappedRunStartResponse = { result, status: getWrappedStatus() };
+    return Response.json(out, { status: result === "started" ? 202 : 409 });
   },
 };
 
 /**
- * `POST /api/activity/wrapped/run/resume` (admin): continue an interrupted run.
- * Responds 202 `{ result: "resumed", sendDms, status }` or 409
- * `{ result: "nothing-to-resume", sendDms, status }`; `sendDms` says whether DMs
- * follow (null when no run exists).
+ * `POST /api/activity/wrapped/send` (admin): DM opted-in members their links
+ * (body `{ announce?: boolean }`, default true: announce the server Wrapped
+ * when the DMs finish). Responds 202 or 409 {@link WrappedSendResponse}.
  */
+const postSend: ApiRoute = {
+  method: "POST",
+  path: "/api/activity/wrapped/send",
+  access: "admin",
+  async handle(req, ctx: ApiContext) {
+    const body = await jsonBody(req);
+    if (!body) return error(400, "body must be a JSON object");
+    if (body.announce !== undefined && typeof body.announce !== "boolean") return error(400, "announce must be a boolean");
+    const result = startWrappedSend(ctx, { startedBy: ctx.session!.userId, announce: body.announce as boolean | undefined });
+    const out: WrappedSendResponse = { result, status: getWrappedStatus() };
+    return Response.json(out, { status: result === "started" ? 202 : 409 });
+  },
+};
+
+/**
+ * `POST /api/activity/wrapped/announce` (admin): post the server Wrapped link
+ * to the announcement channel for the latest run's year (once per year).
+ * Responds 200 or 409 {@link WrappedAnnounceResponse}.
+ */
+const postAnnounce: ApiRoute = {
+  method: "POST",
+  path: "/api/activity/wrapped/announce",
+  access: "admin",
+  async handle(_req, ctx) {
+    const result = await postAnnouncement(ctx, getWrappedStatus().year ?? currentUtcYear());
+    const out: WrappedAnnounceResponse = { result };
+    return Response.json(out, { status: result === "posted" ? 200 : 409 });
+  },
+};
+
+/** `POST /api/activity/wrapped/run/resume` (admin): continue an interrupted run. 202 or 409 {@link WrappedResumeResponse}. */
 const resumeRun: ApiRoute = {
   method: "POST",
   path: "/api/activity/wrapped/run/resume",
   access: "admin",
   handle(_req, ctx) {
     const result = resumeWrappedRun(ctx);
-    const status = getWrappedStatus();
-    const sendDms = status.id === null ? null : runSendsDms(status.id);
-    return Response.json({ result, sendDms, status }, { status: result === "resumed" ? 202 : 409 });
+    const out: WrappedResumeResponse = { result, status: getWrappedStatus() };
+    return Response.json(out, { status: result === "resumed" ? 202 : 409 });
   },
 };
 
@@ -158,23 +209,57 @@ const resend: ApiRoute = {
   },
 };
 
+/** `GET /api/activity/wrapped/signup` (admin): the sign-up state, {@link WrappedSignupState}. */
+const getSignup: ApiRoute = {
+  method: "GET",
+  path: "/api/activity/wrapped/signup",
+  access: "admin",
+  handle: () => Response.json(getSignupState()),
+};
+
 /**
  * `POST /api/activity/wrapped/signup-message` (admin): post the sign-up message
- * (opt-in and opt-out buttons) to the announcement channel. 400 when no
- * announcement channel is set or it cannot be reached.
+ * to the announcement channel (body `{ year?: number; buttons?: boolean }`,
+ * defaults: the current UTC year, with buttons). Responds the new
+ * {@link WrappedSignupState}; 400 when no announcement channel is set or reachable.
  */
 const postSignup: ApiRoute = {
   method: "POST",
   path: "/api/activity/wrapped/signup-message",
   access: "admin",
+  async handle(req, ctx) {
+    const body = await jsonBody(req);
+    if (!body) return error(400, "body must be a JSON object");
+    const year = body.year === undefined ? currentUtcYear() : parseYear(body.year);
+    if (year === null) return error(400, `year must be a whole number from ${MIN_YEAR} to ${MAX_YEAR}`);
+    if (body.buttons !== undefined && typeof body.buttons !== "boolean") return error(400, "buttons must be a boolean");
+    const result = await postSignupMessage(ctx, { year, buttons: body.buttons !== false });
+    if (result === "no-channel") return error(400, "no announcement channel is set, or it cannot be reached");
+    return Response.json(getSignupState(year));
+  },
+};
+
+/** `POST /api/activity/wrapped/signup/close` (admin): close sign-ups (buttons disabled). Responds the {@link WrappedSignupState}. */
+const closeSignup: ApiRoute = {
+  method: "POST",
+  path: "/api/activity/wrapped/signup/close",
+  access: "admin",
   async handle(_req, ctx) {
-    const channelId = getConfig().announcementChannelId;
-    if (!channelId) return error(400, "no announcement channel is set");
-    const channel = await ctx.client.channels.fetch(channelId).catch(() => null);
-    if (!channel?.isTextBased() || !("send" in channel)) return error(400, "the announcement channel cannot be reached");
-    const year = getWrappedStatus().year ?? currentUtcYear();
-    await (channel as TextChannel).send(await signupMessage(ctx.client, year));
-    return Response.json({ ok: true });
+    const { year } = getSignupState();
+    await closeSignups(ctx, year);
+    return Response.json(getSignupState(year));
+  },
+};
+
+/** `POST /api/activity/wrapped/signup/reopen` (admin): reopen sign-ups. Responds the {@link WrappedSignupState}. */
+const reopenSignup: ApiRoute = {
+  method: "POST",
+  path: "/api/activity/wrapped/signup/reopen",
+  access: "admin",
+  async handle(_req, ctx) {
+    const { year } = getSignupState();
+    await reopenSignups(ctx, year);
+    return Response.json(getSignupState(year));
   },
 };
 
@@ -242,17 +327,83 @@ const getCard: ApiRoute = {
 };
 
 /**
+ * `GET /api/activity/wrapped/server-link?year=` (admin): `{ url }` of the server
+ * Wrapped, building its snapshot first when the year has none (to preview it).
+ * 404 when nothing happened that year.
+ */
+const getServerLink: ApiRoute = {
+  method: "GET",
+  path: "/api/activity/wrapped/server-link",
+  access: "admin",
+  async handle(req, ctx) {
+    const year = yearParam(req);
+    if (year === null) return error(400, "bad year");
+    if (!getServerRow(year)?.data) {
+      const data = buildServerWrapped(year, await serverWrappedDeps(ctx));
+      if (!data) return error(404, "nothing happened that year");
+      storeServerWrapped(year, data);
+    }
+    return Response.json({ url: serverWrappedUrl(getOrCreateServerToken(year)) });
+  },
+};
+
+/**
+ * `GET /api/activity/wrapped/s/:token` (public; the token is the authorisation):
+ * the server's {@link ServerWrappedResponse}, or 404 for an unknown or truncated
+ * token. No member's personal snapshot is part of it.
+ */
+const getServerByToken: ApiRoute = {
+  method: "GET",
+  path: "/api/activity/wrapped/s/:token",
+  access: "public",
+  handle(_req, ctx) {
+    const found = getServerWrappedByToken(ctx.params.token ?? "");
+    if (!found) return error(404, "not found");
+    const out: ServerWrappedResponse = { data: found.data };
+    return Response.json(out);
+  },
+};
+
+/**
+ * `GET /api/activity/wrapped/s/:token/card.png` (public): the server Wrapped card
+ * as a PNG. 404 JSON for an unknown token; the {@link ServerWrappedResponse} JSON
+ * when the card cannot be rendered.
+ */
+const getServerCard: ApiRoute = {
+  method: "GET",
+  path: "/api/activity/wrapped/s/:token/card.png",
+  access: "public",
+  async handle(_req, ctx) {
+    const found = getServerWrappedByToken(ctx.params.token ?? "");
+    if (!found) return error(404, "not found");
+    const png = await renderWrappedServerCardPng(found.data);
+    if (!png) return Response.json({ data: found.data } satisfies ServerWrappedResponse);
+    return new Response(new Uint8Array(png), {
+      headers: { "content-type": "image/png", "cache-control": "public, max-age=300" },
+    });
+  },
+};
+
+/**
  * Wrapped routes: run control and progress for admins, and the personal link's
  * public data and card. Nothing here starts a run except `POST .../run`.
  */
 export const wrappedRoutes: ApiRoute[] = [
   getRun,
   postRun,
+  postSend,
+  postAnnounce,
   resumeRun,
   resend,
+  getSignup,
   postSignup,
+  closeSignup,
+  reopenSignup,
   getOptins,
   getLink,
   getByToken,
   getCard,
+  getServerLink,
+  getServerByToken,
+  getServerCard,
 ];

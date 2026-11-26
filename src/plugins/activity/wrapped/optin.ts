@@ -14,6 +14,7 @@ import { messageCtx, renderBotMessage } from "../../../core/messages.ts";
 import { nowSec } from "../../../core/util.ts";
 import { db, schema } from "../../../db/index.ts";
 import { withWrappedBanner } from "./banner.ts";
+import { signupsClosed } from "./signup.ts";
 
 /** Custom id of the sign-up message's opt-in button. */
 export const OPTIN_BUTTON_ID = "wrapped:optin";
@@ -57,6 +58,8 @@ export function optedInCount(): number {
 /**
  * Record a member's opt-in choice and render the matching ephemeral reply:
  * `wrapped.optin`, `wrapped.already` (opting in twice) or `wrapped.optout`.
+ * While sign-ups are closed nothing changes and the reply is
+ * `wrapped.signup-closed`.
  * Shared by the sign-up buttons and `/wrapped optin` / `optout`.
  *
  * @param client - The bot client, for `{{variables}}` in an edited template.
@@ -65,6 +68,7 @@ export function optedInCount(): number {
  * @returns The rendered reply, to be sent with the Ephemeral flag.
  */
 export async function applyOptInChoice(client: Client, userId: string, optedIn: boolean) {
+  if (signupsClosed()) return renderBotMessage("wrapped.signup-closed", messageCtx(client), {});
   let key = "wrapped.optout";
   if (optedIn) key = isOptedIn(userId) ? "wrapped.already" : "wrapped.optin";
   setOptIn(userId, optedIn);
@@ -79,8 +83,9 @@ export function currentUtcYear(): number {
 /**
  * The sign-up message an admin posts to the announcement channel: the
  * `wrapped.signup` catalog message (with the `wrapped:optin` and
- * `wrapped:optout` buttons) under the `wrapped <year>` title banner, or
- * text-only when the banner cannot be rendered.
+ * `wrapped:optout` buttons, unless `buttons` is false) under the
+ * `wrapped <year>` title banner, or text-only when the banner cannot be
+ * rendered.
  *
  * It is async because the catalog message may hold `{{variables}}` and the
  * banner is rendered.
@@ -88,10 +93,31 @@ export function currentUtcYear(): number {
  * @param client - The bot client, for `{{variables}}` in an edited template.
  *   Optional: without it variables resolve against no client.
  * @param year - The year on the banner; defaults to the current UTC year.
+ * @param opts.buttons - False posts the card without its buttons (information only).
  * @returns Send options for `channel.send()`.
  */
-export async function signupMessage(client?: Client, year: number = currentUtcYear()): Promise<MessageCreateOptions> {
+export async function signupMessage(
+  client?: Client,
+  year: number = currentUtcYear(),
+  opts: { buttons?: boolean } = {},
+): Promise<MessageCreateOptions> {
   const ctx = messageCtx(client ?? (null as unknown as Client));
   const rendered = await renderBotMessage("wrapped.signup", ctx, { year });
+  if (opts.buttons === false) rendered.components = withoutActionRows(rendered.components) as typeof rendered.components;
   return (await withWrappedBanner(rendered, year)) as MessageCreateOptions;
+}
+
+/** Drop every action row (type 1) from a component tree, keeping the rest. */
+function withoutActionRows(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node
+      .filter((n) => !(n && typeof n === "object" && (n as { type?: number }).type === 1))
+      .map(withoutActionRows);
+  }
+  if (node && typeof node === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) out[k] = withoutActionRows(v);
+    return out;
+  }
+  return node;
 }

@@ -61,8 +61,14 @@ import {
   WRAPPED_CARD_HEIGHT,
   type WrappedCardProps,
 } from "./components/wrapped-card.tsx";
+import {
+  WrappedServerCard,
+  WRAPPED_SERVER_CARD_WIDTH,
+  WRAPPED_SERVER_CARD_HEIGHT,
+  type WrappedServerCardProps,
+} from "./components/wrapped-server-card.tsx";
 import { fetchImageDataUri } from "./util.ts";
-import type { WrappedData } from "../../plugins/activity/types/wrapped.ts";
+import type { ServerWrapped, WrappedData } from "../../plugins/activity/types/wrapped.ts";
 
 export { fetchImageDataUri } from "./util.ts";
 export type {
@@ -75,6 +81,7 @@ export type {
   AniListMediaCardProps,
   AniListCharacterCardProps,
   WrappedCardProps,
+  WrappedServerCardProps,
 };
 export type { PresidencyTerm } from "./components/profile-card.tsx";
 export type { LeaderboardRow } from "./components/leaderboard-card.tsx";
@@ -206,5 +213,19 @@ export async function renderWrappedCardPng(
   return tryRenderPng(<WrappedCard data={data} displayName={displayName} avatarDataUri={avatarDataUri} />, {
     width: WRAPPED_CARD_WIDTH,
     height: WRAPPED_CARD_HEIGHT,
+  });
+}
+
+/**
+ * The shareable server Wrapped card (whole-server numbers; only the best club and the
+ * president are named).
+ * Returns the PNG, or null on any render failure so the caller can send its fallback.
+ *
+ * @param data - The server's Wrapped snapshot.
+ */
+export function renderWrappedServerCardPng(data: ServerWrapped): Promise<Buffer | null> {
+  return tryRenderPng(<WrappedServerCard data={data} />, {
+    width: WRAPPED_SERVER_CARD_WIDTH,
+    height: WRAPPED_SERVER_CARD_HEIGHT,
   });
 }
