@@ -28,6 +28,8 @@ The tables (`activity_wrapped_runs`, `activity_wrapped_links`, `activity_wrapped
   (exclusive). A message at 23:59:59Z on 31 Dec counts for that year.
 - **Threads are channels**: anything ranked by channel groups by the message's own channel. Excluded
   channels, and threads under them, are left out of every number.
+- **Voice needs two whole months of data.** Nothing derived from voice is shown until the voice log
+  holds two whole UTC months (`src/plugins/activity/voice-ready.ts`); see "Voice readiness" below.
 - **All aggregation is in SQL** (`group by`, joins, window functions for the median); only one row
   per member, club, term or emoji comes back to JavaScript.
 
@@ -63,6 +65,27 @@ src/core/images/components/wrapped-card.tsx          the member card (renderWrap
 src/core/images/components/wrapped-server-card.tsx   the server card (renderWrappedServerCardPng)
 ```
 
+## Voice readiness
+
+`voiceReadiness()` (`voice-ready.ts`) says whether the voice log is old enough. Processing checks it
+**once** when it starts (or resumes) and passes the answer down through `wrappedShared(year,
+voiceReady)` and `buildServerWrapped(year, { voiceReady })`; the on-demand paths (`ensureWrappedLink`,
+the server-link route) check it once per request. Both snapshots store the answer as `voiceReady`,
+so a story never changes after it is sent, and the public responses repeat it at the top level.
+
+While voice is **not** ready:
+
+- `WrappedData.voiceHours` and `ServerWrapped.voiceHours` are `null` (never a made-up zero); the
+  cards drop their voice row and the story pages skip the voice slide.
+- The soulmate is chosen from replies and mentions only; the best pair from replies only, with
+  `bestPair.voiceHours` null.
+- The voice titles (`longest-voice`, `most-voice-hours`, `club-most-voice`) are not awarded, a
+  club's `voiceRank` is null and the club voice figures are not computed.
+- Voice time alone does not make a member active, so a member with only voice gets no snapshot.
+- Presidency numbers do not use voice and are unchanged.
+
+When voice is ready, everything is as described below.
+
 ## The member snapshot
 
 `buildWrapped(userId, year, shared?)` returns a `WrappedData`, or null when the member has no
@@ -72,7 +95,7 @@ message, live reaction or voice time that year. A run computes the year aggregat
 | Field | From |
 |---|---|
 | `messages` | their messages |
-| `voiceHours` | their voice segments, clipped to the year, one decimal |
+| `voiceHours` | their voice segments, clipped to the year, one decimal; null while voice is not ready |
 | `topEmoji` | up to 3: emoji in their message text plus reactions they added and did not remove, merged by emoji key |
 | `busiestHour` | UTC hour (0-23) with most messages |
 | `busiestDay` | UTC weekday with most messages, lowercase (`tuesday`) |
@@ -83,6 +106,7 @@ message, live reaction or voice time that year. A run computes the year aggregat
 | `club` | the club they own (see below), or null |
 | `presidency` | their presidency that year (see below), or null |
 | `titles` | the titles they won (see below) |
+| `voiceReady` | whether voice figures were shown when the snapshot was taken |
 
 The soulmate and most-replied-to fields keep only the other member's id, never a number about them.
 Replies and mentions count in the member's direction only (what they sent). Reply pings are not
@@ -144,7 +168,8 @@ names are stored in the snapshot and the public story never calls Discord. Tests
 | Field | From |
 |---|---|
 | `messages`, `speakers` | all messages, distinct authors |
-| `voiceHours` | all voice segments, clipped |
+| `voiceHours` | all voice segments, clipped; null while voice is not ready |
+| `voiceReady` | whether voice figures were shown when the snapshot was taken |
 | `topEmoji` (3), `unusedCustomEmoji` | text and reactions merged; the guild's custom emoji with no use that year |
 | `topChannels` (5) | by the message's own channel; a thread carries its parent's name |
 | `busiestHour`, `busiestWeekday` | UTC, by messages |
@@ -313,7 +338,7 @@ nix develop -c bun test src/plugins/activity/wrapped
 ```
 
 `data.test.ts` (snapshot numbers, UTC bounds, soulmate weights, emoji, threads, exclusions),
-`extras.test.ts` (club and ranks, presidency over a fixed term), `titles.test.ts` (sole winner,
+`extras.test.ts` (club and ranks, presidency over a fixed term), `voice.test.ts` (voice readiness: null voice figures, soulmate and titles without voice, one readiness check per run, cards without voice), `titles.test.ts` (sole winner,
 ties, thresholds, club and president titles), `server.test.ts` (server totals, threads, best pair
 naming, best club, president, server token, announcement, public routes), `links.test.ts` (tokens,
 reuse, isolation, the public member routes), `run.test.ts` (the three steps, the starter's DM and

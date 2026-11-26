@@ -30,8 +30,11 @@ export interface WrappedData {
   year: number;
   /** Messages the member sent. */
   messages: number;
-  /** Hours the member spent in voice, rounded to one decimal. */
-  voiceHours: number;
+  /**
+   * Hours the member spent in voice, rounded to one decimal; null while voice
+   * is not ready (see {@link WrappedData.voiceReady}), never a made-up zero.
+   */
+  voiceHours: number | null;
   /** Up to three emoji, most used first: text use and reactions merged. */
   topEmoji: WrappedEmoji[];
   /** The UTC hour (0-23) the member sent the most messages in; null without messages. */
@@ -58,6 +61,13 @@ export interface WrappedData {
   presidency: WrappedPresidency | null;
   /** Titles they won that year (rank 1, ties shared); empty for none. */
   titles: WrappedTitle[];
+  /**
+   * Whether voice figures were shown when the snapshot was taken: the voice log
+   * held at least two whole months (`voice-ready.ts`). When false,
+   * `voiceHours` and the club's `voiceRank` are null, the soulmate was chosen
+   * without voice, and no voice title was awarded. Pages skip the voice slide.
+   */
+  voiceReady: boolean;
 }
 
 /** The club a member owns, with its year and its ranks among all approved clubs. */
@@ -74,8 +84,8 @@ export interface WrappedClub {
   messagesRank: number;
   /** Rank by members. */
   membersRank: number;
-  /** Rank by seconds in the club's voice and text channels. */
-  voiceRank: number;
+  /** Rank by seconds in the club's voice and text channels; null while voice is not ready. */
+  voiceRank: number | null;
   /** How many approved clubs there are. */
   clubs: number;
 }
@@ -121,12 +131,18 @@ export interface WrappedTitle {
 export interface ServerWrapped {
   /** The UTC calendar year. */
   year: number;
+  /**
+   * Whether voice figures were shown when the snapshot was taken (two whole
+   * months of voice data). When false, `voiceHours` and `bestPair.voiceHours`
+   * are null and the best pair was chosen by replies only.
+   */
+  voiceReady: boolean;
   /** Messages sent that year. */
   messages: number;
   /** Members who sent at least one message. */
   speakers: number;
-  /** Hours spent in voice by everyone, one decimal. */
-  voiceHours: number;
+  /** Hours spent in voice by everyone, one decimal; null while voice is not ready. */
+  voiceHours: number | null;
   /** Up to three emoji, most used first (text and reactions merged). */
   topEmoji: { emoji: string; name: string | null; count: number }[];
   /** The guild's custom emoji nobody used that year. */
@@ -137,8 +153,11 @@ export interface ServerWrapped {
   busiestHour: number | null;
   /** UTC weekday with the most messages, lowercase; null without messages. */
   busiestWeekday: string | null;
-  /** The pair with the most replies and voice time together; null unless both opted in. */
-  bestPair: { aId: string; aName: string | null; bId: string; bName: string | null; replies: number; voiceHours: number } | null;
+  /**
+   * The pair with the most replies and voice time together (replies only while
+   * voice is not ready, and then `voiceHours` is null); null unless both opted in.
+   */
+  bestPair: { aId: string; aName: string | null; bId: string; bName: string | null; replies: number; voiceHours: number | null } | null;
   /** The approved club with the most messages; null when no club wrote anything. */
   bestClub: { name: string; founderName: string | null; members: number; messages: number } | null;
   /** Whoever held the chair longest that year; null when nobody did. */
@@ -158,6 +177,8 @@ export interface ServerWrapped {
 export interface ServerWrappedResponse {
   /** The server's snapshot. */
   data: ServerWrapped;
+  /** Whether voice figures may be shown (copied from `data.voiceReady`). */
+  voiceReady: boolean;
 }
 
 /** What a Wrapped run is doing. */
@@ -255,6 +276,8 @@ export interface WrappedSignupState {
 export interface WrappedLinkResponse {
   /** The link holder's snapshot. */
   data: WrappedData;
+  /** Whether voice figures may be shown (copied from `data.voiceReady`). */
+  voiceReady: boolean;
   /** The link holder's display name. */
   displayName: string;
   /** Display name of {@link WrappedData.soulmateId}; null when none or unknown. */

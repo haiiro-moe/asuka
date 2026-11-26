@@ -58,13 +58,13 @@ import {
 import {
   WrappedCard,
   WRAPPED_CARD_WIDTH,
-  WRAPPED_CARD_HEIGHT,
+  wrappedCardHeight,
   type WrappedCardProps,
 } from "./components/wrapped-card.tsx";
 import {
   WrappedServerCard,
   WRAPPED_SERVER_CARD_WIDTH,
-  WRAPPED_SERVER_CARD_HEIGHT,
+  wrappedServerCardHeight,
   type WrappedServerCardProps,
 } from "./components/wrapped-server-card.tsx";
 import { fetchImageDataUri } from "./util.ts";
@@ -212,7 +212,7 @@ export async function renderWrappedCardPng(
   const avatarDataUri = avatarUrl ? await fetchImageDataUri(avatarUrl) : null;
   return tryRenderPng(<WrappedCard data={data} displayName={displayName} avatarDataUri={avatarDataUri} />, {
     width: WRAPPED_CARD_WIDTH,
-    height: WRAPPED_CARD_HEIGHT,
+    height: wrappedCardHeight(data),
   });
 }
 
@@ -226,6 +226,6 @@ export async function renderWrappedCardPng(
 export function renderWrappedServerCardPng(data: ServerWrapped): Promise<Buffer | null> {
   return tryRenderPng(<WrappedServerCard data={data} />, {
     width: WRAPPED_SERVER_CARD_WIDTH,
-    height: WRAPPED_SERVER_CARD_HEIGHT,
+    height: wrappedServerCardHeight(data),
   });
 }

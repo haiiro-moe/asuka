@@ -15,6 +15,7 @@ import { nowSec } from "../../../core/util.ts";
 import { db, schema } from "../../../db/index.ts";
 import { getPresidencyHistory } from "../../elections/service.ts";
 import { notExcluded } from "../exclusion.ts";
+import { voiceReadiness } from "../voice-ready.ts";
 import type { Period } from "../time.ts";
 import type { WrappedClub, WrappedEmoji, WrappedPresidency } from "../types/wrapped.ts";
 
@@ -62,8 +63,8 @@ export interface ClubYearStats {
   members: number;
   /** Messages that year in the club's channel or thread, or in threads under them. */
   messages: number;
-  /** Seconds that year in the club's voice channel (and its channel). */
-  voiceSeconds: number;
+  /** Seconds that year in the club's voice channel (and its channel); null while voice is not ready. */
+  voiceSeconds: number | null;
 }
 
 /**
@@ -75,9 +76,11 @@ export interface ClubYearStats {
  * channels are left out.
  *
  * @param year - The UTC calendar year.
+ * @param voiceReady - Whether voice figures may be shown; when false the voice
+ *   query is skipped and `voiceSeconds` is null. Left out, it is checked here.
  * @returns One row per approved club, by id.
  */
-export function clubYearStats(year: number): ClubYearStats[] {
+export function clubYearStats(year: number, voiceReady: boolean = voiceReadiness().ready): ClubYearStats[] {
   const { from, to } = yearPeriod(year);
   const c = schema.clubs;
   const m = schema.activityMessages;
@@ -119,21 +122,21 @@ export function clubYearStats(year: number): ClubYearStats[] {
 
   const vEnd = sql`coalesce(${v.endedAt}, ${v.lastSeenAt})`;
   const voice = new Map(
-    db
+    (voiceReady ? db
       .select({ clubId: c.id, seconds: sql<number>`sum(max(0, min(${vEnd}, ${to}) - max(${v.startedAt}, ${from})))` })
       .from(c)
       .innerJoin(v, or(eq(v.channelId, c.voiceChannelId), eq(v.channelId, c.channelId)))
       .where(and(eq(c.status, "approved"), lt(v.startedAt, to), sql`${vEnd} > ${from}`, notExcluded(v.channelId)))
       .groupBy(c.id)
       .all()
-      .map((r) => [r.clubId, Number(r.seconds)]),
+      .map((r) => [r.clubId, Number(r.seconds)] as const) : []),
   );
 
   return clubs.map((club) => ({
     ...club,
     members: members.get(club.clubId) ?? 0,
     messages: messages.get(club.clubId) ?? 0,
-    voiceSeconds: voice.get(club.clubId) ?? 0,
+    voiceSeconds: voiceReady ? (voice.get(club.clubId) ?? 0) : null,
   }));
 }
 
@@ -157,7 +160,7 @@ export function clubFor(userId: string, year: number, stats: ClubYearStats[] = c
     messages: best.messages,
     messagesRank: rankOf(stats.map((s) => s.messages), best.messages),
     membersRank: rankOf(stats.map((s) => s.members), best.members),
-    voiceRank: rankOf(stats.map((s) => s.voiceSeconds), best.voiceSeconds),
+    voiceRank: best.voiceSeconds === null ? null : rankOf(stats.map((s) => s.voiceSeconds ?? 0), best.voiceSeconds),
     clubs: stats.length,
   };
 }

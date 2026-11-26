@@ -21,6 +21,9 @@
  *    the announcement channel, once per year (guarded by `announcedAt`). The
  *    send step calls it when `announce` is on; an admin can also call it alone.
  *
+ * Voice readiness (`voice-ready.ts`) is checked once when processing starts
+ * (or resumes) and passed down, so every snapshot of a run agrees on it.
+ *
  * Counters are persisted after every member so the dashboard can poll them. A
  * processing or sending run not updated for 120 seconds (the bot restarted,
  * say) reports `interrupted`, and {@link resumeWrappedRun} continues that phase.
@@ -38,6 +41,7 @@ import { nowSec } from "../../../core/util.ts";
 import { db, getConfig, schema } from "../../../db/index.ts";
 import type { WrappedRunStatus } from "../types/wrapped.ts";
 import { withWrappedBanner } from "./banner.ts";
+import { voiceReadiness } from "../voice-ready.ts";
 import { activeMemberIds, buildWrapped, leftMemberIds, wrappedShared } from "./data.ts";
 import type { WrappedShared } from "./data.ts";
 import { sendWrappedDm } from "./dm.ts";
@@ -190,7 +194,9 @@ export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy
       .run();
   }
 
-  const members = activeMemberIds(opts.year);
+  // Voice readiness is checked once per processing step and passed down.
+  const voiceReady = voiceReadiness().ready;
+  const members = activeMemberIds(opts.year, voiceReady);
   const now = nowSec();
   const id = db
     .insert(schema.activityWrappedRuns)
@@ -205,7 +211,7 @@ export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy
     })
     .returning({ id: schema.activityWrappedRuns.id })
     .get().id;
-  launch({ id, work: () => processWork(ctx, { id, year: opts.year, startedBy: opts.startedBy, members }) });
+  launch({ id, work: () => processWork(ctx, { id, year: opts.year, startedBy: opts.startedBy, members, voiceReady }) });
   return "started";
 }
 
@@ -264,8 +270,9 @@ export function resumeWrappedRun(ctx: BotContext): "resumed" | "nothing-to-resum
 
   updateRun(row.id, {});
   if (row.status === "processing") {
-    const members = activeMemberIds(row.year);
-    launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members }) });
+    const voiceReady = voiceReadiness().ready;
+    const members = activeMemberIds(row.year, voiceReady);
+    launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members, voiceReady }) });
   } else {
     const announce = row.announce === 1;
     launch({ id: row.id, work: () => sendWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, announce }) });
@@ -366,7 +373,7 @@ async function failRun(ctx: BotContext, id: number, err: unknown): Promise<void>
 /** The processing step: members, server snapshot, `processed`, the starter's DM. Never throws. */
 async function processWork(
   ctx: BotContext,
-  job: { id: number; year: number; startedBy: string; members: string[] },
+  job: { id: number; year: number; startedBy: string; members: string[]; voiceReady: boolean },
 ): Promise<void> {
   try {
     const shared = await processMembers(job);
@@ -422,8 +429,8 @@ function processedByRun(id: number, year: number): Set<string> {
  *
  * @returns The year aggregates, computed once for every member.
  */
-async function processMembers(job: { id: number; year: number; members: string[] }): Promise<WrappedShared> {
-  const shared = wrappedShared(job.year);
+async function processMembers(job: { id: number; year: number; members: string[]; voiceReady: boolean }): Promise<WrappedShared> {
+  const shared = wrappedShared(job.year, job.voiceReady);
   const done = processedByRun(job.id, job.year);
   const todo = job.members.filter((userId) => !done.has(userId));
   let processed = done.size;
@@ -445,7 +452,7 @@ async function processMembers(job: { id: number; year: number; members: string[]
  */
 async function storeServerSnapshot(ctx: BotContext, year: number, shared: WrappedShared): Promise<void> {
   const deps = await serverWrappedDeps(ctx);
-  const data = buildServerWrapped(year, { ...deps, clubs: shared.clubs, terms: shared.terms });
+  const data = buildServerWrapped(year, { ...deps, clubs: shared.clubs, terms: shared.terms, voiceReady: shared.voiceReady });
   if (data) storeServerWrapped(year, data);
   else getOrCreateServerToken(year);
 }

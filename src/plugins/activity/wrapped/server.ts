@@ -18,6 +18,7 @@ import type { BotContext } from "../../../core/plugin.ts";
 import { nowSec } from "../../../core/util.ts";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
+import { voiceReadiness } from "../voice-ready.ts";
 import type { ServerWrapped } from "../types/wrapped.ts";
 import {
   clubYearStats,
@@ -52,6 +53,8 @@ export interface ServerWrappedDeps {
   names?: ServerNameLookup;
   /** Opt-in check for the best pair (default: the opt-in table). */
   isOptedIn?: (userId: string) => boolean;
+  /** Whether voice figures may be shown (default: `voiceReadiness()`, checked once). */
+  voiceReady?: boolean;
   /** Year aggregates already computed by a run. */
   clubs?: ClubYearStats[];
   terms?: TermInYear[];
@@ -64,7 +67,9 @@ const NO_NAMES: ServerNameLookup = { member: () => null, channel: () => null };
  * Build the server's Wrapped for a UTC calendar year.
  *
  * - `messages`, `speakers`, `busiestHour`, `busiestWeekday`: all messages that year.
- * - `voiceHours`: all voice segments, clipped to the year.
+ * - `voiceHours`: all voice segments, clipped to the year; null while voice is
+ *   not ready (`voice-ready.ts`), when voice is also left out of the best pair
+ *   (`bestPair.voiceHours` null) and of the "nobody did anything" check.
  * - `topEmoji` (3) and `unusedCustomEmoji`: text and reactions merged.
  * - `topChannels` (5): grouped by the message's own channel, so a thread is a
  *   channel of its own and carries its parent's name.
@@ -85,6 +90,7 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
   const { from, to } = yearPeriod(year);
   const names = deps.names ?? NO_NAMES;
   const optedIn = deps.isOptedIn ?? isOptedIn;
+  const voiceReady = deps.voiceReady ?? voiceReadiness().ready;
   const m = schema.activityMessages;
   const v = schema.activityVoice;
   const msgYear = and(gte(m.ts, from), lt(m.ts, to), notExcluded(m.channelId, m.parentChannelId));
@@ -96,14 +102,16 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
     .get();
   const messages = totals?.messages ?? 0;
   const vEnd = sql`coalesce(${v.endedAt}, ${v.lastSeenAt})`;
-  const voiceSeconds = Number(
+  const voiceSeconds = !voiceReady
+    ? null
+    : Number(
     db
       .select({ s: sql<number | null>`sum(max(0, min(${vEnd}, ${to}) - max(${v.startedAt}, ${from})))` })
       .from(v)
       .where(and(lt(v.startedAt, to), sql`${vEnd} > ${from}`, notExcluded(v.channelId)))
       .get()?.s ?? 0,
   );
-  if (messages === 0 && voiceSeconds === 0) return null;
+  if (messages === 0 && !voiceSeconds) return null;
 
   const spans = [{ from, to }];
   const emojiKeys = (deps.guildEmojiIds ?? []).map((id) => `custom:${id}`);
@@ -136,7 +144,7 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
     .limit(1)
     .get();
 
-  const pair = bestPairOf(from, to);
+  const pair = bestPairOf(from, to, voiceReady);
   const bestPair =
     pair && optedIn(pair.aId) && optedIn(pair.bId)
       ? {
@@ -145,11 +153,11 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
           bId: pair.bId,
           bName: names.member(pair.bId),
           replies: pair.replies,
-          voiceHours: Math.round(pair.seconds / 360) / 10,
+          voiceHours: voiceReady ? Math.round(pair.seconds / 360) / 10 : null,
         }
       : null;
 
-  const clubs = deps.clubs ?? clubYearStats(year);
+  const clubs = deps.clubs ?? clubYearStats(year, voiceReady);
   const top = clubs.filter((c) => c.messages > 0).sort((a, b) => b.messages - a.messages || a.clubId - b.clubId)[0];
   const bestClub = top ? { name: top.name, founderName: names.member(top.ownerId), members: top.members, messages: top.messages } : null;
 
@@ -169,9 +177,10 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
 
   return {
     year,
+    voiceReady,
     messages,
     speakers: Number(totals?.speakers ?? 0),
-    voiceHours: Math.round(voiceSeconds / 360) / 10,
+    voiceHours: voiceSeconds === null ? null : Math.round(voiceSeconds / 360) / 10,
     topEmoji: emojiTotals({ spans, limit: 3 }),
     unusedCustomEmoji: emojiKeys.length - usedCustom,
     topChannels,
@@ -185,9 +194,10 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
 
 /**
  * The pair with the highest weight that year, in one SQL query: replies
- * between them (either way) plus voice overlap in the same channel.
+ * between them (either way) plus, once voice is ready, voice overlap in the
+ * same channel.
  */
-function bestPairOf(from: number, to: number): { aId: string; bId: string; replies: number; seconds: number } | null {
+function bestPairOf(from: number, to: number, voiceReady: boolean): { aId: string; bId: string; replies: number; seconds: number } | null {
   const m = schema.activityMessages;
   const v1 = alias(schema.activityVoice, "v1");
   const v2 = alias(schema.activityVoice, "v2");
@@ -202,14 +212,14 @@ function bestPairOf(from: number, to: number): { aId: string; bId: string; repli
         and ${m.replyToUserId} is not null and ${m.replyToUserId} != ${m.userId}
         and ${notExcluded(m.channelId, m.parentChannelId)}
       group by a, b
-      union all
+      ${voiceReady ? sql`union all
       select ${v1.userId} as a, ${v2.userId} as b, 0 as replies,
              sum(max(0, min(${e1}, ${e2}, ${to}) - max(${v1.startedAt}, ${v2.startedAt}, ${from}))) as seconds
       from ${schema.activityVoice} as "v1" join ${schema.activityVoice} as "v2"
         on ${v2.channelId} = ${v1.channelId} and ${v1.userId} < ${v2.userId}
         and ${v2.startedAt} < ${e1} and ${e2} > ${v1.startedAt}
       where ${v1.startedAt} < ${to} and ${e1} > ${from} and ${notExcluded(v1.channelId)}
-      group by a, b
+      group by a, b` : sql``}
     )
     group by a, b
     having sum(replies) + sum(seconds) > 0

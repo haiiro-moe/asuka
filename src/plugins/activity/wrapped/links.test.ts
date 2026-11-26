@@ -35,6 +35,7 @@ function snapshot(messages: number): WrappedData {
     club: null,
     presidency: null,
     titles: [],
+    voiceReady: true,
   };
 }
 

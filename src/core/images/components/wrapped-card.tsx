@@ -9,24 +9,23 @@ export const WRAPPED_CARD_WIDTH = PROFILE_WIDTH;
 const TITLE_HEIGHT = 48;
 /** Side of the avatar, in px. */
 const AVATAR = 128;
-/** Stat rows on the card. */
+/** Stat rows on the card when voice is shown; one fewer without it. */
 const STAT_ROWS = 5;
 /** Gap between two stat rows, in px. */
 const STAT_GAP = 8;
 
 /**
- * Height in px of the Wrapped card: title, rule, avatar row, five stat rows, rule and
- * the closing line, inside the frame.
+ * Height in px of the Wrapped card: title, rule, avatar row, the stat rows (five, or
+ * four without a voice figure), rule and the closing line, inside the frame.
+ *
+ * @param data - The snapshot; `voiceHours` null drops the voice row.
  */
-export const WRAPPED_CARD_HEIGHT = framedCardHeight(
-  TITLE_HEIGHT +
-    1 +
-    AVATAR +
-    (STAT_ROWS * CARD_GEOMETRY.line + (STAT_ROWS - 1) * STAT_GAP) +
-    1 +
-    CARD_GEOMETRY.line +
-    5 * CARD_GEOMETRY.gap,
-);
+export function wrappedCardHeight(data: Pick<WrappedData, "voiceHours">): number {
+  const rows = data.voiceHours === null ? STAT_ROWS - 1 : STAT_ROWS;
+  return framedCardHeight(
+    TITLE_HEIGHT + 1 + AVATAR + (rows * CARD_GEOMETRY.line + (rows - 1) * STAT_GAP) + 1 + CARD_GEOMETRY.line + 5 * CARD_GEOMETRY.gap,
+  );
+}
 
 /** Props for {@link WrappedCard}. */
 export interface WrappedCardProps {
@@ -57,8 +56,8 @@ function topEmojiText(data: WrappedData): string {
 
 /**
  * The shareable Wrapped card in haiiro, labelled `wrapped: ~/<year>`: a gold Jacquard
- * title, the member's full-colour avatar and name, their level, five stat rows
- * (messages, voice hours, busiest hour and weekday in UTC, top emoji) and a rose
+ * title, the member's full-colour avatar and name, their level, the stat rows
+ * (messages, voice hours when voice is ready (`voiceHours` not null), busiest hour and weekday in UTC, top emoji) and a rose
  * narrator line. It shows only the member's own numbers: the soulmate and most-replied-to fields of the
  * snapshot are never drawn, since the card is meant to be shared.
  *
@@ -71,7 +70,7 @@ export function WrappedCard(props: WrappedCardProps) {
   return (
     <StillBackdrop
       width={WRAPPED_CARD_WIDTH}
-      height={WRAPPED_CARD_HEIGHT}
+      height={wrappedCardHeight(data)}
       padding={CARD_GEOMETRY.backdropPad}
       seed={2026 + (data.year % 7)}
     >
@@ -102,7 +101,7 @@ export function WrappedCard(props: WrappedCardProps) {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: STAT_GAP }}>
           <KeyValue label="messages" value={num(data.messages)} tone="foam" />
-          <KeyValue label="in voice" value={`${data.voiceHours} h`} tone="foam" />
+          {data.voiceHours === null ? null : <KeyValue label="in voice" value={`${data.voiceHours} h`} tone="foam" />}
           <KeyValue label="your hour" value={hour} />
           <KeyValue label="busiest day" value={data.busiestDay ?? "none"} />
           <KeyValue label="top emoji" value={topEmojiText(data)} />

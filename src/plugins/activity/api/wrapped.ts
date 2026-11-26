@@ -107,6 +107,7 @@ async function linkResponse(ctx: BotContext, userId: string, data: WrappedData):
   ]);
   return {
     data,
+    voiceReady: data.voiceReady === true,
     displayName: self.name ?? "you",
     soulmateName: soulmate?.name ?? null,
     mostRepliedToName: repliedTo?.name ?? null,
@@ -359,7 +360,7 @@ const getServerByToken: ApiRoute = {
   handle(_req, ctx) {
     const found = getServerWrappedByToken(ctx.params.token ?? "");
     if (!found) return error(404, "not found");
-    const out: ServerWrappedResponse = { data: found.data };
+    const out: ServerWrappedResponse = { data: found.data, voiceReady: found.data.voiceReady === true };
     return Response.json(out);
   },
 };
@@ -377,7 +378,7 @@ const getServerCard: ApiRoute = {
     const found = getServerWrappedByToken(ctx.params.token ?? "");
     if (!found) return error(404, "not found");
     const png = await renderWrappedServerCardPng(found.data);
-    if (!png) return Response.json({ data: found.data } satisfies ServerWrappedResponse);
+    if (!png) return Response.json({ data: found.data, voiceReady: found.data.voiceReady === true } satisfies ServerWrappedResponse);
     return new Response(new Uint8Array(png), {
       headers: { "content-type": "image/png", "cache-control": "public, max-age=300" },
     });

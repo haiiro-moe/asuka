@@ -152,6 +152,8 @@ test("a thread is a channel of its own: the most active thread is the top channe
 });
 
 test("voice hours are clipped to the year", () => {
+  // An old segment elsewhere makes voice ready (two whole months of data).
+  voice("old", "elsewhere", at("2020-01-01T00:00:00Z"), at("2020-01-01T01:00:00Z"));
   voice("u1", "v1", at("2026-12-31T23:00:00Z"), at("2027-01-01T01:00:00Z"));
   expect(buildWrapped("u1", 2026)!.voiceHours).toBe(1);
   expect(buildWrapped("u1", 2027)!.voiceHours).toBe(1);

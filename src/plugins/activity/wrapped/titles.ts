@@ -8,7 +8,8 @@
  * earliest bird 05:00-07:59 UTC, longest closed voice segment, fastest
  * replier by median reply time with at least 10 replies, most replied-to).
  * Club titles go to the club's owner, `president` to everyone who held the
- * chair that year.
+ * chair that year. While voice is not ready (`voice-ready.ts`), the voice
+ * titles (`longest-voice`, `most-voice-hours`, `club-most-voice`) are not awarded.
  *
  * Every metric is aggregated in SQL, one row per member or club; the median
  * is computed in SQL with window functions. See docs/activity/wrapped.md.
@@ -20,6 +21,7 @@ import type { SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
+import { voiceReadiness } from "../voice-ready.ts";
 import type { WrappedTitle } from "../types/wrapped.ts";
 import { clubYearStats, presidencyTermsIn, yearPeriod } from "./extras.ts";
 import type { ClubYearStats, TermInYear } from "./extras.ts";
@@ -55,6 +57,8 @@ interface Metric {
   unit?: "clubs";
   values: Map<string, number>;
   lowest?: boolean;
+  /** A voice title: skipped while voice is not ready. */
+  voice?: boolean;
 }
 
 /** The winners of a metric: everyone at the best value (above 0 for highest-wins metrics). */
@@ -82,7 +86,12 @@ function toMap(rows: { id: string | null; n: number | string | null }[]): Map<st
  * @param shared - Year aggregates the caller already has (a run computes them once).
  * @returns The awarded titles; a title nobody qualifies for is left out.
  */
-export function titleAwards(year: number, shared: { clubs?: ClubYearStats[]; terms?: TermInYear[] } = {}): TitleAward[] {
+export function titleAwards(
+  year: number,
+  shared: { clubs?: ClubYearStats[]; terms?: TermInYear[]; voiceReady?: boolean } = {},
+): TitleAward[] {
+  // Voice titles need two whole months of voice data (voice-ready.ts).
+  const voiceReady = shared.voiceReady ?? voiceReadiness().ready;
   const { from, to } = yearPeriod(year);
   const m = schema.activityMessages;
   const v = schema.activityVoice;
@@ -105,7 +114,9 @@ export function titleAwards(year: number, shared: { clubs?: ClubYearStats[]; ter
   const vEnd = sql`coalesce(${v.endedAt}, ${v.lastSeenAt})`;
   const clipped = sql<number>`max(0, min(${vEnd}, ${to}) - max(${v.startedAt}, ${from}))`;
   const voiceYear = and(lt(v.startedAt, to), sql`${vEnd} > ${from}`, notExcluded(v.channelId));
-  const voiceSeconds = toMap(
+  const voiceSeconds = !voiceReady
+    ? new Map<string, number>()
+    : toMap(
     db
       .select({ id: v.userId, n: sql<number>`sum(${clipped})` })
       .from(v)
@@ -132,7 +143,7 @@ export function titleAwards(year: number, shared: { clubs?: ClubYearStats[]; ter
   const metrics: Metric[] = [
     { key: "night-owl", label: "night owl", what: "most after midnight", of: talkers.length, values: countWhere(sql`${hour} between 0 and 4`) },
     { key: "earliest-bird", label: "earliest bird", what: "most before 8:00 utc", of: talkers.length, values: countWhere(sql`${hour} between 5 and 7`) },
-    { key: "longest-voice", label: "longest voice", what: "longest single call", of: voicers.length, values: longestVoice(voicers, from, to) },
+    { key: "longest-voice", voice: true, label: "longest voice", what: "longest single call", of: voicers.length, values: longestVoice(voicers, from, to) },
     { key: "fastest-replier", label: "fastest replier", what: "quickest replies", of: talkers.length, values: fastestReplies(talkers, from, to), lowest: true },
     {
       key: "most-replied-to",
@@ -152,12 +163,12 @@ export function titleAwards(year: number, shared: { clubs?: ClubYearStats[]; ter
             ),
     },
     { key: "most-messages", label: "most messages", what: "most messages", of: talkers.length, values: messageCounts },
-    { key: "most-voice-hours", label: "most voice hours", what: "most hours in voice", of: voicers.length, values: voiceSeconds },
+    { key: "most-voice-hours", voice: true, label: "most voice hours", what: "most hours in voice", of: voicers.length, values: voiceSeconds },
     { key: "emoji-lord", label: "emoji lord", what: "most emoji", of: talkers.length, values: emojiUse(talkers, from, to) },
   ];
 
   // Club titles: per club, then handed to the owner.
-  const clubs = shared.clubs ?? clubYearStats(year);
+  const clubs = shared.clubs ?? clubYearStats(year, voiceReady);
   const clubMetric = (key: string, label: string, what: string, value: (c: ClubYearStats) => number, ok: (c: ClubYearStats) => boolean) => {
     const values = new Map<string, number>();
     for (const c of clubs) if (ok(c)) values.set(String(c.clubId), value(c));
@@ -169,14 +180,16 @@ export function titleAwards(year: number, shared: { clubs?: ClubYearStats[]; ter
   const clubAwards = [
     clubMetric("club-most-members", "biggest club", "most members", (c) => c.members, (c) => c.messages >= MIN_MESSAGES),
     clubMetric("club-most-messages", "loudest club", "most messages", (c) => c.messages, (c) => c.messages >= MIN_MESSAGES),
-    clubMetric("club-most-voice", "club in voice", "most voice", (c) => c.voiceSeconds, (c) => c.voiceSeconds >= MIN_VOICE_HOURS * 3600),
+    voiceReady
+      ? clubMetric("club-most-voice", "club in voice", "most voice", (c) => c.voiceSeconds ?? 0, (c) => (c.voiceSeconds ?? 0) >= MIN_VOICE_HOURS * 3600)
+      : null,
   ];
 
   const presidents = [...new Set((shared.terms ?? presidencyTermsIn(year)).map((t) => t.userId))].sort();
   const presidentAward: TitleAward | null =
     presidents.length === 0 ? null : { key: "president", label: "president", detail: `held the chair in ${year}`, winners: presidents };
 
-  return [...metrics.map(award), ...clubAwards, presidentAward].filter((a): a is TitleAward => a !== null);
+  return [...metrics.filter((m) => voiceReady || !m.voice).map(award), ...clubAwards, presidentAward].filter((a): a is TitleAward => a !== null);
 }
 
 /**

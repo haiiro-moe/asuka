@@ -22,6 +22,7 @@ import { clubFor, clubYearStats, presidencyFor, presidencyTermsIn, yearPeriod } 
 import type { ClubYearStats, TermInYear } from "./extras.ts";
 import { titleAwards, titlesFor } from "./titles.ts";
 import type { TitleAward } from "./titles.ts";
+import { voiceReadiness } from "../voice-ready.ts";
 
 /** How many emoji a snapshot lists. */
 const TOP_EMOJI = 3;
@@ -57,28 +58,38 @@ export interface WrappedShared {
   terms: TermInYear[];
   /** {@link titleAwards} for the year. */
   awards: TitleAward[];
+  /**
+   * Whether voice figures may be shown (`voiceReadiness().ready`, checked once
+   * per run). When false every voice-derived figure is left out.
+   */
+  voiceReady: boolean;
 }
 
 /**
  * Compute the year aggregates every member's snapshot needs.
  *
  * @param year - The UTC calendar year.
+ * @param voiceReady - Whether voice figures may be shown; a run checks
+ *   `voiceReadiness()` once and passes it. Left out, it is checked here.
  */
-export function wrappedShared(year: number): WrappedShared {
-  const clubs = clubYearStats(year);
+export function wrappedShared(year: number, voiceReady: boolean = voiceReadiness().ready): WrappedShared {
+  const clubs = clubYearStats(year, voiceReady);
   const terms = presidencyTermsIn(year);
-  return { clubs, terms, awards: titleAwards(year, { clubs, terms }) };
+  return { clubs, terms, awards: titleAwards(year, { clubs, terms, voiceReady }), voiceReady };
 }
 
 /**
  * The members a Wrapped run covers for a year: everyone with a message, a
  * reaction or voice time that year outside the excluded channels, minus the
- * members whose latest membership change is a leave.
+ * members whose latest membership change is a leave. While voice is not
+ * ready, voice time alone does not make a member active (their story would
+ * have nothing to show).
  *
  * @param year - The UTC calendar year.
+ * @param voiceReady - Whether voice counts (see `voice-ready.ts`).
  * @returns User ids, sorted ascending, so a resumed run walks them in the same order.
  */
-export function activeMemberIds(year: number): string[] {
+export function activeMemberIds(year: number, voiceReady: boolean): string[] {
   const { from, to } = yearBounds(year);
   const m = schema.activityMessages;
   const r = schema.activityReactions;
@@ -101,13 +112,15 @@ export function activeMemberIds(year: number): string[] {
       .where(and(gte(r.addedAt, from), lt(r.addedAt, to), isNull(r.removedAt), notExcluded(r.channelId, r.parentChannelId)))
       .all(),
   );
-  add(
-    db
-      .selectDistinct({ userId: v.userId })
-      .from(v)
-      .where(and(lt(v.startedAt, to), sql`min(${vEnd}, ${to}) > max(${v.startedAt}, ${from})`, notExcluded(v.channelId)))
-      .all(),
-  );
+  if (voiceReady) {
+    add(
+      db
+        .selectDistinct({ userId: v.userId })
+        .from(v)
+        .where(and(lt(v.startedAt, to), sql`min(${vEnd}, ${to}) > max(${v.startedAt}, ${from})`, notExcluded(v.channelId)))
+        .all(),
+    );
+  }
 
   const left = leftMemberIds();
   return [...ids].filter((id) => !left.has(id)).sort();
@@ -149,19 +162,27 @@ export function leftMemberIds(): Set<string> {
  *
  * @param userId - The member.
  * @param year - The UTC calendar year.
+ * While voice is not ready (`shared.voiceReady` false) `voiceHours` is null,
+ * voice time does not make the member active, the soulmate is chosen from
+ * replies and mentions only, and the club's voice rank and voice titles are
+ * left out; `voiceReady` records which applied.
+ *
  * @param shared - The year aggregates, when the caller already has them (a run).
+ *   Left out, they are computed here (which checks voice readiness once).
  * @returns The snapshot, or null when the member has no message, reaction or
- *   voice time that year.
+ *   (counted) voice time that year.
  */
 export function buildWrapped(userId: string, year: number, shared?: WrappedShared): WrappedData | null {
   const { from, to } = yearBounds(year);
+  const agg = shared ?? wrappedShared(year);
+  const voiceReady = agg.voiceReady;
   const m = schema.activityMessages;
 
   const msgWhere = and(eq(m.userId, userId), gte(m.ts, from), lt(m.ts, to), notExcluded(m.channelId, m.parentChannelId));
   const messages = db.select({ n: count() }).from(m).where(msgWhere).get()?.n ?? 0;
-  const voiceSeconds = voiceSecondsOf(userId, from, to);
+  const voiceSeconds = voiceReady ? voiceSecondsOf(userId, from, to) : null;
   const reactions = reactionCount(userId, from, to);
-  if (messages === 0 && voiceSeconds === 0 && reactions === 0) return null;
+  if (messages === 0 && !voiceSeconds && reactions === 0) return null;
 
   const hourExpr = sql<number>`cast(strftime('%H', ${m.ts}, 'unixepoch') as integer)`;
   const busiestHour =
@@ -208,7 +229,9 @@ export function buildWrapped(userId: string, year: number, shared?: WrappedShare
   const bump = (id: string, w: number) => weights.set(id, (weights.get(id) ?? 0) + w);
   for (const row of replies) bump(row.toUserId!, row.n);
   for (const row of mentionCounts(userId, from, to)) bump(row.toUserId, row.n);
-  for (const row of voiceOverlaps(userId, from, to)) bump(row.userId, row.seconds / VOICE_OVERLAP_SECONDS_PER_POINT);
+  if (voiceReady) {
+    for (const row of voiceOverlaps(userId, from, to)) bump(row.userId, row.seconds / VOICE_OVERLAP_SECONDS_PER_POINT);
+  }
   const soulmateId = pickTop(weights);
 
   const level =
@@ -217,7 +240,7 @@ export function buildWrapped(userId: string, year: number, shared?: WrappedShare
   return {
     year,
     messages,
-    voiceHours: Math.round(voiceSeconds / 360) / 10,
+    voiceHours: voiceSeconds === null ? null : Math.round(voiceSeconds / 360) / 10,
     topEmoji: topEmoji(userId, from, to),
     busiestHour,
     busiestDay,
@@ -225,9 +248,10 @@ export function buildWrapped(userId: string, year: number, shared?: WrappedShare
     mostRepliedToId,
     topChannelId,
     xpLevel: level,
-    club: clubFor(userId, year, (shared ??= wrappedShared(year)).clubs),
-    presidency: presidencyFor(userId, year, shared.terms),
-    titles: titlesFor(userId, year, shared.awards),
+    club: clubFor(userId, year, agg.clubs),
+    presidency: presidencyFor(userId, year, agg.terms),
+    titles: titlesFor(userId, year, agg.awards),
+    voiceReady,
   };
 }
 

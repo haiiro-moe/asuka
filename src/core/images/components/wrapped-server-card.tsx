@@ -7,18 +7,21 @@ export const WRAPPED_SERVER_CARD_WIDTH = PROFILE_WIDTH;
 
 /** Height of the Jacquard title line, in px. */
 const TITLE_HEIGHT = 48;
-/** Stat rows on the card. */
+/** Stat rows on the card when voice is shown; one fewer without it. */
 const STAT_ROWS = 8;
 /** Gap between two stat rows, in px. */
 const STAT_GAP = 8;
 
 /**
- * Height in px of the server Wrapped card: title, rule, eight stat rows, rule and
- * the closing line, inside the frame.
+ * Height in px of the server Wrapped card: title, rule, the stat rows (eight, or seven
+ * without a voice figure), rule and the closing line, inside the frame.
+ *
+ * @param data - The snapshot; `voiceHours` null drops the voice row.
  */
-export const WRAPPED_SERVER_CARD_HEIGHT = framedCardHeight(
-  TITLE_HEIGHT + 1 + (STAT_ROWS * CARD_GEOMETRY.line + (STAT_ROWS - 1) * STAT_GAP) + 1 + CARD_GEOMETRY.line + 4 * CARD_GEOMETRY.gap,
-);
+export function wrappedServerCardHeight(data: Pick<ServerWrapped, "voiceHours">): number {
+  const rows = data.voiceHours === null ? STAT_ROWS - 1 : STAT_ROWS;
+  return framedCardHeight(TITLE_HEIGHT + 1 + (rows * CARD_GEOMETRY.line + (rows - 1) * STAT_GAP) + 1 + CARD_GEOMETRY.line + 4 * CARD_GEOMETRY.gap);
+}
 
 /** Props for {@link WrappedServerCard}. */
 export interface WrappedServerCardProps {
@@ -58,7 +61,7 @@ export function WrappedServerCard(props: WrappedServerCardProps) {
   return (
     <StillBackdrop
       width={WRAPPED_SERVER_CARD_WIDTH}
-      height={WRAPPED_SERVER_CARD_HEIGHT}
+      height={wrappedServerCardHeight(data)}
       padding={CARD_GEOMETRY.backdropPad}
       seed={3026 + (data.year % 7)}
     >
@@ -70,7 +73,7 @@ export function WrappedServerCard(props: WrappedServerCardProps) {
         <div style={{ display: "flex", flexDirection: "column", gap: STAT_GAP }}>
           <KeyValue label="messages" value={num(data.messages)} tone="foam" />
           <KeyValue label="voices" value={`${num(data.speakers)} spoke`} tone="foam" />
-          <KeyValue label="in voice" value={`${data.voiceHours} h`} tone="foam" />
+          {data.voiceHours === null ? null : <KeyValue label="in voice" value={`${data.voiceHours} h`} tone="foam" />}
           <KeyValue label="busiest hour" value={hour} />
           <KeyValue label="busiest day" value={data.busiestWeekday ?? "none"} />
           <KeyValue label="top channel" value={channelName} />
