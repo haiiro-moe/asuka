@@ -45,12 +45,22 @@ export interface ReactedRow {
   net: number;
 }
 
-/** A channel and a count (messages for text channels, seconds for voice). */
+/** A channel and a count (messages for text channels and threads, seconds for voice). */
 export interface ChannelRow {
-  /** The channel; for threads, the parent channel. */
+  /** The channel, or the thread itself. */
   channelId: string;
+  /** The thread's parent channel; null for a normal channel. */
+  parentChannelId: string | null;
   /** Messages, or connected seconds for voice. */
   count: number;
+}
+
+/** A {@link ChannelRow} with display names, as the routes return it. */
+export interface NamedChannelRow extends ChannelRow {
+  /** The channel's name; null when unknown or gone. */
+  name: string | null;
+  /** The parent channel's name; null for a normal channel or when unknown. */
+  parentName: string | null;
 }
 
 /** What members share, by kind. */

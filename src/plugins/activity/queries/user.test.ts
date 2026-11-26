@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
+import type { ApiContext } from "../../../core/plugin.ts";
+import { userRoutes } from "../api/user.ts";
 import { db, initDb, schema } from "../../../db/index.ts";
 import type { MessageFacts } from "../facts.ts";
 import {
@@ -171,16 +173,45 @@ test("mostReacted uses net reactions", () => {
   ]);
 });
 
-test("channelFavourites folds threads into their parent; voiceFavourites sums seconds", () => {
+test("channelFavourites ranks threads as channels; voiceFavourites sums seconds", () => {
   recordMessage(msg({ channelId: "c1" }));
+  recordMessage(msg({ channelId: "t9", parentChannelId: "c1" }));
   recordMessage(msg({ channelId: "t9", parentChannelId: "c1" }));
   recordMessage(msg({ channelId: "c2" }));
   expect(channelFavourites(ALL)).toEqual([
-    { channelId: "c1", count: 2 },
-    { channelId: "c2", count: 1 },
+    { channelId: "t9", parentChannelId: "c1", count: 2 },
+    { channelId: "c1", parentChannelId: null, count: 1 },
+    { channelId: "c2", parentChannelId: null, count: 1 },
   ]);
   talk("u1", "v1", MON, 600);
-  expect(voiceFavourites(ALL)).toEqual([{ channelId: "v1", count: 600 }]);
+  expect(voiceFavourites(ALL)).toEqual([{ channelId: "v1", parentChannelId: null, count: 600 }]);
+});
+
+test("a thread under an excluded parent is not ranked", () => {
+  recordMessage(msg({ channelId: "t9", parentChannelId: "c9" }));
+  recordMessage(msg({ channelId: "c1" }));
+  setExcluded("c9");
+  expect(channelFavourites(ALL)).toEqual([{ channelId: "c1", parentChannelId: null, count: 1 }]);
+});
+
+test("the channels route adds names from the guild channel cache", async () => {
+  const recent = Math.floor(Date.now() / 1000) - 100; // "all" ends at the real now
+  recordMessage(msg({ channelId: "t9", parentChannelId: "c1", ts: recent }));
+  recordMessage(msg({ channelId: "gone", ts: recent }));
+  const cache = new Map([
+    ["t9", { name: "side-quest" }],
+    ["c1", { name: "general" }],
+  ]);
+  const ctx = {
+    guildId: "g1",
+    client: { guilds: { cache: new Map([["g1", { channels: { cache } }]]) } },
+  } as unknown as ApiContext;
+  const route = userRoutes.find((r) => r.path === "/api/activity/user/channels")!;
+  const res = await route.handle(new Request("http://x/api/activity/user/channels?period=all"), ctx);
+  expect(await res.json()).toEqual([
+    { channelId: "gone", parentChannelId: null, count: 1, name: null, parentName: null },
+    { channelId: "t9", parentChannelId: "c1", count: 1, name: "side-quest", parentName: "general" },
+  ]);
 });
 
 test("sharing counts media kinds, links by domain, gifs and stickers", () => {

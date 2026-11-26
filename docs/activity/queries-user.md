@@ -15,8 +15,8 @@ empty arrays and a zero heatmap.
 | `/emoji-trend` | `emojiTrend` | Weekly uses of the top 5 emoji, 7-day buckets from the period start (from the first use for `all`). |
 | `/emoji-graveyard` | `emojiGraveyard` | The guild's custom emoji ids never used in text or as a reaction, all time. The route reads the ids from the guild cache. |
 | `/reacted` | `mostReacted` | Top 10 messages by net reactions (added minus removed), with channel and author id. |
-| `/channels` | `channelFavourites` | Channels by messages; threads count toward their parent. |
-| `/voice` | `voiceFavourites` | Voice channels by connected seconds inside the period; an open segment runs to its last heartbeat. |
+| `/channels` | `channelFavourites` | Channels by messages. A thread ranks as a channel of its own (`parentChannelId` set); a thread under an excluded channel is hidden. The route adds `name` and `parentName` from the guild channel cache (null when unknown). |
+| `/voice` | `voiceFavourites` | Voice channels (names added like `/channels`) by connected seconds inside the period; an open segment runs to its last heartbeat. |
 | `/sharing` | `sharing` | Images, videos, audio, stickers, gifs (tenor and giphy domains) and links per domain. |
 | `/awards` | `awards` | See below. |
 

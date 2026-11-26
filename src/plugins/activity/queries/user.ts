@@ -226,20 +226,20 @@ export function mostReacted(p: Period, limit = 10): ReactedRow[] {
 }
 
 /**
- * Channels by message count; a thread counts toward its parent channel.
+ * Channels by message count. A thread is a channel of its own: it gets its own
+ * row, with `parentChannelId` set, and is not folded into its parent.
  *
  * @param p - The period.
  */
 export function channelFavourites(p: Period): ChannelRow[] {
   const m = schema.activityMessages;
-  const channel = sql<string>`coalesce(${m.parentChannelId}, ${m.channelId})`;
   const count = sql<number>`count(*)`;
   return db
-    .select({ channelId: channel, count })
+    .select({ channelId: m.channelId, parentChannelId: m.parentChannelId, count })
     .from(m)
     .where(messagesIn(p))
-    .groupBy(channel)
-    .orderBy(desc(count), channel)
+    .groupBy(m.channelId, m.parentChannelId)
+    .orderBy(desc(count), m.channelId)
     .all();
 }
 
@@ -252,7 +252,7 @@ export function voiceFavourites(p: Period): ChannelRow[] {
   const totals = new Map<string, number>();
   for (const s of voiceSegments(p)) totals.set(s.channelId, (totals.get(s.channelId) ?? 0) + (s.end - s.start));
   return [...totals]
-    .map(([channelId, count]) => ({ channelId, count }))
+    .map(([channelId, count]) => ({ channelId, parentChannelId: null, count }))
     .sort((a, b) => b.count - a.count || a.channelId.localeCompare(b.channelId));
 }
 
