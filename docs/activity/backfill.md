@@ -30,6 +30,10 @@ threads and voice channels are not read.
   the run** (10003) are marked done and the run goes on.
 - Any other error on a channel counts in `errors` and moves the run to the next channel. That
   channel stays unfinished, so the status ends as `stopped`; start again to retry it.
+- **Rows for channels that are gone.** A row whose channel is no longer listed (deleted, or no longer
+  visible to the bot) is marked done at the start of the next run, so it cannot keep the status at `stopped`.
+- **Memory.** Pages are fetched with `cache: false` and dropped from the channel cache, so reading a
+  large history does not grow the process.
 - Bots, webhooks and system messages are dropped by the same rules as live capture
   (`extractMessageFacts(raw, "backfill")`).
 
@@ -50,9 +54,9 @@ threads and voice channels are not read.
 
 | Field | Meaning |
 |---|---|
-| `status` | `idle` (no rows yet), `running`, `stopped` (unfinished rows, no live run), `done` (every row done), `failed` (the last run could not list the channels) |
+| `status` | `idle` (no rows yet), `running`, `stopped` (unfinished rows, no live run), `done` (every row done, and every row's reaction pass too when the run had `reactions: true`), `failed` (the last run could not list the channels) |
 | `channelsDone`, `channelsTotal`, `scanned` | counted from the `activity_backfill` rows, so right after a restart too |
-| `current` | id of the channel being read; null when no run is live |
+| `current` | name of the channel being read, such as `#general`; null when no run is live |
 | `startedAt`, `elapsedSec`, `errors` | about the run of this process only; null/0 after a restart |
 | `reactions` | whether the reaction pass is on for the run |
 
@@ -67,6 +71,10 @@ one request per reaction per 100 reactors. It keeps no cursor, so an interrupted
 channel; the writes are idempotent. Discord does not tell when a reaction was added, so each is
 stamped with the time of its message.
 
+If the reaction pass is stopped or fails, the status reads `stopped`, not `done`: start again with
+`reactions: true` to finish it. After a restart the status cannot know whether the last run asked
+for reactions, so it assumes it did once any channel has had its pass.
+
 ## What cannot be backfilled
 
 - **Voice time.** Discord keeps no history of who sat in which voice channel. Voice analytics start
@@ -79,7 +87,8 @@ stamped with the time of its message.
 
 | File | Role |
 |---|---|
-| `backfill/types.ts` | `BackfillStatus` and the other plain types; no server imports, safe for the web app |
+| `backfill/types.ts` | `BackfillStatus` and the other plain data types; imports nothing, safe for the web app |
+| `backfill/channel.ts` | `FetchPage` and `BackfillChannel` (server only: they mention `RawMessage`) |
 | `backfill/runner.ts` | `backfillChannel`, `backfillReactions`, `startBackfill`, `stopBackfill`, `getBackfillStatus` |
 | `backfill/discord.ts` | lists channels and threads, builds the page fetchers from discord.js |
 | `api/backfill.ts` | the three routes |

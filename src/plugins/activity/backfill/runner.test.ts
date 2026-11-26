@@ -12,7 +12,8 @@ import {
   stopBackfill,
   whenBackfillSettled,
 } from "./runner.ts";
-import type { BackfillChannel, ReactionMessage } from "./types.ts";
+import type { BackfillChannel } from "./channel.ts";
+import type { ReactionMessage } from "./types.ts";
 
 beforeAll(() => {
   initDb();
@@ -180,6 +181,7 @@ function gatedChannel(id: string, pages: RawMessage[][], gate?: Promise<void>): 
   const base = fakeFetch(pages);
   return {
     id,
+    name: `#${id}`,
     parentId: null,
     fetchPage: async (before) => {
       if (gate) await gate;
@@ -205,7 +207,7 @@ test("startBackfill reports already-running, and status follows the run", async 
   await Bun.sleep(10);
   const mid = getBackfillStatus();
   expect(mid.status).toBe("running");
-  expect(mid.current).toBe("c1");
+  expect(mid.current).toBe("#c1");
   expect(mid.channelsTotal).toBe(2);
   expect(mid.channelsDone).toBe(0);
   expect(mid.startedAt).not.toBeNull();
@@ -264,6 +266,7 @@ test("channels the bot cannot see or that vanish are marked done and do not abor
   const denied = (code: number) => Object.assign(new Error("discord"), { code });
   const failing = (id: string, code: number): BackfillChannel => ({
     id,
+    name: `#${id}`,
     parentId: null,
     fetchPage: async () => {
       throw denied(code);
@@ -272,6 +275,7 @@ test("channels the bot cannot see or that vanish are marked done and do not abor
   });
   const broken: BackfillChannel = {
     id: "bad",
+    name: "#bad",
     parentId: null,
     fetchPage: async () => {
       throw new Error("network");
@@ -283,6 +287,8 @@ test("channels the bot cannot see or that vanish are marked done and do not abor
   await whenBackfillSettled();
 
   for (const id of ["no-view", "no-perm", "gone", "ok"]) expect(row(id)!.doneAt).not.toBeNull();
+  // A message-only run never stamps the reaction pass, not even on the skip path.
+  expect(db.select().from(schema.activityBackfill).all().every((r) => r.reactionsDoneAt === null)).toBe(true);
   expect(row("bad")!.doneAt).toBeNull();
   const s = getBackfillStatus();
   expect(s.errors).toBe(1);
@@ -359,4 +365,63 @@ test("startBackfill with reactions runs the reaction pass after the messages", a
   expect(row("c1")!.reactionsDoneAt).not.toBeNull();
   expect(db.select().from(schema.activityReactions).all().length).toBe(3);
   expect(getBackfillStatus().reactions).toBe(true);
+});
+
+test("a row for a channel that is no longer listed does not pin the status", async () => {
+  db.insert(schema.activityBackfill).values({ channelId: "deleted", scanned: 4, beforeId: "9" }).run();
+  startBackfill(ctx, { reactions: false }, { listChannels: async () => [gatedChannel("c1", pagesOf([2]))], sleep: noSleep });
+  await whenBackfillSettled();
+  expect(row("deleted")!.doneAt).not.toBeNull();
+  expect(getBackfillStatus()).toMatchObject({ status: "done", channelsDone: 2, channelsTotal: 2 });
+});
+
+test("a stopped reaction pass reads stopped, and finishing it reads done", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const ch: BackfillChannel = {
+    ...gatedChannel("c1", pagesOf([2])),
+    fetchReactionPage: async (before) => {
+      await gate;
+      return before === null ? [reacted(100)] : [];
+    },
+  };
+  const deps = { listChannels: async () => [ch], sleep: noSleep };
+  startBackfill(ctx, { reactions: true }, deps);
+  await Bun.sleep(10);
+  // The messages are read; the run is waiting on the reaction pass.
+  expect(row("c1")!.doneAt).not.toBeNull();
+  expect(stopBackfill()).toBe("stopping");
+  release();
+  await whenBackfillSettled();
+  expect(row("c1")!.reactionsDoneAt).toBeNull();
+  expect(getBackfillStatus()).toMatchObject({ status: "stopped", channelsDone: 1, reactions: true });
+
+  // Starting again with reactions finishes the pass.
+  startBackfill(ctx, { reactions: true }, deps);
+  await whenBackfillSettled();
+  expect(row("c1")!.reactionsDoneAt).not.toBeNull();
+  expect(getBackfillStatus().status).toBe("done");
+});
+
+test("a message-only run reads done without any reaction pass", async () => {
+  startBackfill(ctx, { reactions: false }, { listChannels: async () => [gatedChannel("c1", pagesOf([2]))], sleep: noSleep });
+  await whenBackfillSettled();
+  expect(row("c1")!.reactionsDoneAt).toBeNull();
+  expect(getBackfillStatus()).toMatchObject({ status: "done", reactions: false });
+});
+
+test("a skippable error on a reaction run marks both passes done", async () => {
+  const gone: BackfillChannel = {
+    id: "gone",
+    name: "#gone",
+    parentId: null,
+    fetchPage: async () => {
+      throw Object.assign(new Error("unknown channel"), { code: 10003 });
+    },
+    fetchReactionPage: async () => [],
+  };
+  startBackfill(ctx, { reactions: true }, { listChannels: async () => [gone], sleep: noSleep });
+  await whenBackfillSettled();
+  expect(row("gone")!.reactionsDoneAt).not.toBeNull();
+  expect(getBackfillStatus().status).toBe("done");
 });

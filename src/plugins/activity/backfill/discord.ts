@@ -8,7 +8,8 @@ import { ChannelType } from "discord.js";
 import type { AnyThreadChannel, Collection, Message, TextChannel, NewsChannel, ForumChannel } from "discord.js";
 import type { BotContext } from "../../../core/plugin.ts";
 import { toRawMessage } from "../facts.ts";
-import type { BackfillChannel, FetchPage, FetchReactionPage, ReactionMessage } from "./types.ts";
+import type { BackfillChannel, FetchPage } from "./channel.ts";
+import type { FetchReactionPage, ReactionMessage } from "./types.ts";
 
 /** A channel whose messages can be read: a text or announcement channel, or a thread. */
 type Readable = TextChannel | NewsChannel | AnyThreadChannel;
@@ -21,9 +22,16 @@ function newestFirst(messages: Collection<string, Message>): Message[] {
   });
 }
 
-/** Fetch one page (up to 100) of a channel's history, newest first. */
+/**
+ * Fetch one page (up to 100) of a channel's history, newest first.
+ *
+ * The messages are not kept in the channel's cache (`cache: false`, and any
+ * that got in are dropped), so reading a large history does not grow the
+ * process: the page lives only as long as the caller holds it.
+ */
 async function fetchMessages(channel: Readable, before: string | null): Promise<Message[]> {
-  const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+  const page = await channel.messages.fetch({ limit: 100, cache: false, ...(before ? { before } : {}) });
+  for (const id of page.keys()) channel.messages.cache.delete(id);
   return newestFirst(page);
 }
 
@@ -85,6 +93,7 @@ export function reactionPager(channel: Readable): FetchReactionPage {
 function toBackfillChannel(channel: Readable): BackfillChannel {
   return {
     id: channel.id,
+    name: `#${channel.name}`,
     parentId: channel.isThread() ? (channel.parentId ?? null) : null,
     fetchPage: messagePager(channel),
     fetchReactionPage: reactionPager(channel),

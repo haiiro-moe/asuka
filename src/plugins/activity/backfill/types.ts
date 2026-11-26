@@ -1,9 +1,10 @@
 /**
- * Pure types of the history backfill. This file has no imports from the
- * server, so the web dashboard can import the status shape without pulling the
- * runner (and its database and Discord dependencies) into the browser bundle.
+ * Plain data types of the history backfill. This file imports nothing, not
+ * even types from discord.js or the server, so the web dashboard (a separate
+ * TypeScript program without Node or Discord types) can import
+ * `BackfillStatus` without pulling the runner into the browser bundle. Types
+ * that mention `RawMessage` or channels live in `channel.ts`.
  */
-import type { RawMessage } from "../facts.ts";
 
 /** Progress of the history backfill, as `GET /api/activity/backfill` reports it. */
 export interface BackfillStatus {
@@ -11,7 +12,7 @@ export interface BackfillStatus {
    * `idle`: nothing has been scanned yet. `running`: a run is live.
    * `stopped`: some channels are unfinished and no run is live (stopped by an
    * admin, interrupted by a restart, or left over after channel errors).
-   * `done`: every channel has been read to its start. `failed`: the last run
+   * `done`: every channel has been read to its start (and, if the reaction pass is on, its reactions too). `failed`: the last run
    * could not even list the channels.
    */
   status: "idle" | "running" | "stopped" | "done" | "failed";
@@ -21,7 +22,7 @@ export interface BackfillStatus {
   channelsTotal: number;
   /** Messages scanned across all channels, over every run. */
   scanned: number;
-  /** Id of the channel being read right now; null when no run is live. */
+  /** Name of the channel being read right now, such as `#general`; null when no run is live. */
   current: string | null;
   /** When the last run in this process started, in unix seconds; null after a restart. */
   startedAt: number | null;
@@ -32,13 +33,6 @@ export interface BackfillStatus {
   /** Channels that failed with an unexpected error in the last run in this process. */
   errors: number;
 }
-
-/**
- * One page of a channel's history, newest message first. Empty once the start
- * of the channel has been passed. `before` is the id of the oldest message of
- * the previous page, or null for the first page.
- */
-export type FetchPage = (before: string | null) => Promise<RawMessage[]>;
 
 /** One reaction on a message, as the reaction pass reads it. */
 export interface RawReaction {
@@ -66,15 +60,3 @@ export interface ReactionMessage {
 
 /** One page of messages for the reaction pass, newest first, empty once exhausted. */
 export type FetchReactionPage = (before: string | null) => Promise<ReactionMessage[]>;
-
-/** A channel or thread the backfill reads. */
-export interface BackfillChannel {
-  /** The channel or thread id. */
-  id: string;
-  /** The parent channel when this is a thread; null otherwise. */
-  parentId: string | null;
-  /** Reads the message history, page by page. */
-  fetchPage: FetchPage;
-  /** Reads the history with its reactions, for the optional reaction pass. */
-  fetchReactionPage: FetchReactionPage;
-}

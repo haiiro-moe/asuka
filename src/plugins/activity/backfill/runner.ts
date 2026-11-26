@@ -27,9 +27,11 @@ import { isExcluded } from "../exclusion.ts";
 import { extractMessageFacts } from "../facts.ts";
 import { recordMessage, recordReactionAdd } from "../record.ts";
 import { listBackfillChannels } from "./discord.ts";
-import type { BackfillChannel, BackfillStatus, FetchPage, FetchReactionPage } from "./types.ts";
+import type { BackfillChannel, FetchPage } from "./channel.ts";
+import type { BackfillStatus, FetchReactionPage } from "./types.ts";
 
-export type { BackfillChannel, BackfillStatus, FetchPage, FetchReactionPage, RawReaction, ReactionMessage } from "./types.ts";
+export type { BackfillChannel, FetchPage } from "./channel.ts";
+export type { BackfillStatus, FetchReactionPage, RawReaction, ReactionMessage } from "./types.ts";
 
 /** Default pause between two pages, in milliseconds, to stay well inside Discord's rate limits. */
 const DEFAULT_PAGE_DELAY_MS = 250;
@@ -75,7 +77,11 @@ function ensureRow(channelId: string): void {
   db.insert(schema.activityBackfill).values({ channelId }).onConflictDoNothing().run();
 }
 
-/** Mark a channel's message pass finished (and, with `reactions`, its reaction pass too). */
+/**
+ * Mark a channel's message pass finished. With `reactions` (pass it only when
+ * the run was started with the reaction pass) its reaction pass is marked too;
+ * without it `reactionsDoneAt` is left alone.
+ */
 function markDone(channelId: string, reactions = false): void {
   const ts = nowSec();
   ensureRow(channelId);
@@ -263,7 +269,7 @@ async function runChannel(r: Run, ch: BackfillChannel, deps: BackfillDeps): Prom
     pageDelayMs: deps.pageDelayMs,
     shouldStop: () => r.stopRequested,
   };
-  r.current = ch.id;
+  r.current = ch.name;
   try {
     const { done } = await backfillChannel(ch.id, ch.parentId, ch.fetchPage, opts);
     if (done && r.reactions && readRow(ch.id)?.reactionsDoneAt == null) {
@@ -271,7 +277,7 @@ async function runChannel(r: Run, ch: BackfillChannel, deps: BackfillDeps): Prom
     }
   } catch (e) {
     const code = errorCode(e);
-    if (code !== null && SKIPPABLE_CODES.has(code)) markDone(ch.id, true);
+    if (code !== null && SKIPPABLE_CODES.has(code)) markDone(ch.id, r.reactions);
     else {
       r.errors++;
       console.error(`[activity] backfill of channel ${ch.id} failed`, e);
@@ -284,6 +290,12 @@ async function execute(r: Run, ctx: BotContext, deps: BackfillDeps): Promise<voi
   try {
     const channels = await (deps.listChannels ?? listBackfillChannels)(ctx);
     for (const ch of channels) ensureRow(ch.id);
+    // A row for a channel that is no longer listed (deleted, or lost since an
+    // earlier run) can never be read again; close it so it cannot pin the status.
+    const listed = new Set(channels.map((ch) => ch.id));
+    for (const { channelId } of db.select({ channelId: schema.activityBackfill.channelId }).from(schema.activityBackfill).all()) {
+      if (!listed.has(channelId)) markDone(channelId, r.reactions);
+    }
     for (const ch of channels) {
       if (r.stopRequested) break;
       await runChannel(r, ch, deps);
@@ -363,8 +375,9 @@ export async function whenBackfillSettled(): Promise<void> {
  * The backfill's progress.
  *
  * Counts come from the `activity_backfill` rows, so they survive a restart:
- * no rows is `idle`, every row done is `done`, unfinished rows with no live run
- * is `stopped`. A live run is `running`, and a run that could not list the
+ * no rows is `idle`, every row done is `done` (and, when the run was started
+ * with the reaction pass, every row's reaction pass too), unfinished rows with
+ * no live run is `stopped`. A live run is `running`, and a run that could not list the
  * channels is `failed`. `startedAt`, `elapsedSec` and `errors` describe the run
  * of this process only.
  *
@@ -375,12 +388,15 @@ export function getBackfillStatus(): BackfillStatus {
   const channelsDone = rows.filter((r) => r.doneAt !== null).length;
   const scanned = rows.reduce((sum, r) => sum + r.scanned, 0);
   const live = run !== null && run.endedAt === null;
+  // Whether the reaction pass counts toward `done`: the last run's setting, or
+  // after a restart (no run in memory) whether any channel has had its pass.
+  const reactions = run ? run.reactions : rows.some((r) => r.reactionsDoneAt !== null);
 
   let status: BackfillStatus["status"];
   if (live) status = "running";
   else if (run?.fatal) status = "failed";
   else if (rows.length === 0) status = "idle";
-  else if (channelsDone === rows.length) status = "done";
+  else if (channelsDone === rows.length && (!reactions || rows.every((r) => r.reactionsDoneAt !== null))) status = "done";
   else status = "stopped";
 
   return {
@@ -391,7 +407,7 @@ export function getBackfillStatus(): BackfillStatus {
     current: live ? run!.current : null,
     startedAt: run?.startedAt ?? null,
     elapsedSec: run ? (run.endedAt ?? nowSec()) - run.startedAt : 0,
-    reactions: run ? run.reactions : rows.some((r) => r.reactionsDoneAt !== null),
+    reactions,
     errors: run?.errors ?? 0,
   };
 }
