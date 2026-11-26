@@ -290,3 +290,17 @@ export interface WrappedLinkResponse {
   /** Name of the thread's parent channel when {@link WrappedData.topChannelId} is a thread; null for a normal channel or when unknown. */
   topChannelParentName: string | null;
 }
+
+/**
+ * `GET /api/activity/wrapped/failed`: the members whose Wrapped DM failed, so
+ * an admin can resend them. Only failed links of members who are still opted
+ * in; never skipped, pending or sent ones.
+ */
+export interface WrappedFailedList {
+  /** The year the list is for. */
+  year: number;
+  /** One item per failed DM, ordered by user id, at most 200. */
+  items: { userId: string; state: "failed" }[];
+  /** More failed DMs exist than `items` holds. */
+  truncated: boolean;
+}

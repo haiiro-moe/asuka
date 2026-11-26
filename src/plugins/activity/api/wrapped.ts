@@ -7,6 +7,7 @@ import type {
   WrappedResumeResponse,
   WrappedRunStartResponse,
   WrappedSendResponse,
+  WrappedFailedList,
   ServerWrappedResponse,
 } from "../types/wrapped.ts";
 import {
@@ -18,7 +19,7 @@ import {
   serverWrappedUrl,
   storeServerWrapped,
 } from "../wrapped/server.ts";
-import { ensureWrappedLink, getLinkByToken, linkUrl, peekLinkByToken } from "../wrapped/links.ts";
+import { ensureWrappedLink, getLinkByToken, linkUrl, listFailedDms, peekLinkByToken } from "../wrapped/links.ts";
 import { currentUtcYear, optedInCount } from "../wrapped/optin.ts";
 import {
   getWrappedStatus,
@@ -265,6 +266,23 @@ const reopenSignup: ApiRoute = {
   },
 };
 
+/**
+ * `GET /api/activity/wrapped/failed?year=` (admin): the {@link WrappedFailedList}
+ * of members whose DM failed and who are still opted in, for resending. Year
+ * defaults to the latest run's, else the current UTC year; 400 for a bad year.
+ */
+const getFailed: ApiRoute = {
+  method: "GET",
+  path: "/api/activity/wrapped/failed",
+  access: "admin",
+  handle(req) {
+    const year = yearParam(req);
+    if (year === null) return error(400, "bad year");
+    const out: WrappedFailedList = listFailedDms(year);
+    return Response.json(out);
+  },
+};
+
 /** `GET /api/activity/wrapped/optins` (admin): `{ count }` of members opted in to the DM. */
 const getOptins: ApiRoute = {
   method: "GET",
@@ -402,6 +420,7 @@ export const wrappedRoutes: ApiRoute[] = [
   closeSignup,
   reopenSignup,
   getOptins,
+  getFailed,
   getLink,
   getByToken,
   getCard,
