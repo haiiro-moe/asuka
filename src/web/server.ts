@@ -145,10 +145,12 @@ export function startWebServer(pluginRoutes: ApiRoute[], ctx: BotContext) {
     routes: {
       "/": index,
       // Same SPA shell; the React entrypoint branches on location.pathname to
-      // render the token-driven announce composer / purchased panel editor
-      // instead of the dashboard.
+      // render the token-driven announce composer / purchased panel editor /
+      // Wrapped stories instead of the dashboard.
       "/club-announce/:token": index,
       "/panel/:token": index,
+      "/wrapped/s/:token": index,
+      "/wrapped/:token": index,
 
       "/auth/login": () =>
         new Response(null, { status: 302, headers: { Location: buildAuthorizeUrl() } }),
