@@ -456,3 +456,37 @@ test("real-run counts, the failed list and the status ignore private links whate
   expect(priv.filter((r) => r.dmStatus === "failed").length).toBe(3);
   expect(priv.filter((r) => r.dmStatus === "sent").length).toBe(1);
 });
+
+test("cache headers: preview responses are no-store, real JSON private no-cache, real cards private max-age=300", async () => {
+  seed();
+  const status = await preview(fakeClient());
+  // A real run gives the real member and server links.
+  const real = fakeClient();
+  expect(startWrappedRun(fakeCtx(real.client), { year: YEAR, startedBy: ADMIN })).toBe("started");
+  await waitForWrappedRun();
+  const realToken = getWrappedLink("101", YEAR)!.token;
+  const realServer = getServerRow(YEAR)!.token;
+
+  const { client } = fakeClient();
+  const ctx = { ...fakeCtx(client), session: null };
+  const call = async (path: string, token: string) => {
+    const route = wrappedRoutes.find((r) => r.path === path)!;
+    const res = await route.handle(new Request("http://x/"), { ...ctx, params: { token } });
+    expect(res.status).toBe(200);
+    return res.headers.get("cache-control");
+  };
+  const T_JSON = "/api/activity/wrapped/t/:token";
+  const T_CARD = "/api/activity/wrapped/t/:token/card.png";
+  const S_JSON = "/api/activity/wrapped/s/:token";
+  const S_CARD = "/api/activity/wrapped/s/:token/card.png";
+
+  expect(await call(T_JSON, status.links[0]!.token)).toBe("no-store");
+  expect(await call(T_CARD, status.links[0]!.token)).toBe("no-store");
+  expect(await call(S_JSON, status.serverToken!)).toBe("no-store");
+  expect(await call(S_CARD, status.serverToken!)).toBe("no-store");
+
+  expect(await call(T_JSON, realToken)).toBe("private, no-cache");
+  expect(await call(T_CARD, realToken)).toBe("private, max-age=300");
+  expect(await call(S_JSON, realServer)).toBe("private, no-cache");
+  expect(await call(S_CARD, realServer)).toBe("private, max-age=300");
+});

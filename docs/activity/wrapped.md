@@ -336,6 +336,10 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 
 The public routes need no session: the token is the authorisation.
 
+Their `cache-control` (`wrappedCacheControl` in `api/wrapped.ts`): a private preview response,
+JSON or card, is `no-store`; a real story's JSON is `private, no-cache` (names are resolved on
+open); a real member or server card is `private, max-age=300`. No shared cache keeps any of them.
+
 ## The cards
 
 `renderWrappedCardPng(data, displayName, avatarUrl?)` draws the member card (640 x
