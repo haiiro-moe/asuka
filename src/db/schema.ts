@@ -623,7 +623,10 @@ export const activityEmoji = sqliteTable(
     ts: integer("ts").notNull(),
     userId: text("user_id").notNull(),
     channelId: text("channel_id").notNull(),
-    /** The emoji's identity: the unicode emoji itself, or a custom emoji's id. */
+    /**
+     * The emoji's identity, `ParsedEmoji.emoji` stored as is: the unicode emoji
+     * itself (without U+FE0F), or `custom:<id>` for a custom emoji.
+     */
     emoji: text("emoji").notNull(),
     /** Custom emoji name; null for unicode emoji. */
     name: text("name"),
@@ -647,7 +650,10 @@ export const activityReactions = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     messageId: text("message_id").notNull(),
     userId: text("user_id").notNull(),
-    /** The emoji's identity: the unicode emoji itself, or a custom emoji's id. */
+    /**
+     * The emoji's identity, in the same form as `ParsedEmoji.emoji`: the unicode
+     * emoji itself (without U+FE0F), or `custom:<id>` for a custom emoji.
+     */
     emoji: text("emoji").notNull(),
     /** Custom emoji name; null for unicode emoji. */
     name: text("name"),

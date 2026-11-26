@@ -2,8 +2,8 @@
 
 The `activity` plugin records what happens in the guild as a raw, timestamped event log, and
 everything else (the tiered analytics views, the history backfill, the yearly Wrapped) reads that
-log. This page covers the foundation: the tables, the two config columns and how the plugin is
-laid out.
+log. This page covers the foundation: the tables, the two config columns, the shared helpers, the
+write API that every row goes through, the seed script and how the plugin is laid out.
 
 ## Rules that hold for every table
 
@@ -169,6 +169,118 @@ The president tier gets numbers, never names or ids. A small number can still po
 
 The user tier names people only in leaderboards and awards. Admins see names.
 
+## Message facts (`facts.ts`)
+
+A message is reduced to facts in two steps, and live capture and the backfill both use them, so
+they agree on every rule:
+
+```ts
+const facts = extractMessageFacts(toRawMessage(message), "live"); // or "backfill"
+if (facts) recordMessage(facts);
+```
+
+- `toRawMessage(message)` copies what matters out of a discord.js `Message` into a plain
+  `RawMessage`. Only a message of type `Reply` counts as a reply: a forward, a crosspost and a
+  thread's starter message carry a reference too, but answer nobody. `parentChannelId` is the
+  parent of a thread, read from the cached channel, and null otherwise.
+- `extractMessageFacts(raw, source)` returns `MessageFacts`, or **null when the message is not
+  recorded**: the author is a bot, a webhook sent it, it is a system message, it is a DM (no
+  guild), or its channel or its thread's parent channel is excluded.
+
+`RawMessage` is plain data, so tests and the seed script build one by hand. What the facts hold:
+
+| Field | Rule |
+|---|---|
+| `ts` | `createdTimestamp` (milliseconds) in whole unix seconds. |
+| `replyToUserId`, `replyToMessageId` | The reply target. `replyToUserId` is null when Discord did not send the replied-to message (it was deleted). A reply to yourself is kept. |
+| `mentionedUserIds` | The users Discord lists as mentioned, each once, without the author. **A reply that pings its target lists the target here as well**, so that user is both the reply target and a mention. |
+| `attachmentKinds` | One of `image`, `video`, `audio` per attachment, by the first part of its MIME type; `other` for anything else and for an unknown type. |
+| `linkDomains` | The hostname of every `http://` or `https://` link: lowercase, no port, each once, in order of first appearance. `www.` is kept, so `www.youtube.com` and `youtube.com` are two domains. |
+| `length` | Characters (code points) of the text, so an emoji counts once. |
+| `emoji` | `parseEmoji(content)`. |
+
+The text is read here and goes no further.
+
+## Write API (`record.ts`)
+
+Every row in the event tables is written through these functions. Capture, the backfill and the
+seed script call them; nothing else inserts into those tables.
+
+| Function | Writes |
+|---|---|
+| `recordMessage(facts): boolean` | The message row, one `activity_mentions` row per mentioned user and one `activity_emoji` row per distinct emoji, in one transaction. Returns false, with nothing written, when the message is already recorded or its channel (or its thread's parent) is excluded. |
+| `recordReactionAdd({ messageId, userId, emoji, name, channelId, messageAuthorId, ts })` | One row per member, emoji and message. Adding it again keeps the row and clears `removedAt`. |
+| `recordReactionRemove(messageId, userId, emoji, ts)` | Stamps `removedAt` on the live row. Nothing happens when the reaction was never recorded. |
+| `recordMembership(userId, kind, ts)` | A `join` or a `leave`. |
+| `openVoiceSegment(userId, snapshot, ts)` | A new open voice segment (`endedAt` null, `lastSeenAt` = `ts`). |
+| `closeVoiceSegment(userId, ts)` | Ends the member's open segment at `ts`. |
+| `touchVoiceSegments(ts)` | The heartbeat: sets `lastSeenAt` on every open segment. |
+| `closeDanglingVoiceSegments(): number` | Ends every open segment at its own `lastSeenAt` and returns how many. Call it once on boot. |
+| `recordCommand(userId, name, ok, ts?)` | One slash command run. `ts` defaults to now. |
+| `recordCredit(userId, delta, balanceAfter, ts?)` | One Social Credits change. `ts` defaults to now. |
+
+What holds for all of them:
+
+- **They are synchronous** and return as soon as the row is written. Timestamps are unix seconds.
+- **A duplicate is not an error.** A second write of the same message or reaction hits the unique
+  key and changes nothing (`onConflictDoNothing`), which is what lets capture and the backfill
+  overlap. A database error that is not a duplicate still throws, so a gateway handler wraps its
+  calls in try/catch.
+- **They do not check `activityEnabled`.** The caller decides whether to record at all.
+- **Call them after `initDb()`**, inside a handler: they read the excluded-channel list.
+
+Details that matter to a caller:
+
+- **Reaction emoji use the same key as text emoji**: the unicode emoji without U+FE0F, or
+  `custom:<id>`, with `name` set for a custom emoji only. Build it the way `parseEmoji` does, or
+  text use and reaction use of one emoji will not add up.
+- **Re-adding a reaction keeps the first `addedAt`.** Only `removedAt` is cleared. A message author
+  that was unknown (null) is filled in by a later add that knows it.
+- **Excluded channels.** `recordMessage` checks the channel and the thread's parent.
+  `recordReactionAdd` and `openVoiceSegment` only get a channel id, so they check that one id: for
+  a reaction in a thread the caller checks the parent with `isExcluded(threadId, parentId)` first.
+- **A voice segment is one stretch with nothing changing**: one member, one channel, one set of
+  flags (`VoiceSnapshot`: `channelId`, `muted`, `deafened`, `streaming`, `video`). A channel move or
+  a mute toggle is a close followed by an open at the same second.
+- **A member has at most one open segment.** `openVoiceSegment` first closes an open one at `ts`,
+  so a member's segments never overlap even if a leave was missed.
+- **After a restart**, `closeDanglingVoiceSegments()` ends what was left open at the last
+  heartbeat, not at the time the bot came back, so downtime is not counted as voice time.
+- **`mentionCount`** on the message row is the number of mention rows written for it.
+
+## Seed data (`scripts/seed-activity.ts`)
+
+Fills a throwaway database with fake activity, so the views have something to draw:
+
+```sh
+DATABASE_PATH=/tmp/asuka-seed.sqlite nix develop -c bun scripts/seed-activity.ts
+```
+
+Run it from the repo root. The file is created and migrated if it does not exist. To look at the
+result, start the bot with the same `DATABASE_PATH`.
+
+- **It refuses to touch the bot's own database** and exits 1 with the reason: when
+  `DATABASE_PATH` is not set (the default `./asuka.sqlite` would be used), when it names a file
+  called `asuka.sqlite` (the default path and the one `deploy.sh` sets up, in any directory), and
+  when `NODE_ENV` is `production` or `test`. Nothing is opened or created on a refusal.
+- **What it writes:** 20 fake members (ids `900000000000000001` to `...020`) over 90 days ending
+  now, in six channels, two threads and three voice channels: about 6,000 messages with replies,
+  mentions, emoji, links, attachments and stickers, about 2,900 reactions (some removed), a few
+  hundred voice segments, a join per member and one leave, command runs and Social Credits changes.
+  Messages older than 45 days are marked `backfill`, the rest `live`.
+- **The members are not all alike**, so each view has something to show: activity falls off from
+  the first member to the last, one member is a night owl and one an early bird, four went quiet
+  more than 30 days ago (one of them left), and three joined in the last two weeks.
+- **Everything goes through the write API**, and messages through `extractMessageFacts`, so the
+  rows are what capture would have written.
+- **Fixed random seed.** Every run has the same members behaving the same way. The exact rows
+  depend on the day it is run, because the 90 days end now. Set `SEED_NOW` (unix seconds) to pin
+  the end time: two runs with the same `SEED_NOW` write identical rows.
+- **It seeds once.** A database that already holds the seed members is left alone (exit 0).
+  Delete the file to seed again.
+- The fake members exist only in the activity tables. They have no `members` row and are not on
+  Discord.
+
 ## Plugin layout
 
 ```
@@ -191,8 +303,13 @@ src/plugins/activity/
   time.ts               Period, weekdayHour, lastDays, termPeriod, parsePeriodParam, QUIET_DAYS
   privacy.ts            MIN_GROUP, hideSmall, mergeSmallGroups
   exclusion.ts          excludedChannelIds, isExcluded, notExcluded
+  facts.ts              RawMessage, MessageFacts, toRawMessage, extractMessageFacts
+  record.ts             the write API: recordMessage, reactions, voice segments, membership,
+                        commands, credits
   *.test.ts             one per module above, plus schema.test.ts (tables, config defaults,
                         plugin registration)
+scripts/
+  seed-activity.ts      fake activity for a throwaway database (and its refusal test)
 ```
 
 The lists start empty and each has one owner, so work on capture, a tier's routes or Wrapped adds
