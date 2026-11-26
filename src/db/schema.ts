@@ -1,4 +1,12 @@
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  real,
+  index,
+  uniqueIndex,
+  primaryKey,
+} from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 const now = sql`(unixepoch())`;
@@ -70,6 +78,12 @@ export const guildConfig = sqliteTable("guild_config", {
     .$type<string[]>()
     .notNull()
     .default(sql`'["youtube"]'`),
+
+  // Activity analytics (see docs/activity/foundation.md)
+  /** 1 = record activity facts, 0 = record nothing. */
+  activityEnabled: integer("activity_enabled").notNull().default(1),
+  /** Comma-separated channel ids that are never recorded, backfilled or queried. */
+  activityExcludedChannelIds: text("activity_excluded_channel_ids").notNull().default(""),
 
   updatedAt: integer("updated_at").notNull().default(now),
 });
@@ -533,4 +547,260 @@ export const anilistOauthStates = sqliteTable("anilist_oauth_states", {
   userId: text("user_id").notNull(),
   expiresAt: integer("expires_at").notNull(),
   createdAt: integer("created_at").notNull().default(now),
+});
+
+// ---------------------------------------------------------------------------
+// Activity analytics: a raw, timestamped event log (docs/activity/foundation.md).
+// Only derived facts are stored, never message text. Timestamps are unix
+// seconds. Bots and excluded channels are never recorded.
+// ---------------------------------------------------------------------------
+
+/**
+ * One row per recorded message. `messageId` is unique, so live capture and
+ * backfill can both write the same message without double counting.
+ */
+export const activityMessages = sqliteTable(
+  "activity_messages",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    messageId: text("message_id").notNull().unique(),
+    userId: text("user_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    /** Parent channel when the message was sent in a thread; null otherwise. */
+    parentChannelId: text("parent_channel_id"),
+    /** When the message was sent. */
+    ts: integer("ts").notNull(),
+    replyToUserId: text("reply_to_user_id"),
+    replyToMessageId: text("reply_to_message_id"),
+    mentionCount: integer("mention_count").notNull().default(0),
+    /** Comma list of `image|video|audio|other`, one entry per attachment. */
+    attachmentKinds: text("attachment_kinds").notNull().default(""),
+    /** Comma list of the domains linked in the message. */
+    linkDomains: text("link_domains").notNull().default(""),
+    stickerCount: integer("sticker_count").notNull().default(0),
+    /** Length of the message text in characters. The text itself is not kept. */
+    length: integer("length").notNull().default(0),
+    /** Which path wrote the row: the gateway listener or the history backfill. */
+    source: text("source", { enum: ["live", "backfill"] }).notNull(),
+  },
+  (t) => [
+    index("activity_messages_ts_idx").on(t.ts),
+    index("activity_messages_user_ts_idx").on(t.userId, t.ts),
+    index("activity_messages_channel_idx").on(t.channelId),
+  ],
+);
+
+/**
+ * One row per user mentioned or replied to in a message: the edges of the
+ * reply/mention web. Unique per (`messageId`, `toUserId`).
+ */
+export const activityMentions = sqliteTable(
+  "activity_mentions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    messageId: text("message_id").notNull(),
+    ts: integer("ts").notNull(),
+    fromUserId: text("from_user_id").notNull(),
+    toUserId: text("to_user_id").notNull(),
+    channelId: text("channel_id").notNull(),
+  },
+  (t) => [
+    uniqueIndex("activity_mentions_message_to_uq").on(t.messageId, t.toUserId),
+    index("activity_mentions_ts_idx").on(t.ts),
+  ],
+);
+
+/**
+ * Emoji used in message text, one row per distinct emoji per message with its
+ * number of occurrences. Unique per (`messageId`, `emoji`). Reactions are kept
+ * separately in {@link activityReactions}.
+ */
+export const activityEmoji = sqliteTable(
+  "activity_emoji",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    messageId: text("message_id").notNull(),
+    ts: integer("ts").notNull(),
+    userId: text("user_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    /** The emoji's identity: the unicode emoji itself, or a custom emoji's id. */
+    emoji: text("emoji").notNull(),
+    /** Custom emoji name; null for unicode emoji. */
+    name: text("name"),
+    /** How many times the emoji appears in the message. */
+    count: integer("count").notNull().default(1),
+  },
+  (t) => [
+    uniqueIndex("activity_emoji_message_emoji_uq").on(t.messageId, t.emoji),
+    index("activity_emoji_emoji_ts_idx").on(t.emoji, t.ts),
+  ],
+);
+
+/**
+ * Reactions, one row per (`messageId`, `userId`, `emoji`). A removal stamps
+ * `removedAt` instead of deleting the row, so both add and remove are known
+ * and the net count is the rows where `removedAt` is null.
+ */
+export const activityReactions = sqliteTable(
+  "activity_reactions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    messageId: text("message_id").notNull(),
+    userId: text("user_id").notNull(),
+    /** The emoji's identity: the unicode emoji itself, or a custom emoji's id. */
+    emoji: text("emoji").notNull(),
+    /** Custom emoji name; null for unicode emoji. */
+    name: text("name"),
+    channelId: text("channel_id").notNull(),
+    /** Author of the reacted-to message, when known (for "most reacted"). */
+    messageAuthorId: text("message_author_id"),
+    addedAt: integer("added_at").notNull(),
+    removedAt: integer("removed_at"),
+  },
+  (t) => [
+    uniqueIndex("activity_reactions_message_user_emoji_uq").on(
+      t.messageId,
+      t.userId,
+      t.emoji,
+    ),
+    index("activity_reactions_added_idx").on(t.addedAt),
+  ],
+);
+
+/**
+ * Voice session history: connected time per member and channel. Distinct from
+ * the ephemeral {@link voiceSessions} used for XP. `endedAt` is null while the
+ * session is open; `lastSeenAt` is the last time it was known to be live, so a
+ * session left dangling by a restart can be closed at that time.
+ */
+export const activityVoice = sqliteTable(
+  "activity_voice",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+    lastSeenAt: integer("last_seen_at").notNull(),
+    // State flags (1/0).
+    muted: integer("muted").notNull().default(0),
+    deafened: integer("deafened").notNull().default(0),
+    streaming: integer("streaming").notNull().default(0),
+    video: integer("video").notNull().default(0),
+  },
+  (t) => [
+    index("activity_voice_user_started_idx").on(t.userId, t.startedAt),
+    index("activity_voice_channel_started_idx").on(t.channelId, t.startedAt),
+  ],
+);
+
+/** Membership changes: one row each time a member joins or leaves the guild. */
+export const activityMembership = sqliteTable("activity_membership", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id").notNull(),
+  kind: text("kind", { enum: ["join", "leave"] }).notNull(),
+  ts: integer("ts").notNull(),
+});
+
+/** Slash command usage: one row per invocation, with whether it succeeded. */
+export const activityCommands = sqliteTable("activity_commands", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id").notNull(),
+  /** Command name, without the leading slash. */
+  name: text("name").notNull(),
+  /** 1 = completed, 0 = failed. */
+  ok: integer("ok").notNull(),
+  ts: integer("ts").notNull(),
+});
+
+/**
+ * Social Credits ledger: one row per balance change, so the economy views have
+ * history that the `members.socialCredits` total alone cannot give.
+ */
+export const activityCredits = sqliteTable("activity_credits", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id").notNull(),
+  /** Signed change: positive = credits earned, negative = credits spent. */
+  delta: integer("delta").notNull(),
+  balanceAfter: integer("balance_after").notNull(),
+  ts: integer("ts").notNull(),
+});
+
+/**
+ * Backfill cursor, one row per channel or thread, which makes the history
+ * backfill resumable. Reactions are an optional second pass with their own
+ * completion stamp.
+ */
+export const activityBackfill = sqliteTable("activity_backfill", {
+  channelId: text("channel_id").primaryKey(),
+  /** Fetch messages older than this id next; null = start from the newest. */
+  beforeId: text("before_id"),
+  /** Messages scanned so far in this channel. */
+  scanned: integer("scanned").notNull().default(0),
+  /** Set once the message pass has reached the start of the channel. */
+  doneAt: integer("done_at"),
+  /** Set once the reaction pass has finished for this channel. */
+  reactionsDoneAt: integer("reactions_done_at"),
+  updatedAt: integer("updated_at").notNull().default(now),
+});
+
+/**
+ * Wrapped runs. A run is started by an admin, first processes every member's
+ * year into a snapshot (`processing`), then sends the links by DM (`sending`).
+ * The counters drive the progress shown in the dashboard.
+ */
+export const activityWrappedRuns = sqliteTable("activity_wrapped_runs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  year: integer("year").notNull(),
+  status: text("status", {
+    enum: ["processing", "sending", "done", "failed"],
+  }).notNull(),
+  /** Members the run covers. */
+  total: integer("total").notNull().default(0),
+  /** Members whose snapshot has been built. */
+  processed: integer("processed").notNull().default(0),
+  /** DMs delivered. */
+  sent: integer("sent").notNull().default(0),
+  /** DMs that could not be delivered. */
+  failed: integer("failed").notNull().default(0),
+  /** User id of the admin who started the run. */
+  startedBy: text("started_by").notNull(),
+  startedAt: integer("started_at").notNull().default(now),
+  updatedAt: integer("updated_at").notNull().default(now),
+  finishedAt: integer("finished_at"),
+});
+
+/**
+ * A member's personal Wrapped link for one year, keyed by (`userId`, `year`).
+ * The link is reusable: it is never deleted on open, only counted. A row is
+ * created for every member with activity, but a DM only ever goes to a member
+ * who opted in (see {@link activityWrappedOptins}).
+ */
+export const activityWrappedLinks = sqliteTable(
+  "activity_wrapped_links",
+  {
+    userId: text("user_id").notNull(),
+    year: integer("year").notNull(),
+    /** Unguessable token in the link's URL. */
+    token: text("token").notNull().unique(),
+    /** JSON snapshot of the member's year, taken when the run processed them. */
+    data: text("data").notNull(),
+    dmStatus: text("dm_status", { enum: ["pending", "sent", "failed", "skipped"] })
+      .notNull()
+      .default("pending"),
+    createdAt: integer("created_at").notNull().default(now),
+    /** How many times the link has been opened. */
+    opens: integer("opens").notNull().default(0),
+    lastOpenedAt: integer("last_opened_at"),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.year] })],
+);
+
+/**
+ * Members who opted in to receiving their Wrapped link by DM. Opting out
+ * deletes the row, and no row means no DM.
+ */
+export const activityWrappedOptins = sqliteTable("activity_wrapped_optins", {
+  userId: text("user_id").primaryKey(),
+  optedInAt: integer("opted_in_at").notNull().default(now),
 });

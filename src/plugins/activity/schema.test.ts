@@ -1,0 +1,265 @@
+import { beforeAll, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
+import { db, getConfig, initDb, schema } from "../../db/index.ts";
+import { plugins } from "../index.ts";
+
+// bun test runs with NODE_ENV=test, so the database is in-memory and empty.
+beforeAll(() => {
+  initDb();
+});
+
+test("schema inserts and reads back one row per activity table", () => {
+  db.insert(schema.activityMessages)
+    .values({
+      messageId: "m-roundtrip",
+      userId: "u1",
+      channelId: "c1",
+      parentChannelId: null,
+      ts: 1_800_000_000,
+      replyToUserId: "u2",
+      replyToMessageId: "m0",
+      mentionCount: 1,
+      attachmentKinds: "image,video",
+      linkDomains: "example.com",
+      stickerCount: 0,
+      length: 42,
+      source: "live",
+    })
+    .run();
+  const message = db
+    .select()
+    .from(schema.activityMessages)
+    .where(eq(schema.activityMessages.messageId, "m-roundtrip"))
+    .get();
+  expect(message).toMatchObject({
+    messageId: "m-roundtrip",
+    userId: "u1",
+    channelId: "c1",
+    parentChannelId: null,
+    ts: 1_800_000_000,
+    replyToUserId: "u2",
+    replyToMessageId: "m0",
+    mentionCount: 1,
+    attachmentKinds: "image,video",
+    linkDomains: "example.com",
+    stickerCount: 0,
+    length: 42,
+    source: "live",
+  });
+
+  db.insert(schema.activityMentions)
+    .values({
+      messageId: "m-roundtrip",
+      ts: 1_800_000_000,
+      fromUserId: "u1",
+      toUserId: "u2",
+      channelId: "c1",
+    })
+    .run();
+  expect(db.select().from(schema.activityMentions).all()).toMatchObject([
+    { messageId: "m-roundtrip", fromUserId: "u1", toUserId: "u2", channelId: "c1" },
+  ]);
+
+  db.insert(schema.activityEmoji)
+    .values({
+      messageId: "m-roundtrip",
+      ts: 1_800_000_000,
+      userId: "u1",
+      channelId: "c1",
+      emoji: "123456789012345678",
+      name: "blobwave",
+      count: 2,
+    })
+    .run();
+  expect(db.select().from(schema.activityEmoji).all()).toMatchObject([
+    { messageId: "m-roundtrip", emoji: "123456789012345678", name: "blobwave", count: 2 },
+  ]);
+
+  db.insert(schema.activityReactions)
+    .values({
+      messageId: "m-roundtrip",
+      userId: "u2",
+      emoji: "★",
+      name: null,
+      channelId: "c1",
+      messageAuthorId: "u1",
+      addedAt: 1_800_000_100,
+      removedAt: null,
+    })
+    .run();
+  expect(db.select().from(schema.activityReactions).all()).toMatchObject([
+    {
+      messageId: "m-roundtrip",
+      userId: "u2",
+      emoji: "★",
+      name: null,
+      messageAuthorId: "u1",
+      addedAt: 1_800_000_100,
+      removedAt: null,
+    },
+  ]);
+
+  db.insert(schema.activityVoice)
+    .values({
+      userId: "u1",
+      channelId: "v1",
+      startedAt: 1_800_000_000,
+      endedAt: null,
+      lastSeenAt: 1_800_000_060,
+      muted: 1,
+      deafened: 0,
+      streaming: 0,
+      video: 1,
+    })
+    .run();
+  expect(db.select().from(schema.activityVoice).all()).toMatchObject([
+    {
+      userId: "u1",
+      channelId: "v1",
+      startedAt: 1_800_000_000,
+      endedAt: null,
+      lastSeenAt: 1_800_000_060,
+      muted: 1,
+      deafened: 0,
+      streaming: 0,
+      video: 1,
+    },
+  ]);
+
+  db.insert(schema.activityMembership)
+    .values({ userId: "u1", kind: "join", ts: 1_800_000_000 })
+    .run();
+  expect(db.select().from(schema.activityMembership).all()).toMatchObject([
+    { userId: "u1", kind: "join", ts: 1_800_000_000 },
+  ]);
+
+  db.insert(schema.activityCommands)
+    .values({ userId: "u1", name: "profile", ok: 1, ts: 1_800_000_000 })
+    .run();
+  expect(db.select().from(schema.activityCommands).all()).toMatchObject([
+    { userId: "u1", name: "profile", ok: 1, ts: 1_800_000_000 },
+  ]);
+
+  db.insert(schema.activityCredits)
+    .values({ userId: "u1", delta: -5, balanceAfter: 95, ts: 1_800_000_000 })
+    .run();
+  expect(db.select().from(schema.activityCredits).all()).toMatchObject([
+    { userId: "u1", delta: -5, balanceAfter: 95, ts: 1_800_000_000 },
+  ]);
+
+  db.insert(schema.activityBackfill)
+    .values({
+      channelId: "c1",
+      beforeId: "m-roundtrip",
+      scanned: 100,
+      doneAt: null,
+      reactionsDoneAt: null,
+      updatedAt: 1_800_000_000,
+    })
+    .run();
+  expect(db.select().from(schema.activityBackfill).all()).toMatchObject([
+    {
+      channelId: "c1",
+      beforeId: "m-roundtrip",
+      scanned: 100,
+      doneAt: null,
+      reactionsDoneAt: null,
+      updatedAt: 1_800_000_000,
+    },
+  ]);
+
+  db.insert(schema.activityWrappedRuns)
+    .values({
+      year: 2026,
+      status: "processing",
+      total: 10,
+      processed: 3,
+      sent: 0,
+      failed: 0,
+      startedBy: "u9",
+      startedAt: 1_800_000_000,
+      updatedAt: 1_800_000_010,
+      finishedAt: null,
+    })
+    .run();
+  expect(db.select().from(schema.activityWrappedRuns).all()).toMatchObject([
+    {
+      year: 2026,
+      status: "processing",
+      total: 10,
+      processed: 3,
+      sent: 0,
+      failed: 0,
+      startedBy: "u9",
+      finishedAt: null,
+    },
+  ]);
+
+  // dmStatus and opens are left out on purpose: they must take their defaults.
+  db.insert(schema.activityWrappedLinks)
+    .values({
+      userId: "u1",
+      year: 2026,
+      token: "tok-roundtrip",
+      data: JSON.stringify({ messages: 12 }),
+      createdAt: 1_800_000_000,
+    })
+    .run();
+  expect(db.select().from(schema.activityWrappedLinks).all()).toMatchObject([
+    {
+      userId: "u1",
+      year: 2026,
+      token: "tok-roundtrip",
+      data: '{"messages":12}',
+      dmStatus: "pending",
+      createdAt: 1_800_000_000,
+      opens: 0,
+      lastOpenedAt: null,
+    },
+  ]);
+
+  db.insert(schema.activityWrappedOptins)
+    .values({ userId: "u1", optedInAt: 1_800_000_000 })
+    .run();
+  expect(db.select().from(schema.activityWrappedOptins).all()).toMatchObject([
+    { userId: "u1", optedInAt: 1_800_000_000 },
+  ]);
+});
+
+test("activityMessages.messageId is unique", () => {
+  const row = {
+    messageId: "m-unique",
+    userId: "u1",
+    channelId: "c1",
+    ts: 1_800_000_000,
+    mentionCount: 0,
+    attachmentKinds: "",
+    linkDomains: "",
+    stickerCount: 0,
+    length: 5,
+    source: "backfill" as const,
+  };
+  db.insert(schema.activityMessages).values(row).run();
+  db.insert(schema.activityMessages)
+    .values({ ...row, userId: "u2", source: "live" })
+    .onConflictDoNothing()
+    .run();
+
+  const rows = db
+    .select()
+    .from(schema.activityMessages)
+    .where(eq(schema.activityMessages.messageId, "m-unique"))
+    .all();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ userId: "u1", source: "backfill" });
+});
+
+test('guild_config exposes activityEnabled=1 and activityExcludedChannelIds=""', () => {
+  const config = getConfig();
+  expect(config.activityEnabled).toBe(1);
+  expect(config.activityExcludedChannelIds).toBe("");
+});
+
+test("the activity plugin is registered", () => {
+  expect(plugins.some((p) => p.name === "activity")).toBe(true);
+});

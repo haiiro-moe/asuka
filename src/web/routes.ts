@@ -64,6 +64,8 @@ const EDITABLE_CONFIG = new Set<string>([
   "eventsEnabled",
   "linkFixerEnabled",
   "linkFixerDisabledPlatforms",
+  "activityEnabled",
+  "activityExcludedChannelIds",
 ]);
 
 const getConfigRoute: ApiRoute = {
