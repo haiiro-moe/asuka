@@ -89,7 +89,7 @@ rank user < president < admin (`resolveWebRole` on the server, `hasRole(me, min)
 The shell renders the `PageHead` itself (prompt, title, narrator lede from the label), so **a page does not
 render its own PageHead**; it returns Windows (a fragment), which sit directly in `.fx-main` and get its gap.
 
-Standalone pages (`/club-announce/:token`, `/panel/:token`) render in `StandaloneShell` from `main.tsx`
+Standalone pages (`/club-announce/:token`, `/panel/:token`, and the Wrapped story pages `/wrapped/:token` and `/wrapped/s/:token`, see [activity/web-wrapped.md](activity/web-wrapped.md)) render in `StandaloneShell` from `main.tsx`
 (bar, blobs and column, no nav). `PanelPage` and `ClubAnnouncePage` render their own `PageHead`.
 
 ## Primitives

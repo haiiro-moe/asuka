@@ -302,7 +302,7 @@ the elections commands, and are not editable.
 | `me` | anyone | their own link for the latest run's year (opted in or not); `me-not-ready` before any run, `me-empty` without activity. A member a run missed gets a link made on the spot. |
 
 The admin check is `isAdmin` (Administrator or Manage Server). The slow admin subcommands (`start`,
-`send`, `announce`, `signups`, `resume`) defer first (ephemeral) and answer through `editReply`, so the
+`send`, `announce`, `signups`, `resume`, `preview`, `preview-discard`) defer first (ephemeral) and answer through `editReply`, so the
 3-second interaction deadline is never missed; `status` replies directly.
 
 ## Routes
@@ -325,7 +325,7 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 | `GET /api/activity/wrapped/server-link?year=` | admin | `{ url }` of the server story, building its snapshot first if needed; 404 when nothing happened |
 | `GET /api/activity/wrapped/t/:token` | public | `WrappedLinkResponse` (snapshot plus `displayName`, `soulmateName`, `mostRepliedToName`, `topChannelName` and `topChannelParentName` resolved now); counts an open; 404 otherwise |
 | `GET /api/activity/wrapped/t/:token/card.png` | public | the member card PNG (no open counted); 404 JSON for an unknown token; the `WrappedLinkResponse` JSON when rendering fails |
-| `GET /api/activity/wrapped/s/:token` | public | `ServerWrappedResponse` (`{ data }`); 404 otherwise |
+| `GET /api/activity/wrapped/s/:token` | public | `ServerWrappedResponse` (`{ data, preview, voiceReady }`; `preview` is true for an admin preview link); 404 otherwise |
 | `GET /api/activity/wrapped/s/:token/card.png` | public | the server card PNG; 404 JSON for an unknown token; the JSON when rendering fails |
 
 The public routes need no session: the token is the authorisation.
