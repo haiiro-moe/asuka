@@ -13,6 +13,19 @@ import type { FetchReactionPage } from "./types.ts";
  */
 export type FetchPage = (before: string | null) => Promise<RawMessage[]>;
 
+/** What listing the guild's channels found. */
+export interface ChannelListing {
+  /** The channels and threads that could be listed. */
+  channels: BackfillChannel[];
+  /**
+   * False when the listing is partial: a parent's archived threads could not
+   * be listed, or a channel was left out because it could not be viewed. A run
+   * still reads `channels`, but must not conclude that anything missing from
+   * the list is gone.
+   */
+  complete: boolean;
+}
+
 /** A channel or thread the backfill reads. */
 export interface BackfillChannel {
   /** The channel or thread id. */

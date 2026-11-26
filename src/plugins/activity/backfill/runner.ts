@@ -27,10 +27,10 @@ import { isExcluded } from "../exclusion.ts";
 import { extractMessageFacts } from "../facts.ts";
 import { recordMessage, recordReactionAdd } from "../record.ts";
 import { listBackfillChannels } from "./discord.ts";
-import type { BackfillChannel, FetchPage } from "./channel.ts";
+import type { BackfillChannel, ChannelListing, FetchPage } from "./channel.ts";
 import type { BackfillStatus, FetchReactionPage } from "./types.ts";
 
-export type { BackfillChannel, FetchPage } from "./channel.ts";
+export type { BackfillChannel, ChannelListing, FetchPage } from "./channel.ts";
 export type { BackfillStatus, FetchReactionPage, RawReaction, ReactionMessage } from "./types.ts";
 
 /** Default pause between two pages, in milliseconds, to stay well inside Discord's rate limits. */
@@ -58,7 +58,7 @@ export interface BackfillOptions {
 /** Seams of {@link startBackfill}; production code uses the defaults. */
 export interface BackfillDeps {
   /** Lists the channels to read. Defaults to the locked guild's text channels and threads. */
-  listChannels?: (ctx: BotContext) => Promise<BackfillChannel[]>;
+  listChannels?: (ctx: BotContext) => Promise<ChannelListing>;
   /** Replaces the real sleep; for tests. */
   sleep?: (ms: number) => Promise<void>;
   /** Pause between pages in milliseconds. Defaults to 250. */
@@ -288,13 +288,17 @@ async function runChannel(r: Run, ch: BackfillChannel, deps: BackfillDeps): Prom
 /** The body of a run. */
 async function execute(r: Run, ctx: BotContext, deps: BackfillDeps): Promise<void> {
   try {
-    const channels = await (deps.listChannels ?? listBackfillChannels)(ctx);
+    const { channels, complete } = await (deps.listChannels ?? listBackfillChannels)(ctx);
     for (const ch of channels) ensureRow(ch.id);
     // A row for a channel that is no longer listed (deleted, or lost since an
-    // earlier run) can never be read again; close it so it cannot pin the status.
-    const listed = new Set(channels.map((ch) => ch.id));
-    for (const { channelId } of db.select({ channelId: schema.activityBackfill.channelId }).from(schema.activityBackfill).all()) {
-      if (!listed.has(channelId)) markDone(channelId, r.reactions);
+    // earlier run) can never be read again; close it so it cannot pin the
+    // status. Only when the listing is complete: after a partial one, a missing
+    // channel may merely have failed to list, and a done row is never re-read.
+    if (complete) {
+      const listed = new Set(channels.map((ch) => ch.id));
+      for (const { channelId } of db.select({ channelId: schema.activityBackfill.channelId }).from(schema.activityBackfill).all()) {
+        if (!listed.has(channelId)) markDone(channelId, r.reactions);
+      }
     }
     for (const ch of channels) {
       if (r.stopRequested) break;

@@ -31,7 +31,10 @@ threads and voice channels are not read.
 - Any other error on a channel counts in `errors` and moves the run to the next channel. That
   channel stays unfinished, so the status ends as `stopped`; start again to retry it.
 - **Rows for channels that are gone.** A row whose channel is no longer listed (deleted, or no longer
-  visible to the bot) is marked done at the start of the next run, so it cannot keep the status at `stopped`.
+  visible to the bot) is marked done at the start of the next run, so it cannot keep the status at `stopped`. This happens only
+  after a **complete** listing. If the listing is partial (a channel the bot cannot view right now, or a
+  parent whose archived threads failed to list), unfinished rows are left alone and the listed channels
+  are still read, because a done row is never read again.
 - **Memory.** Pages are fetched with `cache: false` and dropped from the channel cache, so reading a
   large history does not grow the process.
 - Bots, webhooks and system messages are dropped by the same rules as live capture

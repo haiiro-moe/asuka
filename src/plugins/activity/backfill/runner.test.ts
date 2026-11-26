@@ -193,13 +193,16 @@ function gatedChannel(id: string, pages: RawMessage[][], gate?: Promise<void>): 
 
 const ctx = {} as BotContext;
 
+/** A complete listing of the given channels. */
+const full = (channels: BackfillChannel[]) => ({ channels, complete: true });
+
 test("startBackfill reports already-running, and status follows the run", async () => {
   expect(getBackfillStatus().status).toBe("idle");
 
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
   const channels = [gatedChannel("c1", pagesOf([3, 3]), gate), gatedChannel("c2", pagesOf([2], "c2", 50))];
-  const deps = { listChannels: async () => channels, sleep: noSleep };
+  const deps = { listChannels: async () => full(channels), sleep: noSleep };
 
   expect(startBackfill(ctx, { reactions: false }, deps)).toBe("started");
   expect(startBackfill(ctx, { reactions: false }, deps)).toBe("already-running");
@@ -229,7 +232,7 @@ test("stop finishes the current page, keeps the cursor, and a restart resumes fr
   const gate = new Promise<void>((r) => (release = r));
   const pages = pagesOf([3, 3, 3]);
   const c1 = gatedChannel("c1", pages, gate);
-  const deps = { listChannels: async () => [c1], sleep: noSleep };
+  const deps = { listChannels: async () => full([c1]), sleep: noSleep };
 
   startBackfill(ctx, { reactions: false }, deps);
   await Bun.sleep(10);
@@ -246,7 +249,7 @@ test("stop finishes the current page, keeps the cursor, and a restart resumes fr
 
   const calls: (string | null)[] = [];
   const resumed: BackfillChannel = { ...c1, fetchPage: fakeFetch(pages, calls) };
-  expect(startBackfill(ctx, { reactions: false }, { listChannels: async () => [resumed], sleep: noSleep })).toBe("started");
+  expect(startBackfill(ctx, { reactions: false }, { listChannels: async () => full([resumed]), sleep: noSleep })).toBe("started");
   await whenBackfillSettled();
   expect(calls[0]).toBe("98");
   expect(getBackfillStatus().status).toBe("done");
@@ -283,7 +286,7 @@ test("channels the bot cannot see or that vanish are marked done and do not abor
     fetchReactionPage: async () => [],
   };
   const channels = [failing("no-view", 50001), failing("no-perm", 50013), failing("gone", 10003), broken, gatedChannel("ok", pagesOf([2], "ok"))];
-  startBackfill(ctx, { reactions: false }, { listChannels: async () => channels, sleep: noSleep });
+  startBackfill(ctx, { reactions: false }, { listChannels: async () => full(channels), sleep: noSleep });
   await whenBackfillSettled();
 
   for (const id of ["no-view", "no-perm", "gone", "ok"]) expect(row(id)!.doneAt).not.toBeNull();
@@ -360,7 +363,7 @@ test("startBackfill with reactions runs the reaction pass after the messages", a
     ...gatedChannel("c1", pagesOf([2])),
     fetchReactionPage: async (before) => (before === null ? [reacted(100)] : []),
   };
-  startBackfill(ctx, { reactions: true }, { listChannels: async () => [ch], sleep: noSleep });
+  startBackfill(ctx, { reactions: true }, { listChannels: async () => full([ch]), sleep: noSleep });
   await whenBackfillSettled();
   expect(row("c1")!.reactionsDoneAt).not.toBeNull();
   expect(db.select().from(schema.activityReactions).all().length).toBe(3);
@@ -369,7 +372,7 @@ test("startBackfill with reactions runs the reaction pass after the messages", a
 
 test("a row for a channel that is no longer listed does not pin the status", async () => {
   db.insert(schema.activityBackfill).values({ channelId: "deleted", scanned: 4, beforeId: "9" }).run();
-  startBackfill(ctx, { reactions: false }, { listChannels: async () => [gatedChannel("c1", pagesOf([2]))], sleep: noSleep });
+  startBackfill(ctx, { reactions: false }, { listChannels: async () => full([gatedChannel("c1", pagesOf([2]))]), sleep: noSleep });
   await whenBackfillSettled();
   expect(row("deleted")!.doneAt).not.toBeNull();
   expect(getBackfillStatus()).toMatchObject({ status: "done", channelsDone: 2, channelsTotal: 2 });
@@ -385,7 +388,7 @@ test("a stopped reaction pass reads stopped, and finishing it reads done", async
       return before === null ? [reacted(100)] : [];
     },
   };
-  const deps = { listChannels: async () => [ch], sleep: noSleep };
+  const deps = { listChannels: async () => full([ch]), sleep: noSleep };
   startBackfill(ctx, { reactions: true }, deps);
   await Bun.sleep(10);
   // The messages are read; the run is waiting on the reaction pass.
@@ -404,7 +407,7 @@ test("a stopped reaction pass reads stopped, and finishing it reads done", async
 });
 
 test("a message-only run reads done without any reaction pass", async () => {
-  startBackfill(ctx, { reactions: false }, { listChannels: async () => [gatedChannel("c1", pagesOf([2]))], sleep: noSleep });
+  startBackfill(ctx, { reactions: false }, { listChannels: async () => full([gatedChannel("c1", pagesOf([2]))]), sleep: noSleep });
   await whenBackfillSettled();
   expect(row("c1")!.reactionsDoneAt).toBeNull();
   expect(getBackfillStatus()).toMatchObject({ status: "done", reactions: false });
@@ -420,8 +423,27 @@ test("a skippable error on a reaction run marks both passes done", async () => {
     },
     fetchReactionPage: async () => [],
   };
-  startBackfill(ctx, { reactions: true }, { listChannels: async () => [gone], sleep: noSleep });
+  startBackfill(ctx, { reactions: true }, { listChannels: async () => full([gone]), sleep: noSleep });
   await whenBackfillSettled();
   expect(row("gone")!.reactionsDoneAt).not.toBeNull();
+  expect(getBackfillStatus().status).toBe("done");
+});
+
+test("a partial listing leaves unfinished rows untouched and still reads the listed channels", async () => {
+  db.insert(schema.activityBackfill).values({ channelId: "archived-thread", scanned: 4, beforeId: "9" }).run();
+  startBackfill(ctx, { reactions: false }, {
+    listChannels: async () => ({ channels: [gatedChannel("c1", pagesOf([2]))], complete: false }),
+    sleep: noSleep,
+  });
+  await whenBackfillSettled();
+  expect(row("archived-thread")!.doneAt).toBeNull();
+  expect(row("c1")!.doneAt).not.toBeNull();
+  expect(messageCount()).toBe(2);
+  expect(getBackfillStatus()).toMatchObject({ status: "stopped", channelsDone: 1, channelsTotal: 2 });
+
+  // Once a complete listing no longer has it, the row is closed.
+  startBackfill(ctx, { reactions: false }, { listChannels: async () => full([gatedChannel("c1", pagesOf([2]))]), sleep: noSleep });
+  await whenBackfillSettled();
+  expect(row("archived-thread")!.doneAt).not.toBeNull();
   expect(getBackfillStatus().status).toBe("done");
 });

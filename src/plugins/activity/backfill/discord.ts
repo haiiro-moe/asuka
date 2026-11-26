@@ -8,7 +8,7 @@ import { ChannelType } from "discord.js";
 import type { AnyThreadChannel, Collection, Message, TextChannel, NewsChannel, ForumChannel } from "discord.js";
 import type { BotContext } from "../../../core/plugin.ts";
 import { toRawMessage } from "../facts.ts";
-import type { BackfillChannel, FetchPage } from "./channel.ts";
+import type { BackfillChannel, ChannelListing, FetchPage } from "./channel.ts";
 import type { FetchReactionPage, ReactionMessage } from "./types.ts";
 
 /** A channel whose messages can be read: a text or announcement channel, or a thread. */
@@ -127,17 +127,24 @@ async function archivedThreads(channel: TextChannel | NewsChannel | ForumChannel
  * the runner.
  *
  * @param ctx - The bot context.
- * @returns One entry per readable channel or thread.
+ * @returns One entry per readable channel or thread, and `complete`: false
+ *   when anything may be missing (a channel it could not view, or a parent whose
+ *   archived threads failed to list), so the caller knows not to treat an
+ *   absent channel as deleted.
  */
-export async function listBackfillChannels(ctx: BotContext): Promise<BackfillChannel[]> {
+export async function listBackfillChannels(ctx: BotContext): Promise<ChannelListing> {
   const guild = await ctx.client.guilds.fetch(ctx.guildId);
   const channels = await guild.channels.fetch();
 
   const out: BackfillChannel[] = [];
+  let complete = true;
   const seen = new Set<string>();
   const add = (c: Readable) => {
     if (seen.has(c.id)) return;
-    if (!c.viewable) return;
+    if (!c.viewable) {
+      complete = false;
+      return;
+    }
     seen.add(c.id);
     out.push(toBackfillChannel(c));
   };
@@ -158,12 +165,16 @@ export async function listBackfillChannels(ctx: BotContext): Promise<BackfillCha
     if (thread.type !== ChannelType.PrivateThread) add(thread);
   }
   for (const parent of parents) {
-    if (!parent.viewable) continue;
+    if (!parent.viewable) {
+      complete = false;
+      continue;
+    }
     try {
       for (const thread of await archivedThreads(parent)) add(thread);
     } catch (e) {
+      complete = false;
       console.error(`[activity] could not list archived threads of ${parent.id}`, e);
     }
   }
-  return out;
+  return { channels: out, complete };
 }
