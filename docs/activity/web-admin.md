@@ -74,7 +74,11 @@ minutes after it finished (`previewInStrip`), its words followed by `(nothing go
 ## Tabs
 
 Each tab passes `?period=` (default `30d`) to its route and renders loading, failed (with retry)
-and empty as narrator lines through `ViewState`.
+and empty as narrator lines through `ViewState`. The picker (`PERIODS`) offers `last 7 days`, `last
+30 days`, `this term`, `last 365 days` (`year`: the server counts the last 365 days, not the
+calendar year) and `all time`; `week` is not offered, since the server reads it as `7d`. A period
+change shows the loading line, never the previous period's tables (`useActivity` keeps data with
+its path).
 
 - **moderation**: tiles, actions per week (`ActivityColumns`), actions by kind, repeat offenders.
 - **newcomers**: joined, got a reply, said nothing; a table with join day, first-week messages and

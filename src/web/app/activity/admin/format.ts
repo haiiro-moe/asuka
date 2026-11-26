@@ -170,12 +170,16 @@ export function voiceUnlockLine(status: VoiceStatus): string {
 /** A dashboard period, as the admin routes take it in `?period=`. */
 export type PeriodKey = "7d" | "week" | "30d" | "term" | "year" | "all";
 
-/** The periods in picker order, with their lowercase labels. `30d` is the routes' default. */
+/**
+ * The periods in picker order, with lowercase labels that say what the server counts (`time.ts`
+ * `parsePeriodParam`): `year` is the last 365 days, not the calendar year. `week` is left out because the
+ * server treats it as `7d`; {@link PeriodKey} keeps it, so the route contract is unchanged. `30d` is the
+ * routes' default.
+ */
 export const PERIODS: { value: PeriodKey; label: string }[] = [
   { value: "7d", label: "last 7 days" },
-  { value: "week", label: "this week" },
   { value: "30d", label: "last 30 days" },
   { value: "term", label: "this term" },
-  { value: "year", label: "this year" },
+  { value: "year", label: "last 365 days" },
   { value: "all", label: "all time" },
 ];
