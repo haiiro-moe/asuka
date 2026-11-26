@@ -8,7 +8,8 @@ import { UserLink } from "../../names.tsx";
 import { Heading, Window } from "../../ui/index.ts";
 import { ActivityTiles } from "../charts.tsx";
 import { useActivity } from "../useActivity.ts";
-import { formatCount, formatUtcDay, type PeriodKey } from "./format.ts";
+import { formatCount, type PeriodKey } from "./format.ts";
+import { formatUtcDate } from "../format.ts";
 import { DataTable, Quiet, ViewState } from "./parts.tsx";
 
 /**
@@ -54,7 +55,7 @@ export function NewcomersTab({ period }: { period: PeriodKey }) {
                     <td>
                       <UserLink id={r.userId} />
                     </td>
-                    <td>{formatUtcDay(r.joinedAt)}</td>
+                    <td>{formatUtcDate(r.joinedAt)}</td>
                     <td className="r">{formatCount(r.messagesInWeek)}</td>
                     <td>{r.gotReplyInWeek ? <span className="c6">✓ yes</span> : <span className="c2">× no</span>}</td>
                   </tr>

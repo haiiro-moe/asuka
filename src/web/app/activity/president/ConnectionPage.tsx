@@ -11,7 +11,8 @@ import type { VoiceStatus } from "../../../../plugins/activity/types/user.ts";
 import { Badge, Empty, ErrorLine, Heading, Loading, Segmented, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityRank, ActivityTiles } from "../charts.tsx";
 import { useActivity } from "../useActivity.ts";
-import { countTile, groupBars, groupsLeftOut, seriesView, totalUnit, voiceLockedLine, type Period } from "./render.ts";
+import { voiceLockedLine } from "../format.ts";
+import { countTile, groupBars, groupsLeftOut, seriesView, totalUnit, type Period } from "./render.ts";
 
 const PERIODS = [
   { value: "week" as const, label: "week" },

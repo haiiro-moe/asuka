@@ -7,10 +7,11 @@ chart wrappers, the data hook and the config controls. The tier pages live in th
 
 ```
 src/web/app/activity/
-  index.tsx       ACTIVITY_PAGES, the Page type, re-exports of charts, scale and the hook
+  index.tsx       ACTIVITY_PAGES, the Page type, re-exports of charts, scale, format and the hook
   charts.tsx      ActivityHeatmap, ActivityColumns, ActivityTiles, ActivityRank
   scale.ts        scaleToPercent, heatLevel (pure, unit-tested)
-  useActivity.ts  useActivity<T>(path)
+  useActivity.ts  useActivity<T>(path), failureText, viewOf (pure, unit-tested)
+  format.ts       formatUtcDate, voiceLockedLine, MONTHS (pure, unit-tested; shared by every tier)
   user/pages.tsx  USER_PAGES
   president/pages.tsx  PRESIDENT_PAGES
   admin/pages.tsx      ADMIN_PAGES
@@ -56,8 +57,22 @@ Run the tests with `nix develop -c bun test src/web/app/activity`.
 ## useActivity
 
 `useActivity<T>(path)` fetches a JSON route and returns `{ data, error, loading, reload }`. A 401 gives
-`error === "unauthorized"`; other failures use the server's `error` field or the status text. Changing
-`path` fetches again.
+`error === "unauthorized"`; other failures use the server's `error` field, the status text, or
+`http <status>` when the status text is empty (HTTP/2), so an error is never an empty string
+(`failureText`). Changing `path` fetches again. The answer is kept together with its path, and
+`viewOf` hands it out only for the current path: after a period or tab change the page sees
+`loading` with no data, never the previous path's answer under the new label. A reload of the same
+path keeps the data on screen. `View` (user) and `ViewState` (admin) test `error !== null`.
+
+## format.ts
+
+One UTC date for every tier: `formatUtcDate(seconds, withYear = true)` writes `1 Feb 2027` (or
+`1 Feb`) with the fixed abbreviations `Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec`, never
+`Intl` (some ICU builds write `Sept`), and `""` for no date. `voiceLockedLine(readyAt)` is the
+user and president line `voice stats unlock on 1 Feb 2027.` (or the dateless line). The admin
+page keeps its own sentence-case `voiceUnlockLine` (different wording) on the same date helper.
+Other duplicate helpers across the tiers (durations, emoji and channel labels, `VoiceStatus`,
+`USER_ID`) are not folded yet.
 
 ## Config page
 

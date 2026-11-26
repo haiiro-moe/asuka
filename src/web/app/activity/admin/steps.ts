@@ -8,7 +8,7 @@
  */
 import type { BackfillStatus } from "../../../../plugins/activity/backfill/types.ts";
 import type { WrappedRunStatus, WrappedSignupState } from "../../../../plugins/activity/types/wrapped.ts";
-import { formatUtcDay } from "./format.ts";
+import { formatUtcDate } from "../format.ts";
 
 /** Whether a step's button is enabled, and when it is not, the reason shown in a quiet line under it. */
 export interface StepGate {
@@ -96,7 +96,7 @@ export function sendGate(s: WrappedRunStatus | null): StepGate {
  */
 export function announceGate(s: WrappedRunStatus | null): StepGate {
   if (!s) return shut("Waiting for the run status.");
-  if (s.announcedAt != null) return shut(`Posted on ${formatUtcDay(s.announcedAt)}.`);
+  if (s.announcedAt != null) return shut(`Posted on ${formatUtcDate(s.announcedAt)}.`);
   switch (s.status) {
     case "processed":
     case "done":

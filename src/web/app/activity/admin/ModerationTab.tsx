@@ -8,7 +8,8 @@ import { UserLink } from "../../names.tsx";
 import { Heading, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityTiles } from "../charts.tsx";
 import { useActivity } from "../useActivity.ts";
-import { axisLabels, formatCount, formatUtcDay, weekLabels, type PeriodKey } from "./format.ts";
+import { axisLabels, formatCount, weekLabels, type PeriodKey } from "./format.ts";
+import { formatUtcDate } from "../format.ts";
 import { DataTable, Quiet, ViewState } from "./parts.tsx";
 
 /**
@@ -34,7 +35,7 @@ export function ModerationTab({ period }: { period: PeriodKey }) {
             return (
               <>
                 <Heading first>actions per week</Heading>
-                <Quiet>Weeks start on {formatUtcDay(d.start)}, counted in UTC.</Quiet>
+                <Quiet>Weeks start on {formatUtcDate(d.start)}, counted in UTC.</Quiet>
                 <ActivityTiles
                   tiles={[
                     { label: "actions", value: formatCount(total), note: "in the period" },

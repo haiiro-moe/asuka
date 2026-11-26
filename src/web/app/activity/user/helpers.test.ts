@@ -9,27 +9,14 @@ import {
   channelLabel,
   emojiLabel,
   formatDuration,
-  formatUtcDate,
   heatmapIsEmpty,
   summariseSharing,
   toHours,
-  voiceLockedLine,
 } from "./helpers.ts";
 
 test("activityPath adds the period only when given", () => {
   expect(activityPath("rhythm", "term")).toBe("/api/activity/user/rhythm?period=term");
   expect(activityPath("voice-status")).toBe("/api/activity/user/voice-status");
-});
-
-test("formatUtcDate is a UTC date", () => {
-  expect(formatUtcDate(Date.UTC(2027, 1, 1) / 1000)).toBe("1 Feb 2027");
-  // 23:30 UTC on the 31st stays the 31st whatever the local zone is
-  expect(formatUtcDate(Date.UTC(2027, 0, 31, 23, 30) / 1000)).toBe("31 Jan 2027");
-});
-
-test("voiceLockedLine names the date, or says what is missing", () => {
-  expect(voiceLockedLine(Date.UTC(2027, 1, 1) / 1000)).toBe("voice stats unlock on 1 Feb 2027.");
-  expect(voiceLockedLine(null)).toContain("two whole months");
 });
 
 test("formatDuration and toHours", () => {

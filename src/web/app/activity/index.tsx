@@ -28,3 +28,4 @@ export const ACTIVITY_PAGES: Page[] = [...USER_PAGES, ...PRESIDENT_PAGES, ...ADM
 export * from "./charts.tsx";
 export * from "./scale.ts";
 export * from "./useActivity.ts";
+export * from "./format.ts";

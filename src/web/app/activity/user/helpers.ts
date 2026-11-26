@@ -27,31 +27,6 @@ export function activityPath(route: string, period?: PagePeriod): string {
 }
 
 /**
- * Formats a unix-seconds timestamp as a UTC date like `1 Feb 2027`.
- *
- * @param seconds - Unix seconds.
- */
-export function formatUtcDate(seconds: number): string {
-  return new Date(seconds * 1000).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-/**
- * The narrator line shown in place of the voice parts while voice is withheld.
- *
- * @param readyAt - Unix seconds when voice unlocks, or `null` when no voice has been recorded.
- */
-export function voiceLockedLine(readyAt: number | null): string {
-  return readyAt == null
-    ? "voice stats unlock once two whole months of voice are recorded."
-    : `voice stats unlock on ${formatUtcDate(readyAt)}.`;
-}
-
-/**
  * Formats seconds as `3h 05m`, `42m` under an hour or `30s` under a minute.
  *
  * @param seconds - A duration in seconds; negative and non-finite values count as 0.

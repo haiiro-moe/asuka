@@ -12,7 +12,8 @@ import type {
   PreviewStartResponse,
   PreviewStatus,
 } from "../../../../plugins/activity/types/wrapped.ts";
-import { formatCount, formatUtcDay } from "./format.ts";
+import { formatCount } from "./format.ts";
+import { formatUtcDate } from "../format.ts";
 import type { StatusLine } from "./status.ts";
 import type { StepGate } from "./steps.ts";
 
@@ -168,7 +169,7 @@ export function discardGate(p: PreviewStatus | null): StepGate {
  * @returns `Expires on 1 Feb 2027 (UTC).`, or null when there is no preview (never a blank date).
  */
 export function expiryLine(p: PreviewStatus): string | null {
-  return p.expiresAt != null ? `Expires on ${formatUtcDay(p.expiresAt)} (UTC).` : null;
+  return p.expiresAt != null ? `Expires on ${formatUtcDate(p.expiresAt)} (UTC).` : null;
 }
 
 /**

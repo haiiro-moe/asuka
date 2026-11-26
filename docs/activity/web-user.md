@@ -53,7 +53,8 @@ Voice stays hidden until two whole months of voice data exist. The page never dr
 
 - `rhythm.voice === null` shows the `VoiceGate` line instead of the voice heatmap.
 - The `places` tab asks `voice-status` first and only requests `/voice` when `ready` is true.
-- While locked, `VoiceGate` says `voice stats unlock on 1 Feb 2027.` (a UTC date from `readyAt`), or
+- While locked, `VoiceGate` says `voice stats unlock on 1 Feb 2027.` (`voiceLockedLine` from the shared
+  `activity/format.ts`, a UTC date from `readyAt`), or
   `voice stats unlock once two whole months of voice are recorded.` when no voice has been recorded.
 - The `longest-voice` award is simply absent from `/awards` until then.
 
@@ -75,7 +76,7 @@ hours with one decimal and the line under each channel gives the exact time.
 
 ## Tests
 
-`helpers.test.ts` covers the period path, the UTC date, the locked-voice line, durations, emoji and
+`helpers.test.ts` covers the period path, durations, emoji and
 channel labels, sharing totals, heatmap sums and the award wording:
 
 ```sh

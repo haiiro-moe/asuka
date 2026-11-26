@@ -9,7 +9,8 @@ import { useState } from "react";
 import type { WrappedResumeResponse } from "../../../../plugins/activity/types/wrapped.ts";
 import { ErrorLine, Heading, InkButton, Loading, Window } from "../../ui/index.ts";
 import { useActivity } from "../useActivity.ts";
-import { formatCount, formatUtcDay } from "./format.ts";
+import { formatCount } from "./format.ts";
+import { formatUtcDate } from "../format.ts";
 import { call } from "./http.ts";
 import { LinkActions } from "./LinkActions.tsx";
 import { Quiet, STATUS_GLYPH, STATUS_INK, Sheet } from "./parts.tsx";
@@ -86,14 +87,14 @@ export function WrappedOverview({ ops }: { ops: OpsStatus }) {
       <Sheet
         rows={[
           ["opted in", `${formatCount(s.optedIn)} members right now`],
-          ...(s.startedAt != null ? ([["started", formatUtcDay(s.startedAt)]] as [string, string][]) : []),
-          ...(s.finishedAt != null ? ([["finished", formatUtcDay(s.finishedAt)]] as [string, string][]) : []),
+          ...(s.startedAt != null ? ([["started", formatUtcDate(s.startedAt)]] as [string, string][]) : []),
+          ...(s.finishedAt != null ? ([["finished", formatUtcDate(s.finishedAt)]] as [string, string][]) : []),
           ...(s.status === "done"
             ? ([
                 ["sent", formatCount(s.sent)],
                 ["failed", formatCount(s.failed)],
                 ["not opted in", formatCount(s.skipped)],
-                ["announced", s.announcedAt != null ? formatUtcDay(s.announcedAt) : "not yet"],
+                ["announced", s.announcedAt != null ? formatUtcDate(s.announcedAt) : "not yet"],
               ] as [string, string][])
             : []),
         ]}

@@ -1,6 +1,6 @@
 /**
- * Pure formatting helpers of the admin diagnostics page: UTC dates in the house style (`4 Nov 2026`),
- * week labels for the weekly series, durations, reply times, channel labels and the stepped progress
+ * Pure formatting helpers of the admin diagnostics page: week labels for the weekly series (on the shared
+ * UTC date of `../format.ts`), durations, reply times, channel labels, periods and the stepped progress
  * width. No DOM and no server imports, so they are unit-tested with `bun test`.
  *
  * @module
@@ -9,22 +9,7 @@
 /** Seconds in one 7-day bucket of a weekly series. */
 export const WEEK_SEC = 7 * 24 * 60 * 60;
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/**
- * Formats unix seconds as a UTC day, `1 Feb 2027`. Written by hand rather than with
- * `toLocaleDateString`, because some ICU builds spell September `Sept` in `en-GB`.
- *
- * @param sec - Unix seconds.
- * @param withYear - Leave the year out with `false` (`1 Feb`), for axis labels.
- * @returns The day, or an empty string for a value that is not a finite number.
- */
-export function formatUtcDay(sec: number, withYear = true): string {
-  if (!Number.isFinite(sec)) return "";
-  const d = new Date(sec * 1000);
-  const day = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
-  return withYear ? `${day} ${d.getUTCFullYear()}` : day;
-}
+import { formatUtcDate } from "../format.ts";
 
 /**
  * Labels the buckets of a weekly series from its explicit UTC `start`: bucket `i` starts at
@@ -36,7 +21,7 @@ export function formatUtcDay(sec: number, withYear = true): string {
  */
 export function weekLabels(start: number, count: number): string[] {
   const out: string[] = [];
-  for (let i = 0; i < count; i++) out.push(formatUtcDay(start + i * WEEK_SEC, false));
+  for (let i = 0; i < count; i++) out.push(formatUtcDate(start + i * WEEK_SEC, false));
   return out;
 }
 
@@ -163,7 +148,7 @@ export interface VoiceStatus {
  */
 export function voiceUnlockLine(status: VoiceStatus): string {
   return status.readyAt != null
-    ? `Voice stats unlock on ${formatUtcDay(status.readyAt)}.`
+    ? `Voice stats unlock on ${formatUtcDate(status.readyAt)}.`
     : "Voice stats unlock two whole months after the first voice session is logged.";
 }
 

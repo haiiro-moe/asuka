@@ -117,28 +117,3 @@ export function groupsLeftOut(groups: number | null, listed: number): boolean {
   return groups !== null && groups > listed;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/**
- * Formats a Unix-seconds time as a UTC date, like `1 Feb 2027`.
- *
- * @param seconds - Unix seconds.
- * @returns The date, or `null` when `seconds` is not a finite number.
- */
-export function formatUtcDate(seconds: number | null | undefined): string | null {
-  if (seconds == null || !Number.isFinite(seconds)) return null;
-  const d = new Date(seconds * 1000);
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-}
-
-/**
- * The narrator line that stands in for the voice chart while voice is withheld.
- *
- * @param readyAt - Unix seconds when voice unlocks, or `null`/`undefined` when unknown (no voice has
- *   been recorded yet, or the status has not arrived).
- * @returns `voice stats unlock on 1 Feb 2027`, or a dateless line when the date is unknown.
- */
-export function voiceLockedLine(readyAt: number | null | undefined): string {
-  const date = formatUtcDate(readyAt);
-  return date ? `voice stats unlock on ${date}.` : "voice stats unlock once two whole months of voice are recorded.";
-}

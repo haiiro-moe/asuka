@@ -8,7 +8,8 @@ import type { DriftRow } from "../../../../plugins/activity/types/admin.ts";
 import { UserLink } from "../../names.tsx";
 import { Heading, Window } from "../../ui/index.ts";
 import { useActivity } from "../useActivity.ts";
-import { formatUtcDay, voiceUnlockLine, type PeriodKey, type VoiceStatus } from "./format.ts";
+import { voiceUnlockLine, type PeriodKey, type VoiceStatus } from "./format.ts";
+import { formatUtcDate } from "../format.ts";
 import { DataTable, Quiet, ViewState } from "./parts.tsx";
 
 /**
@@ -43,7 +44,7 @@ export function DriftTab({ period }: { period: PeriodKey }) {
                 <td>
                   <UserLink id={r.userId} />
                 </td>
-                <td>{formatUtcDay(r.lastActiveAt)}</td>
+                <td>{formatUtcDate(r.lastActiveAt)}</td>
               </tr>
             ))}
           </DataTable>

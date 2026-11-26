@@ -2,13 +2,11 @@ import { expect, test } from "bun:test";
 import {
   OFF_VALUE,
   countTile,
-  formatUtcDate,
   groupBars,
   groupsLeftOut,
   hiddenNote,
   seriesView,
   totalUnit,
-  voiceLockedLine,
 } from "./render.ts";
 
 test("a null count is an off tile and never 0", () => {
@@ -63,15 +61,4 @@ test("groups left out only when the count exceeds the list", () => {
   expect(groupsLeftOut(3, 2)).toBe(true);
   expect(groupsLeftOut(2, 2)).toBe(false);
   expect(groupsLeftOut(null, 2)).toBe(false);
-});
-
-test("dates are UTC and day-month-year", () => {
-  expect(formatUtcDate(Date.UTC(2027, 1, 1) / 1000)).toBe("1 Feb 2027");
-  expect(formatUtcDate(Date.UTC(2027, 8, 30, 23, 59) / 1000)).toBe("30 Sep 2027");
-  expect(formatUtcDate(null)).toBeNull();
-});
-
-test("the voice line names the date, or falls back without one", () => {
-  expect(voiceLockedLine(Date.UTC(2027, 1, 1) / 1000)).toBe("voice stats unlock on 1 Feb 2027.");
-  expect(voiceLockedLine(null)).toContain("two whole months");
 });

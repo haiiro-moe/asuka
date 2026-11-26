@@ -51,7 +51,8 @@ graphic. A failed read says so in fixed words and never repeats the server's tex
 `groups` can be larger than the number of bars: the page shows the number as given and adds the line "some groups
 are left out of this list on purpose". It never tries to work out the missing ones.
 
-Dates are UTC (`formatUtcDate`, day month year, English month names written out in the helper so they do not depend
+Dates are UTC (the shared `formatUtcDate` and `voiceLockedLine` in `activity/format.ts`, day month year, English
+month names written out in the helper so they do not depend
 on the runtime's locale data). The weekly buckets are fixed UTC weeks (Monday to Monday); the first and last can be
 partial, and the page says so under each chart.
 

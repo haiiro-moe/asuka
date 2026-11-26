@@ -9,7 +9,8 @@ import { Empty, ErrorLine, Loading } from "../../ui/index.ts";
 import type { VoiceStatus } from "../../../../plugins/activity/types/user.ts";
 import { useActivity } from "../useActivity.ts";
 import type { ActivityState } from "../useActivity.ts";
-import { activityPath, voiceLockedLine } from "./helpers.ts";
+import { voiceLockedLine } from "../format.ts";
+import { activityPath } from "./helpers.ts";
 
 /** Props of {@link View}. */
 export interface ViewProps<T> {

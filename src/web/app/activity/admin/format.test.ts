@@ -5,7 +5,6 @@ import {
   channelLabel,
   formatDuration,
   formatReplyTime,
-  formatUtcDay,
   formatVoiceHours,
   steppedPercent,
   voiceUnlockLine,
@@ -13,14 +12,6 @@ import {
 } from "./format.ts";
 
 const FEB_1_2027 = Date.UTC(2027, 1, 1) / 1000;
-const SEP_30_2026 = Date.UTC(2026, 8, 30, 23, 59, 59) / 1000;
-
-test("formatUtcDay writes the house style in UTC", () => {
-  expect(formatUtcDay(FEB_1_2027)).toBe("1 Feb 2027");
-  expect(formatUtcDay(SEP_30_2026)).toBe("30 Sep 2026");
-  expect(formatUtcDay(FEB_1_2027, false)).toBe("1 Feb");
-  expect(formatUtcDay(Number.NaN)).toBe("");
-});
 
 test("weekLabels counts 7-day buckets from the explicit start", () => {
   const start = Date.UTC(2026, 10, 2) / 1000;

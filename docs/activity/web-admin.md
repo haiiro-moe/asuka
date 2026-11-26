@@ -98,7 +98,8 @@ its path).
 
 Weekly series are labelled from their explicit UTC `start` (`weekLabels(start, n)`, bucket `i`
 starts at `start + i * 7 days`), and the axis keeps four of them (`axisLabels`). Dates are UTC and
-written by hand as `1 Feb 2027` (`formatUtcDay`), since some ICU builds write `Sept`.
+written by hand as `1 Feb 2027` by the shared `formatUtcDate` (`activity/format.ts`), since some ICU
+builds write `Sept`.
 
 **Voice is never shown as zeros.** The relations voice table is replaced by
 `Voice stats unlock on 1 Feb 2027.` from `GET /api/activity/user/voice-status` until voice is

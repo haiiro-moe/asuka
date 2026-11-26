@@ -7,7 +7,7 @@
 import { useState } from "react";
 import type { WrappedAnnounceResponse } from "../../../../plugins/activity/types/wrapped.ts";
 import { ErrorLine, InkButton, Window, useConfirm } from "../../ui/index.ts";
-import { formatUtcDay } from "./format.ts";
+import { formatUtcDate } from "../format.ts";
 import { call } from "./http.ts";
 import { Quiet } from "./parts.tsx";
 import { announceConfirm, announceGate } from "./steps.ts";
@@ -52,7 +52,7 @@ export function AnnounceStep({ ops }: { ops: OpsStatus }) {
       <p className="nar px-2">You post the server's Wrapped to the announcement channel. Once a year, and only when you say.</p>
       {s?.announcedAt != null ? (
         <p className="px-2 c6">
-          <span aria-hidden="true">✓</span> Posted on {formatUtcDay(s.announcedAt)}.
+          <span aria-hidden="true">✓</span> Posted on {formatUtcDate(s.announcedAt)}.
         </p>
       ) : (
         <p className="px-2 text-subtle">
