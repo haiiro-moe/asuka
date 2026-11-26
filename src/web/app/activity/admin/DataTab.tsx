@@ -1,12 +1,13 @@
 /**
  * The data tab: the history backfill (a window with a `backfill` button that opens the modal), the
- * Wrapped overview, its three manual steps and the sign-ups.
+ * Wrapped overview, its three manual steps, the sign-ups and, last and apart, the private preview.
  *
  * @module
  */
 import { InkButton, Window } from "../../ui/index.ts";
 import { AnnounceStep } from "./AnnounceStep.tsx";
 import { STATUS_GLYPH, STATUS_INK } from "./parts.tsx";
+import { PreviewSection } from "./PreviewSection.tsx";
 import { ProcessStep } from "./ProcessStep.tsx";
 import { SendStep } from "./SendStep.tsx";
 import { SignupsWindow } from "./SignupsWindow.tsx";
@@ -58,6 +59,7 @@ export function DataTab({ ops, onOpenBackfill }: DataTabProps) {
       <SendStep ops={ops} />
       <AnnounceStep ops={ops} />
       <SignupsWindow />
+      <PreviewSection ops={ops} />
     </>
   );
 }

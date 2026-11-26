@@ -13,7 +13,7 @@ src/web/app/activity/admin/
   pages.tsx            ADMIN_PAGES
   DiagnosticsPage.tsx  status strip, tabs, period picker, backfill modal owner
   StatusStrip.tsx      the Wrapped run and backfill lines
-  useOpsStatus.ts      polls the run and the backfill (2 s while running, 30 s otherwise)
+  useOpsStatus.ts      polls the run, the backfill and your preview (2 s while running, 30 s otherwise)
   ModerationTab.tsx  NewcomersTab.tsx  DriftTab.tsx  ChannelsTab.tsx
   EconomyTab.tsx  ClubsEventsTab.tsx  BotTab.tsx
   RelationsTab.tsx  InspectPanel.tsx
@@ -23,14 +23,17 @@ src/web/app/activity/admin/
   MemberDmActions.tsx  failed-DM list rows and the member id field
   useMemberDm.ts       resend and open link for one member
   SignupsWindow.tsx
+  PreviewSection.tsx   the private preview window: start form, status, links, discard
+  LinkActions.tsx      copy link and open, for the real server link and the preview links
   parts.tsx            ViewState, DataTable, Quiet, Sheet, ProgressBar, status inks
   http.ts              call(): a JSON request that never throws (409 and 502 bodies matter here)
   format.ts            dates, week labels, durations, channel labels, stepped percent, periods
   status.ts            status-strip text and the poll interval
   steps.ts             step gates, the outward-step confirms, the backfill button word, the year field
   failed.ts            failed-DM list view, when to show it, when to fetch it again
+  preview.ts           preview member list, body, status words, strip rule, gates, expiry, links
   fixtures.ts          test fixtures only
-  *.test.ts            bun tests of format, status, steps and failed
+  *.test.ts            bun tests of format, status, steps, failed and preview
 ```
 
 The page returns windows inside a `flex flex-col` wrapper, like the config page: the strip, the
@@ -56,11 +59,17 @@ done in foam, `×` failed in love). The words are `wrappedStatusLine` and `backf
 
 Sending progress is links settled (`sent + failed + skipped`) of `total`, capped at `total`.
 
-`useOpsStatus(fast)` polls `GET /api/activity/wrapped/run` and `GET /api/activity/backfill`
-together. The next poll waits `pollInterval(...)`: 2 seconds while either runs or `fast` is set (the
-page sets it while the backfill modal is open), 30 seconds otherwise. A failed poll keeps the last
-good status and shows the cause. The strip and the data tab share the one hook. The strip is not a
-live region, because its counters change every 2 seconds.
+`useOpsStatus(fast)` polls `GET /api/activity/wrapped/run`, `GET /api/activity/backfill` and the
+session admin's own `GET /api/activity/wrapped/preview` together, in one loop with one timer (never
+stacked). The next poll waits `pollInterval(wrapped, backfill, fast, preview)`: 2 seconds while
+any of them runs (a preview counts as running while `processing`, `processed` or `sending`) or
+`fast` is set (the page sets it while the backfill modal is open), 30 seconds otherwise. A failed
+poll keeps the last good status and shows the cause. The strip and the data tab share the one hook.
+The strip is not a live region, because its counters change every 2 seconds.
+
+A third line, `private preview 2026`, appears only while the admin's preview runs and for 10
+minutes after it finished (`previewInStrip`), its words followed by `(nothing goes to members)`
+(`previewStripLine`). The real-run and backfill lines are unchanged by it.
 
 ## Tabs
 
@@ -93,7 +102,8 @@ ready; with no voice logged at all the line has no date.
 
 ## Data tab
 
-Nothing on this tab starts on its own. Every action is a button an admin presses.
+Nothing on this tab starts on its own. Every action is a button an admin presses. The private
+preview sits last, in its own window, so it is never mistaken for the real run.
 
 ### Backfill
 
@@ -161,6 +171,39 @@ actions for someone not on the list, such as a member who never opted in and ask
 buttons, or not), open or closed, and opted-in count. `post sign-up message` sends `{ year,
 buttons }` with the `with opt in / opt out buttons` chip (on by default) and asks first when the
 year already has a message. `close sign-ups` and `reopen sign-ups` swap with the state.
+
+### Private preview
+
+The last window of the data tab, `preview: ~/wrapped/private`, headed `private preview` with a `not
+the real run` badge and the quiet line `A preview sends nothing to members. Every message comes to
+you.` (rulings R-P1 to R-P7; the server side is "Private wrapped (preview)" in
+[wrapped.md](wrapped.md)). It calls only `POST /api/activity/wrapped/preview`, `GET .../preview`
+(through the shared poll) and `POST .../preview/discard`; never run, send, announce or resend.
+
+- **Start form.** A year field (defaults to the real run's year until edited), a `members` field
+  (`parseMemberList`: ids separated by spaces, commas or lines, a pasted `<@id>` or `<@!id>` reduced
+  to the id, duplicates dropped, at most 10; the hint shows `n of 10`, or the default `you plus the
+  3 most active members` when empty, and says a list replaces the sample), the `whole server (dry
+  run counts)` chip (`all`), a line saying starting DMs you and replaces your previous preview, and
+  `start preview` (`previewStartBody`; no confirm, nothing reaches members). The button is gated by
+  `previewStartGate` (not while running, not with a bad list or year) and stays disabled while in
+  flight. `startOutcome` words `started`, `already-running` and `invalid` (with the server's error),
+  or the HTTP failure.
+- **Status** (`StatusBlock`): `previewStatusLine` (`processing 2 of 4`, `built, the preview dms to
+  you are next`, `sending the preview dms to you`, `done, sent to you`, `done, but your dms are
+  closed`, `failed`, `interrupted, start a new preview to replace it`), a bar while processing, the
+  DM failure in full (`DM_FAILED_LINE`: the DMs are closed, allow direct messages from server
+  members, start a new preview, the links work anyway), the server's `error`, the would-skip line
+  (`wouldSkipLine`, withheld until a member is built, never a made-up zero) and the sampled members
+  who would not be sent (`skippedMembers`), the expiry (`Expires on 1 Feb 2027 (UTC).`, hidden when
+  there is none) and `A preview and its links expire after 14 days.`
+- **Links** (`LinksBlock`): the private server story (`/wrapped/s/<token>`) and one row per sampled
+  member: name through `UserName`, a `would not be sent` chip, and `copy link` / `open link`
+  (`LinkActions`, shared with the real server link) for `/wrapped/<token>` on the dashboard's
+  origin (`previewLinkUrl`, `previewServerUrl`). A member without activity says so instead of a link.
+- **Discard** (`DiscardRow`): `discard preview` behind a love `useConfirm` (`DISCARD_CONFIRM`: its
+  links stop working at once), gated by `discardGate` (not while running, matching the server's
+  409, and not with no preview), words from `discardOutcome`.
 
 ## Design notes
 

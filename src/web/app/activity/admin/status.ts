@@ -6,8 +6,9 @@
  * @module
  */
 import type { BackfillStatus } from "../../../../plugins/activity/backfill/types.ts";
-import type { WrappedRunStatus } from "../../../../plugins/activity/types/wrapped.ts";
+import type { PreviewStatus, WrappedRunStatus } from "../../../../plugins/activity/types/wrapped.ts";
 import { formatCount } from "./format.ts";
+import { previewRunning } from "./preview.ts";
 
 /** Poll interval while the Wrapped run or the backfill is running, or the backfill modal is open. */
 export const FAST_POLL_MS = 2_000;
@@ -134,19 +135,22 @@ export function backfillStatusLine(b: BackfillStatus): StatusLine {
 }
 
 /**
- * How long to wait before the next status poll: {@link FAST_POLL_MS} while the Wrapped run or the
- * backfill is running (or `fast` is asked for, such as while the backfill modal is open), else
- * {@link SLOW_POLL_MS}.
+ * How long to wait before the next status poll: {@link FAST_POLL_MS} while the Wrapped run, the
+ * backfill or the admin's private preview is running (or `fast` is asked for, such as while the
+ * backfill modal is open), else {@link SLOW_POLL_MS}. One loop polls all three, so intervals never
+ * stack.
  *
  * @param wrapped - The last Wrapped run status, or null when unknown.
  * @param backfill - The last backfill status, or null when unknown.
  * @param fast - Forces the fast interval.
+ * @param preview - The last private preview status, or null when unknown.
  * @returns Milliseconds.
  */
 export function pollInterval(
   wrapped: WrappedRunStatus | null | undefined,
   backfill: BackfillStatus | null | undefined,
   fast = false,
+  preview: PreviewStatus | null | undefined = null,
 ): number {
-  return fast || wrappedRunning(wrapped) || backfillRunning(backfill) ? FAST_POLL_MS : SLOW_POLL_MS;
+  return fast || wrappedRunning(wrapped) || backfillRunning(backfill) || previewRunning(preview) ? FAST_POLL_MS : SLOW_POLL_MS;
 }

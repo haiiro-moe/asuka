@@ -7,10 +7,11 @@
  */
 import { useState } from "react";
 import type { WrappedResumeResponse } from "../../../../plugins/activity/types/wrapped.ts";
-import { ErrorLine, Heading, InkButton, InkLink, Loading, Saved, Window } from "../../ui/index.ts";
+import { ErrorLine, Heading, InkButton, Loading, Window } from "../../ui/index.ts";
 import { useActivity } from "../useActivity.ts";
 import { formatCount, formatUtcDay } from "./format.ts";
 import { call } from "./http.ts";
+import { LinkActions } from "./LinkActions.tsx";
 import { Quiet, STATUS_GLYPH, STATUS_INK, Sheet } from "./parts.tsx";
 import { wrappedStatusLine } from "./status.ts";
 import { resumeGate, serverLinkReady } from "./steps.ts";
@@ -19,7 +20,6 @@ import type { OpsStatus } from "./useOpsStatus.ts";
 /** The server Wrapped link of a year, fetched only once a run has built it (fetching builds one otherwise). */
 function ServerLink({ year }: { year: number }) {
   const state = useActivity<{ url: string }>(`/api/activity/wrapped/server-link?year=${year}`);
-  const [copied, setCopied] = useState<"yes" | "no" | null>(null);
   if (state.loading && !state.data) return <Loading className="px-2">Fetching the server link</Loading>;
   if (!state.data) {
     return (
@@ -28,32 +28,10 @@ function ServerLink({ year }: { year: number }) {
       </ErrorLine>
     );
   }
-  const url = state.data.url;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied("yes");
-    } catch {
-      setCopied("no");
-    }
-  };
   return (
     <>
-      <p className="px-2 break-all text-subtle">{url}</p>
-      <div className="btns items-center">
-        <InkButton tone="pine" onClick={copy}>
-          copy link
-        </InkButton>
-        <InkLink tone="foam" href={url} target="_blank" rel="noopener noreferrer">
-          open
-        </InkLink>
-        {copied === "yes" && <Saved>copied.</Saved>}
-        {copied === "no" && (
-          <span className="c2" role="status">
-            The clipboard said no. Copy it from the line above.
-          </span>
-        )}
-      </div>
+      <p className="px-2 break-all text-subtle">{state.data.url}</p>
+      <LinkActions url={state.data.url} className="btns" />
     </>
   );
 }
