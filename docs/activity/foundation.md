@@ -22,7 +22,10 @@ All are defined in `src/db/schema.ts` and created by migration `0016`. Migration
 `0018` adds `send_dms` to `activity_wrapped_runs` and `processed_run_id` to
 `activity_wrapped_links`. Migration `0019` adds `activity_wrapped_server` and
 `activity_wrapped_signup`, adds `announce` to `activity_wrapped_runs` and drops `send_dms` again
-(processing and sending became separate steps).
+(processing and sending became separate steps). Migrations `0020` and `0021` add private previews:
+`kind`, `owner_user_id`, `preview` and `server_token` on `activity_wrapped_runs`, `private` and
+`owner_user_id` on `activity_wrapped_links` (0020), and make the links key (`user_id`, `year`,
+`owner_user_id`) (0021; generated separately so the table copy reads the new columns).
 
 ### Event log
 
@@ -58,7 +61,7 @@ All are defined in `src/db/schema.ts` and created by migration `0016`. Migration
 | `activity_reactions` | (`message_id`, `user_id`, `emoji`) | `added_at` |
 | `activity_voice` | | (`user_id`, `started_at`); (`channel_id`, `started_at`) |
 | `activity_backfill` | `channel_id` (primary key) | |
-| `activity_wrapped_links` | (`user_id`, `year`) (primary key); `token` | |
+| `activity_wrapped_links` | (`user_id`, `year`, `owner_user_id`) (primary key); `token` | |
 | `activity_wrapped_optins` | `user_id` (primary key) | |
 | `activity_wrapped_server` | `year` (primary key); `token` | |
 | `activity_wrapped_signup` | `year` (primary key) | |

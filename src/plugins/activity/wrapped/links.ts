@@ -28,6 +28,26 @@ export interface WrappedLink {
   year: number;
   /** The member's snapshot. */
   data: WrappedData;
+  /** True for a private preview link (an admin's preview, not the real Wrapped). */
+  preview: boolean;
+}
+
+/** How long a private preview link and its run live, in seconds (14 days). */
+export const PREVIEW_TTL_SECONDS = 14 * 86400;
+
+/**
+ * Whether a private run still backs its links: it exists, is private, belongs
+ * to `ownerUserId` and started less than {@link PREVIEW_TTL_SECONDS} ago.
+ */
+export function previewRunAlive(runId: number | null, ownerUserId: string, now: number = nowSec()): boolean {
+  if (runId === null) return false;
+  const r = schema.activityWrappedRuns;
+  const run = db
+    .select({ startedAt: r.startedAt })
+    .from(r)
+    .where(and(eq(r.id, runId), eq(r.kind, "private"), eq(r.ownerUserId, ownerUserId)))
+    .get();
+  return !!run && run.startedAt > now - PREVIEW_TTL_SECONDS;
 }
 
 /**
@@ -53,22 +73,32 @@ export function linkUrl(token: string): string {
  * Resolve a token without counting it as an open (the card image route uses
  * this, so fetching the image does not double the open count).
  *
+ * A private preview link resolves only while its preview run exists and is
+ * younger than 14 days ({@link previewRunAlive}); after that it is treated as
+ * unknown (the uniform 404) and deleted at the next preview start.
+ *
  * @param token - The token from the URL.
- * @returns The link, or null for an unknown, truncated or malformed token.
+ * @returns The link, or null for an unknown, truncated, malformed or expired token.
  */
 export function peekLinkByToken(token: string): WrappedLink | null {
   if (typeof token !== "string" || token.length !== TOKEN_LENGTH) return null;
+  const l = schema.activityWrappedLinks;
   const row = db
     .select({
-      userId: schema.activityWrappedLinks.userId,
-      year: schema.activityWrappedLinks.year,
-      data: schema.activityWrappedLinks.data,
+      userId: l.userId,
+      year: l.year,
+      data: l.data,
+      private: l.private,
+      ownerUserId: l.ownerUserId,
+      processedRunId: l.processedRunId,
     })
-    .from(schema.activityWrappedLinks)
-    .where(eq(schema.activityWrappedLinks.token, token))
+    .from(l)
+    .where(eq(l.token, token))
     .get();
   if (!row) return null;
-  return { userId: row.userId, year: row.year, data: JSON.parse(row.data) as WrappedData };
+  const preview = row.private === 1;
+  if (preview && !previewRunAlive(row.processedRunId, row.ownerUserId)) return null;
+  return { userId: row.userId, year: row.year, data: JSON.parse(row.data) as WrappedData, preview };
 }
 
 /**
@@ -92,21 +122,25 @@ export function getLinkByToken(token: string): WrappedLink | null {
 }
 
 /**
- * The stored link of a member for a year.
+ * The stored link of a member for a year: the real link, or with
+ * `ownerUserId` the private preview link that admin owns.
  *
  * @param userId - The member.
  * @param year - The year.
- * @returns The token and DM status, or null when the member has no link that year.
+ * @param ownerUserId - The preview owner; "" (default) for the real link.
+ * @returns The token and DM status, or null when the member has no such link.
  */
 export function getWrappedLink(
   userId: string,
   year: number,
+  ownerUserId = "",
 ): { token: string; dmStatus: "pending" | "sent" | "failed" | "skipped" } | null {
+  const l = schema.activityWrappedLinks;
   return (
     db
-      .select({ token: schema.activityWrappedLinks.token, dmStatus: schema.activityWrappedLinks.dmStatus })
-      .from(schema.activityWrappedLinks)
-      .where(and(eq(schema.activityWrappedLinks.userId, userId), eq(schema.activityWrappedLinks.year, year)))
+      .select({ token: l.token, dmStatus: l.dmStatus })
+      .from(l)
+      .where(and(eq(l.userId, userId), eq(l.year, year), eq(l.ownerUserId, ownerUserId)))
       .get() ?? null
   );
 }
@@ -122,18 +156,36 @@ export function getWrappedLink(
  * @param data - The snapshot, from {@link buildWrapped}.
  * @param processedRunId - The run that built the snapshot. Left out (an admin
  *   preview, `/wrapped me`), a new link gets null and an existing one keeps its value.
+ * @param ownerUserId - For a private preview link, the owning admin; "" (default)
+ *   for the real link. The two never share a row.
  * @returns The link's token.
  */
-export function upsertWrappedLink(userId: string, year: number, data: WrappedData, processedRunId?: number): string {
+export function upsertWrappedLink(
+  userId: string,
+  year: number,
+  data: WrappedData,
+  processedRunId?: number,
+  ownerUserId = "",
+): string {
   const json = JSON.stringify(data);
-  db.insert(schema.activityWrappedLinks)
-    .values({ userId, year, token: newToken(), data: json, createdAt: nowSec(), processedRunId: processedRunId ?? null })
+  const l = schema.activityWrappedLinks;
+  db.insert(l)
+    .values({
+      userId,
+      year,
+      token: newToken(),
+      data: json,
+      createdAt: nowSec(),
+      processedRunId: processedRunId ?? null,
+      private: ownerUserId === "" ? 0 : 1,
+      ownerUserId,
+    })
     .onConflictDoUpdate({
-      target: [schema.activityWrappedLinks.userId, schema.activityWrappedLinks.year],
+      target: [l.userId, l.year, l.ownerUserId],
       set: processedRunId === undefined ? { data: json } : { data: json, processedRunId },
     })
     .run();
-  return getWrappedLink(userId, year)!.token;
+  return getWrappedLink(userId, year, ownerUserId)!.token;
 }
 
 /**
@@ -172,7 +224,7 @@ export function listFailedDms(year: number, limit: number = FAILED_DM_LIMIT): Wr
     .select({ userId: l.userId })
     .from(l)
     .innerJoin(o, eq(o.userId, l.userId))
-    .where(and(eq(l.year, year), eq(l.dmStatus, "failed")))
+    .where(and(eq(l.year, year), eq(l.private, 0), eq(l.dmStatus, "failed")))
     .orderBy(l.userId)
     .limit(limit + 1)
     .all();

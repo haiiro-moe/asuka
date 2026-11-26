@@ -797,13 +797,29 @@ export const activityWrappedRuns = sqliteTable("activity_wrapped_runs", {
    * an interrupted send is resumed.
    */
   announce: integer("announce").notNull().default(1),
+  /**
+   * `real` = the year's Wrapped; `private` = an admin's preview, which only
+   * ever DMs that admin and never touches the real run, links or snapshots.
+   */
+  kind: text("kind", { enum: ["real", "private"] }).notNull().default("real"),
+  /** The admin who owns a private run; null for a real run. */
+  ownerUserId: text("owner_user_id"),
+  /**
+   * A private run's own state as JSON (`PreviewState`: the sample, the
+   * server snapshot, display names, the DM step, errors); null for a real run.
+   */
+  preview: text("preview"),
+  /** Token of a private run's server story (`/wrapped/s/<token>`); null for a real run. */
+  serverToken: text("server_token").unique(),
   startedAt: integer("started_at").notNull().default(now),
   updatedAt: integer("updated_at").notNull().default(now),
   finishedAt: integer("finished_at"),
 });
 
 /**
- * A member's personal Wrapped link for one year, keyed by (`userId`, `year`).
+ * A member's personal Wrapped link for one year, keyed by (`userId`, `year`,
+ * `ownerUserId`): the real link has `ownerUserId` "", a preview link the
+ * owning admin's id.
  * The link is reusable: it is never deleted on open, only counted. A row is
  * created for every member with activity, but a DM only ever goes to a member
  * who opted in (see {@link activityWrappedOptins}).
@@ -830,8 +846,15 @@ export const activityWrappedLinks = sqliteTable(
      * every member whose link was not processed by that run.
      */
     processedRunId: integer("processed_run_id"),
+    /** 1 = a private preview link (never counted, sent or announced by the real run). */
+    private: integer("private").notNull().default(0),
+    /**
+     * The admin who owns a private link; the empty string for a real link, so
+     * a member can hold one real and one preview link per year.
+     */
+    ownerUserId: text("owner_user_id").notNull().default(""),
   },
-  (t) => [primaryKey({ columns: [t.userId, t.year] })],
+  (t) => [primaryKey({ columns: [t.userId, t.year, t.ownerUserId] })],
 );
 
 /**
