@@ -15,14 +15,8 @@ import { call } from "./http.ts";
 import { FailedDmList, MemberDmActions } from "./MemberDmActions.tsx";
 import { ProgressBar, Quiet, Sheet } from "./parts.tsx";
 import { sendProgress } from "./status.ts";
-import { sendConfirm, sendGate } from "./steps.ts";
+import { sendConfirm, sendGate, sendRefusal } from "./steps.ts";
 import type { OpsStatus } from "./useOpsStatus.ts";
-
-/** The words for a 409 answer of the send route. */
-const REFUSED: Record<Exclude<WrappedSendResponse["result"], "started">, string> = {
-  "already-running": "the DMs are going out already",
-  "not-processed": "the run is not processed yet",
-};
 
 /** The sent, failed and not-opted-in counts, once a send has run. */
 function Counts({ s }: { s: WrappedRunStatus }) {
@@ -59,8 +53,7 @@ export function SendStep({ ops }: { ops: OpsStatus }) {
     const res = await call<WrappedSendResponse>("POST", "/api/activity/wrapped/send", { announce });
     setBusy(false);
     if (res.body?.status) ops.setWrapped(res.body.status);
-    if (res.body && res.body.result !== "started") setError(REFUSED[res.body.result]);
-    else if (!res.ok) setError(res.error ?? "no answer");
+    setError(sendRefusal(res.status, res.body, res.error));
     ops.refresh();
   };
 

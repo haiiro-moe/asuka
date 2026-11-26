@@ -11,6 +11,7 @@ import { useActivity } from "../useActivity.ts";
 import { formatCount } from "./format.ts";
 import { call } from "./http.ts";
 import { Quiet, Sheet, ViewState } from "./parts.tsx";
+import { signupConfirm } from "./steps.ts";
 
 /** The sign-up state in words. */
 function StateSheet({ s }: { s: WrappedSignupState }) {
@@ -27,8 +28,8 @@ function StateSheet({ s }: { s: WrappedSignupState }) {
 }
 
 /**
- * The sign-ups window. Nothing is posted until the button is pressed; posting again for a year that has a
- * message asks first.
+ * The sign-ups window. Nothing is posted until the button is pressed and the confirm says yes: every
+ * post is public, so the first asks too, and a re-post says the new message takes over.
  */
 export function SignupsWindow() {
   const state = useActivity<WrappedSignupState>("/api/activity/wrapped/signup");
@@ -40,12 +41,8 @@ export function SignupsWindow() {
   const s = fresh ?? state.data;
 
   const act = async (what: "post" | "close" | "reopen") => {
-    if (what === "post" && s?.posted) {
-      const ok = await confirm({
-        message: `A sign-up message for ${s.year} is up already. Post a new one? The new message takes over the sign-ups.`,
-        confirmLabel: "post",
-      });
-      if (!ok) return;
+    if (what === "post" && s) {
+      if (!(await confirm({ label: "confirm: ~/wrapped/sign-up", ...signupConfirm(s, buttons) }))) return;
     }
     setBusy(what);
     setError(null);
@@ -55,7 +52,7 @@ export function SignupsWindow() {
         : await call<WrappedSignupState>("POST", `/api/activity/wrapped/signup/${what}`);
     setBusy(null);
     if (res.ok && res.body) setFresh(res.body);
-    else setError(res.error ?? "no answer");
+    else setError(res.status === 401 ? "your session ended" : res.status === 403 ? "you do not have access" : (res.error ?? "no answer"));
   };
 
   return (

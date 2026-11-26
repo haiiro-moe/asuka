@@ -1,16 +1,17 @@
 /**
  * Step 1 of a Wrapped run, process: builds every member's snapshot and link and the server Wrapped. It
- * writes to nobody but the admin who started it, who gets a DM when it finishes.
+ * writes to nobody but the admin who started it, who gets a DM when it finishes. Processing a year whose
+ * links already went out asks first: the stories not sent yet are rebuilt, the sent ones stay as they are.
  *
  * @module
  */
 import { useState } from "react";
 import type { WrappedRunStartResponse, WrappedRunStatus } from "../../../../plugins/activity/types/wrapped.ts";
-import { ErrorLine, InkButton, PromptField, Window } from "../../ui/index.ts";
+import { ErrorLine, InkButton, PromptField, Window, useConfirm } from "../../ui/index.ts";
 import { formatCount } from "./format.ts";
 import { call } from "./http.ts";
 import { ProgressBar, Quiet } from "./parts.tsx";
-import { MAX_YEAR, MIN_YEAR, parseYearInput, processGate } from "./steps.ts";
+import { MAX_YEAR, MIN_YEAR, parseYearInput, processConfirm, processGate } from "./steps.ts";
 import type { OpsStatus } from "./useOpsStatus.ts";
 
 /** The narrator line of step 1 for the run's state. */
@@ -44,21 +45,27 @@ export function ProcessStep({ ops }: { ops: OpsStatus }) {
   const year = parseYearInput(yearText);
   const gate = processGate(s, year);
   const line = s ? processLine(s) : null;
+  const { confirm, dialog } = useConfirm();
 
   const run = async () => {
     if (year == null) return;
+    const ask = processConfirm(s, year);
+    if (ask && !(await confirm({ label: "confirm: ~/wrapped/process", ...ask }))) return;
     setBusy(true);
     setError(null);
     const res = await call<WrappedRunStartResponse>("POST", "/api/activity/wrapped/run", { year });
     setBusy(false);
     if (res.body?.status) ops.setWrapped(res.body.status);
     if (res.body?.result === "already-running") setError("a run is processing already");
+    else if (res.status === 401) setError("your session ended");
+    else if (res.status === 403) setError("you do not have access");
     else if (!res.ok) setError(res.error ?? "no answer");
     ops.refresh();
   };
 
   return (
     <Window label="sh: ~/wrapped/1-process" tone={s?.status === "failed" && s.processed < s.total ? "love" : "pine"}>
+      {dialog}
       <p className="nar px-2">
         You build every member's year and the server's. Nobody is written to but you, and nothing is posted.
       </p>

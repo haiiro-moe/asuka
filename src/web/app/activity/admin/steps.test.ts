@@ -7,9 +7,13 @@ import {
   parseYearInput,
   processGate,
   resumeGate,
+  notYetSent,
+  processConfirm,
   sendConfirm,
   sendGate,
+  sendRefusal,
   serverLinkReady,
+  signupConfirm,
 } from "./steps.ts";
 
 const DEC_20_2026 = Date.UTC(2026, 11, 20) / 1000;
@@ -85,19 +89,52 @@ test("resumeGate opens only for an interrupted run", () => {
   expect(resumeGate(null).enabled).toBe(false);
 });
 
-test("sendConfirm asks only when the send is allowed, naming the opted-in count", () => {
+test("sendConfirm asks only when the send is allowed, naming the year and the members not sent yet", () => {
   expect(sendConfirm(null, true)).toBeNull();
   expect(sendConfirm(run({ status: "processing" }), true)).toBeNull();
   expect(sendConfirm(run({ status: "sending" }), true)).toBeNull();
   const ask = sendConfirm(run({ status: "processed", processed: 40, optedIn: 212 }), true)!;
-  expect(ask.message).toStartWith("Send the DMs now to the 212 members who opted in?");
+  expect(ask.message).toStartWith("Send the 2026 DMs now to the 212 members who opted in and have not been sent yet?");
   expect(ask.message).toContain("the announcement is posted");
   expect(ask.confirmLabel).toBe("send dms");
   expect(ask.tone).toBe("gold");
-  expect(sendConfirm(run({ status: "done", processed: 40, optedIn: 1 }), false)!.message).toContain(
-    "the 1 member who opted in? ",
+  expect(sendConfirm(run({ status: "processed", processed: 40, optedIn: 1 }), false)!.message).toContain(
+    "the 1 member who opted in and has not been sent yet? ",
   );
   expect(sendConfirm(run({ status: "done", processed: 40 }), false)!.message).toContain("No announcement is posted.");
+  expect(sendConfirm(run({ status: "done", processed: 40, optedIn: 30, sent: 26 }), false)!.message).toStartWith(
+    "Send the 2026 DMs now to about 4 members who opted in and have not been sent yet?",
+  );
+});
+
+test("notYetSent is opted in minus sent, exact only before any send", () => {
+  expect(notYetSent(run({ optedIn: 30, sent: 0 }))).toEqual({ count: 30, exact: true });
+  expect(notYetSent(run({ optedIn: 30, sent: 12 }))).toEqual({ count: 18, exact: false });
+  expect(notYetSent(run({ optedIn: 3, sent: 5 }))).toEqual({ count: 0, exact: false });
+});
+
+test("processConfirm warns only when the chosen year has sent links", () => {
+  expect(processConfirm(null, 2026)).toBeNull();
+  expect(processConfirm(run({ status: "processed" }), 2026)).toBeNull();
+  expect(processConfirm(run({ status: "done", sent: 12 }), 2025)).toBeNull();
+  expect(processConfirm(run({ status: "done", sent: 12 }), null)).toBeNull();
+  expect(processConfirm(run({ status: "sending", sent: 12 }), 2026)).toBeNull();
+  const ask = processConfirm(run({ status: "done", sent: 12 }), 2026)!;
+  expect(ask.message).toBe(
+    "Process 2026 again? Links already went out for it. The stories not sent yet are rebuilt; the 12 stories already sent stay as they are.",
+  );
+  expect(ask.confirmLabel).toBe("process");
+  expect(processConfirm(run({ status: "done", sent: 1 }), 2026)!.message).toContain("the 1 story already sent");
+});
+
+test("sendRefusal words every outcome that is not a start", () => {
+  expect(sendRefusal(202, { result: "started" }, null)).toBeNull();
+  expect(sendRefusal(409, { result: "already-running" }, "conflict")).toBe("the DMs are going out already");
+  expect(sendRefusal(409, { result: "not-processed" }, "conflict")).toBe("the run is not processed yet");
+  expect(sendRefusal(400, { error: "bad announce flag" } as { result?: string }, "bad announce flag")).toBe("bad announce flag");
+  expect(sendRefusal(401, null, "unauthorized")).toBe("your session ended");
+  expect(sendRefusal(403, null, "Forbidden")).toBe("you do not have access");
+  expect(sendRefusal(0, null, null)).toBe("no answer");
 });
 
 test("announceConfirm asks only when the post is allowed", () => {
@@ -125,4 +162,16 @@ test("backfillAction names the main button for each state", () => {
   expect(backfillAction(backfill({ status: "done" }))).toBe("run again");
   expect(backfillAction(backfill({ status: "failed" }))).toBe("run again");
   expect(backfillAction(backfill({ status: "running" }))).toBeNull();
+});
+
+test("signupConfirm asks before every post, first or again", () => {
+  const first = { year: 2026, posted: false, buttons: false, closed: false, optedIn: 0 };
+  expect(signupConfirm(first, true).message).toBe(
+    "Post the 2026 sign-up message in the announcements channel now, with opt in and opt out buttons? Everyone sees it.",
+  );
+  const again = signupConfirm({ ...first, posted: true, buttons: true }, false);
+  expect(again.message).toBe(
+    "A sign-up message for 2026 is up already. Post a new one, without buttons? The new message takes over the sign-ups.",
+  );
+  expect(again.confirmLabel).toBe("post");
 });

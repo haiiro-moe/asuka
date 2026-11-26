@@ -7,7 +7,7 @@
  * @module
  */
 import type { BackfillStatus } from "../../../../plugins/activity/backfill/types.ts";
-import type { WrappedRunStatus } from "../../../../plugins/activity/types/wrapped.ts";
+import type { WrappedRunStatus, WrappedSignupState } from "../../../../plugins/activity/types/wrapped.ts";
 import { formatUtcDay } from "./format.ts";
 
 /** Whether a step's button is enabled, and when it is not, the reason shown in a quiet line under it. */
@@ -23,8 +23,9 @@ export interface StepGate {
 const open: StepGate = { enabled: true, reason: null };
 const shut = (reason: string): StepGate => ({ enabled: false, reason });
 
-/** Lowest and highest year the server accepts for a run (`api/wrapped.ts`). */
+/** Lowest year the server accepts for a run (`api/wrapped.ts`). */
 export const MIN_YEAR = 2015;
+/** Highest year the server accepts for a run (`api/wrapped.ts`). */
 export const MAX_YEAR = 2100;
 
 /**
@@ -126,24 +127,78 @@ export interface StepConfirm {
 }
 
 /**
- * The confirm before `send dms`: it writes to every opted-in member whose link is not sent yet, and a
- * sent DM cannot be taken back. Null when the gate is shut (the button is disabled, so there is nothing
- * to confirm).
+ * How many opted-in members a send still reaches: opted in now minus the DMs this run delivered.
+ * `exact` is false once the run has sent some, because a member who was sent their link and then
+ * opted out is in `sent` but no longer in `optedIn`, so the figure can be a little low.
+ *
+ * @param s - The run status.
+ */
+export function notYetSent(s: WrappedRunStatus): { count: number; exact: boolean } {
+  return { count: Math.max(0, s.optedIn - s.sent), exact: s.sent === 0 };
+}
+
+/**
+ * The confirm before `send dms`: it names the year and the opted-in members whose link is not sent
+ * yet ({@link notYetSent}), and a sent DM cannot be taken back. Null when the gate is shut (the button
+ * is disabled, so there is nothing to confirm).
  *
  * @param s - The run status.
  * @param announce - The `announce when the dms finish` chip.
  */
 export function sendConfirm(s: WrappedRunStatus | null, announce: boolean): StepConfirm | null {
   if (!s || !sendGate(s).enabled) return null;
-  const who = `${s.optedIn.toLocaleString("en-GB")} ${s.optedIn === 1 ? "member who" : "members who"} opted in`;
+  const { count, exact } = notYetSent(s);
+  const n = count.toLocaleString("en-GB");
+  const who = !exact
+    ? `about ${n} members who opted in and have`
+    : count === 1
+      ? "the 1 member who opted in and has"
+      : `the ${n} members who opted in and have`;
+  const year = s.year != null ? `${s.year} ` : "";
   const tail = announce
     ? " When they finish, the announcement is posted in the announcements channel."
     : " No announcement is posted.";
   return {
-    message: `Send the DMs now to the ${who}? Links already sent are not sent again, and a DM cannot be taken back.${tail}`,
+    message: `Send the ${year}DMs now to ${who} not been sent yet? Links already sent are not sent again, and a DM cannot be taken back.${tail}`,
     confirmLabel: "send dms",
     tone: "gold",
   };
+}
+
+/**
+ * The confirm before `process` when the latest run is of the chosen year and has sent links: processing
+ * again rebuilds the stories not sent yet and leaves the sent ones as they are (the server keeps a sent
+ * snapshot as it was). Null when there is nothing to warn about, so the button runs at once.
+ *
+ * @param s - The run status, or null while it is unknown.
+ * @param year - The parsed year field.
+ */
+export function processConfirm(s: WrappedRunStatus | null, year: number | null): StepConfirm | null {
+  if (!s || year == null || s.year !== year || s.sent <= 0 || !processGate(s, year).enabled) return null;
+  const sent = `${s.sent.toLocaleString("en-GB")} ${s.sent === 1 ? "story" : "stories"}`;
+  return {
+    message: `Process ${year} again? Links already went out for it. The stories not sent yet are rebuilt; the ${sent} already sent stay as they are.`,
+    confirmLabel: "process",
+    tone: "gold",
+  };
+}
+
+/**
+ * What a `send dms` request ended in, as the text after `That did not start: `: the 409 `result`, a
+ * plain line for a 401 or a 403, or the server's error. Null when the send started.
+ *
+ * @param status - The HTTP status; 0 when the request never reached the server.
+ * @param body - The parsed body, or null.
+ * @param error - The request helper's failure cause, or null.
+ */
+export function sendRefusal(status: number, body: { result?: string } | null, error: string | null): string | null {
+  const result = body?.result;
+  if (result === "already-running") return "the DMs are going out already";
+  if (result === "not-processed") return "the run is not processed yet";
+  if (status === 401) return "your session ended";
+  if (status === 403) return "you do not have access";
+  if (status >= 200 && status < 300) return null;
+  return error || "no answer";
 }
 
 /**
@@ -197,4 +252,19 @@ export function backfillAction(b: BackfillStatus | null): BackfillAction | null 
     case "failed":
       return "run again";
   }
+}
+
+/**
+ * The confirm before `post sign-up message`. Every post asks, because it is public; a re-post for a
+ * year that has a message says the new one takes over.
+ *
+ * @param s - The sign-up state.
+ * @param buttons - The `with opt in / opt out buttons` chip.
+ */
+export function signupConfirm(s: WrappedSignupState, buttons: boolean): StepConfirm {
+  const how = buttons ? "with opt in and opt out buttons" : "without buttons";
+  const message = s.posted
+    ? `A sign-up message for ${s.year} is up already. Post a new one, ${how}? The new message takes over the sign-ups.`
+    : `Post the ${s.year} sign-up message in the announcements channel now, ${how}? Everyone sees it.`;
+  return { message, confirmLabel: "post", tone: "gold" };
 }

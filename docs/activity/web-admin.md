@@ -147,11 +147,19 @@ run whose processing completed gets `The run failed. Send again, or process the 
 the announce step.
 
 **Confirms.** The two outward, server-wide steps ask first, through `useConfirm` (gold): `send
-dms` (`sendConfirm(s, announce)`: "Send the DMs now to the 212 members who opted in? ...", with
-whether the announcement follows) and `post announcement` (`announceConfirm(s)`: "Post the server
+dms` (`sendConfirm(s, announce)`: "Send the 2026 DMs now to the 212 members who opted in and have
+not been sent yet? ...", with whether the announcement follows; the count is `notYetSent(s)`, opted
+in now minus this run's `sent`, worded "about N" once the run has sent some, because a member sent
+their link who then opted out makes it a little low) and `post announcement` (`announceConfirm(s)`: "Post the server
 Wrapped of 2026 in the announcements channel now? ..."). Both return null when the gate is shut, so
-nothing can be confirmed for a disabled step. Re-posting the sign-up message asks the same way.
-Buttons stay disabled while their request is in flight.
+nothing can be confirmed for a disabled step. Every sign-up post asks the same way (it is public), a re-post with a word that a message is up already.
+`process` asks only when the latest run is of the chosen year and has sent links
+(`processConfirm(s, year)`: "Process 2026 again? Links already went out for it. The stories not
+sent yet are rebuilt; the 12 stories already sent stay as they are."): the server keeps a sent
+snapshot as it was.
+A refused `send dms` reads through `sendRefusal`: the 409 `result` words, `your session ended`
+(401), `you do not have access` (403), or the server's error (a 400). Buttons stay disabled
+while their request is in flight.
 
 **Failed DMs.** Once a send has run (`showFailedList`), the send window lists
 `GET .../wrapped/failed?year=` (`WrappedFailedList`: failed DMs of members still opted in, by user
@@ -179,8 +187,8 @@ me`.
 
 `SignupsWindow` reads `GET .../wrapped/signup` and shows year, message (posted with or without
 buttons, or not), open or closed, and opted-in count. `post sign-up message` sends `{ year,
-buttons }` with the `with opt in / opt out buttons` chip (on by default) and asks first when the
-year already has a message. `close sign-ups` and `reopen sign-ups` swap with the state.
+buttons }` with the `with opt in / opt out buttons` chip (on by default) and always asks first
+(`signupConfirm`): the first post too, since it is public; a re-post says the new message takes over. `close sign-ups` and `reopen sign-ups` swap with the state.
 
 ### Private preview
 
