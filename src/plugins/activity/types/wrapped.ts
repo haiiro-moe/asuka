@@ -177,6 +177,8 @@ export interface ServerWrapped {
 export interface ServerWrappedResponse {
   /** The server's snapshot. */
   data: ServerWrapped;
+  /** True for an admin's private preview (the story page shows a preview ribbon). */
+  preview: boolean;
   /** Whether voice figures may be shown (copied from `data.voiceReady`). */
   voiceReady: boolean;
 }
@@ -277,6 +279,8 @@ export interface WrappedSignupState {
 export interface WrappedLinkResponse {
   /** The link holder's snapshot. */
   data: WrappedData;
+  /** True for an admin's private preview link (the story page shows a preview ribbon). */
+  preview: boolean;
   /** Whether voice figures may be shown (copied from `data.voiceReady`). */
   voiceReady: boolean;
   /** The link holder's display name. */
@@ -289,4 +293,98 @@ export interface WrappedLinkResponse {
   topChannelName: string | null;
   /** Name of the thread's parent channel when {@link WrappedData.topChannelId} is a thread; null for a normal channel or when unknown. */
   topChannelParentName: string | null;
+}
+
+/**
+ * `GET /api/activity/wrapped/failed`: the members whose Wrapped DM failed, so
+ * an admin can resend them. Only failed links of members who are still opted
+ * in; never skipped, pending or sent ones.
+ */
+export interface WrappedFailedList {
+  /** The year the list is for. */
+  year: number;
+  /** One item per failed DM, ordered by user id, at most 200. */
+  items: { userId: string; state: "failed" }[];
+  /** More failed DMs exist than `items` holds. */
+  truncated: boolean;
+}
+
+/** What an admin's private preview run is doing. */
+export type PreviewRunState =
+  /** The admin has no preview. */
+  | "idle"
+  /** Building the sampled (or, with `all`, every) member's snapshot and the server snapshot. */
+  | "processing"
+  /** Built; the preview DMs to the admin are about to start. */
+  | "processed"
+  /** DMing the previews to the admin. */
+  | "sending"
+  /** Finished (check `dmFailed`). */
+  | "done"
+  /** Stopped by an error. */
+  | "failed"
+  /** Was processing or sending but has not updated for 120 seconds. */
+  | "interrupted";
+
+/** One sampled member of a preview. */
+export interface PreviewMember {
+  /** The member. */
+  userId: string;
+  /** Their display name when the preview was built; null when unknown. */
+  displayName: string | null;
+  /** True when they have not opted in, so the real run would not DM them. */
+  wouldSkip: boolean;
+  /** False when they had no activity that year (no link was made). */
+  hasLink: boolean;
+}
+
+/**
+ * An admin's private Wrapped preview, as `GET /api/activity/wrapped/preview`
+ * returns it to its owner (and to nobody else).
+ */
+export interface PreviewStatus {
+  /** The preview run's id; null when there is none. */
+  id: number | null;
+  /** What it is doing. */
+  status: PreviewRunState;
+  /** The year previewed; null when there is none. */
+  year: number | null;
+  /** Members to process (the sample, or everyone with `all`). */
+  total: number;
+  /** Members processed so far. */
+  done: number;
+  /** Whether every member was processed (the dry run). */
+  all: boolean;
+  /** The sampled members, in DM order. */
+  sampled: PreviewMember[];
+  /** Processed members who have not opted in (the real run would skip them). */
+  wouldSkip: number;
+  /** True when the preview could not be DM'd to the admin (closed DMs). */
+  dmFailed: boolean;
+  /** The sampled members' private links. */
+  links: { userId: string; token: string }[];
+  /** The private server story's token; null until built. */
+  serverToken: string | null;
+  /** When the preview and its links expire (14 days after the start); null when there is none. */
+  expiresAt: number | null;
+  /** What went wrong, in plain words; null when nothing did. */
+  error: string | null;
+  /** When the preview started; null when there is none. */
+  startedAt: number | null;
+  /** When it finished; null while it runs or when there is none. */
+  finishedAt: number | null;
+}
+
+/** `POST /api/activity/wrapped/preview`. 202 when started, 409 already running, 400 invalid. */
+export interface PreviewStartResponse {
+  result: "started" | "already-running" | "invalid";
+  /** Why the request was invalid; absent otherwise. */
+  error?: string;
+  status: PreviewStatus;
+}
+
+/** `POST /api/activity/wrapped/preview/discard`. */
+export interface PreviewDiscardResponse {
+  /** `discarded`; `nothing` when the admin has no preview; `running` while it is processing or sending. */
+  result: "discarded" | "nothing" | "running";
 }

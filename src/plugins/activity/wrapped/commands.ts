@@ -8,6 +8,7 @@ import { ensureWrappedLink, getWrappedLink, linkUrl } from "./links.ts";
 import { applyOptInChoice, currentUtcYear } from "./optin.ts";
 import { getWrappedStatus, latestRunPhase, postAnnouncement, resumeWrappedRun, startWrappedRun, startWrappedSend } from "./run.ts";
 import { closeSignups, getSignupState, postSignupMessage, reopenSignups } from "./signup.ts";
+import { PREVIEW_MAX_MEMBERS, discardWrappedPreview, getPreviewStatus, parseMemberIds, startWrappedPreview } from "./preview.ts";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -39,7 +40,7 @@ function ack(interaction: ChatInputCommandInteraction, accent: number, title: st
  * first (ephemeral), so the 3-second interaction deadline is never missed and a
  * retry cannot double-post.
  */
-const SLOW_SUBCOMMANDS = new Set(["start", "send", "announce", "signups", "resume"]);
+const SLOW_SUBCOMMANDS = new Set(["start", "send", "announce", "signups", "resume", "preview", "preview-discard"]);
 
 /** Reply ephemerally with a catalog message. */
 async function replyMessage(
@@ -199,6 +200,49 @@ async function signups(interaction: ChatInputCommandInteraction, ctx: BotContext
   return ack(interaction, Accent.success, "sign-up posted", [buttons ? "» with the opt-in buttons" : "» without buttons, information only"]);
 }
 
+/**
+ * `/wrapped preview`: start the admin's private preview. Nothing is sent to
+ * members or posted anywhere; the admin gets the preview by DM.
+ */
+function preview(interaction: ChatInputCommandInteraction, ctx: BotContext) {
+  const year = interaction.options.getInteger("year") ?? currentUtcYear();
+  const all = interaction.options.getBoolean("all") ?? false;
+  const typed = parseMemberIds(interaction.options.getString("members") ?? "");
+  if (typed === null) {
+    return ack(interaction, Accent.warning, "invalid members", [`name at most ${PREVIEW_MAX_MEMBERS} members, as ids or mentions.`]);
+  }
+  const user = interaction.options.getUser("member");
+  const members = [...new Set([...(user ? [user.id] : []), ...typed])];
+  if (members.length > PREVIEW_MAX_MEMBERS) {
+    return ack(interaction, Accent.warning, "invalid members", [`name at most ${PREVIEW_MAX_MEMBERS} members.`]);
+  }
+  const started = startWrappedPreview(ctx, {
+    ownerUserId: interaction.user.id,
+    year,
+    members: members.length > 0 ? members : undefined,
+    all,
+  });
+  if (started.result === "already-running") {
+    return ack(interaction, Accent.warning, "already running", ["your preview is still being made. look at the dashboard."]);
+  }
+  if (started.result === "invalid") return ack(interaction, Accent.warning, "invalid members", [`${started.error ?? "check the list"}.`]);
+  const status = getPreviewStatus(interaction.user.id);
+  return ack(interaction, Accent.success, "preview started", [
+    `» year: ${year}`,
+    members.length > 0 ? `» members: ${members.length} named` : `» members: you and the ${status.sampled.length - 1} most active`,
+    ...(all ? ["» every member is processed for the counts; only the sample comes to you."] : []),
+    "» nothing is sent to anyone else. you get the preview in your dms when it is ready.",
+  ]);
+}
+
+/** `/wrapped preview-discard`: delete the admin's preview and its links. */
+function previewDiscard(interaction: ChatInputCommandInteraction) {
+  const result = discardWrappedPreview(interaction.user.id);
+  if (result === "running") return ack(interaction, Accent.warning, "still running", ["wait for the preview to finish, then discard it."]);
+  if (result === "nothing") return ack(interaction, Accent.primary, "nothing to discard", ["you have no preview."]);
+  return ack(interaction, Accent.success, "preview discarded", ["» its links no longer open."]);
+}
+
 /** `/wrapped resume`: continue an interrupted run. */
 function resume(interaction: ChatInputCommandInteraction, ctx: BotContext) {
   const before = latestRunPhase();
@@ -269,6 +313,16 @@ const wrapped: Command = {
             ),
         ),
     )
+    .addSubcommand((s) =>
+      s
+        .setName("preview")
+        .setDescription("Make a private preview of Wrapped, sent only to you (admin only).")
+        .addIntegerOption((o) => o.setName("year").setDescription("The year (default: this year, UTC)").setMinValue(2015).setMaxValue(2100))
+        .addUserOption((o) => o.setName("member").setDescription("Preview this member"))
+        .addStringOption((o) => o.setName("members").setDescription("Up to 10 member ids or mentions to preview"))
+        .addBooleanOption((o) => o.setName("all").setDescription("Also process every member for the counts (default: false)")),
+    )
+    .addSubcommand((s) => s.setName("preview-discard").setDescription("Delete your Wrapped preview and its links (admin only)."))
     .addSubcommand((s) => s.setName("status").setDescription("Show the Wrapped run's progress (admin only)."))
     .addSubcommand((s) => s.setName("resume").setDescription("Continue an interrupted Wrapped run (admin only)."))
     .addSubcommand((s) => s.setName("optin").setDescription("Get your Wrapped link by DM when it is ready."))
@@ -292,6 +346,8 @@ const wrapped: Command = {
     if (sub === "announce") return announce(interaction, ctx);
     if (sub === "signups") return signups(interaction, ctx);
     if (sub === "resume") return resume(interaction, ctx);
+    if (sub === "preview") return preview(interaction, ctx);
+    if (sub === "preview-discard") return previewDiscard(interaction);
     const { accent, title, lines } = statusCard(getWrappedStatus());
     return ack(interaction, accent, title, lines);
   },

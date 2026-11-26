@@ -48,10 +48,13 @@ src/plugins/activity/
     server.ts           buildServerWrapped, serverWrappedDeps, getOrCreateServerToken,
                         storeServerWrapped, getServerWrappedByToken, serverWrappedUrl
     links.ts            newToken, linkUrl, getLinkByToken, peekLinkByToken, upsertWrappedLink,
-                        ensureWrappedLink, getWrappedLink
+                        ensureWrappedLink, getWrappedLink, listFailedDms
     run.ts              startWrappedRun, startWrappedSend, postAnnouncement, resumeWrappedRun,
                         getWrappedStatus, latestRunPhase, resendWrappedDm, waitForWrappedRun,
                         wrappedRunTiming
+    preview.ts          startWrappedPreview, resumeWrappedPreview, discardWrappedPreview,
+                        getPreviewStatus, getPreviewServerByToken, parseMemberIds,
+                        waitForWrappedPreviews
     signup.ts           postSignupMessage, closeSignups, reopenSignups, signupsClosed,
                         getSignupState
     dm.ts               sendWrappedDm, wrappedDmPayload
@@ -293,6 +296,8 @@ the elections commands, and are not editable.
 | `signups action:` | admin | `post`, `post-without-buttons`, `close`, `reopen` |
 | `status` | admin | `getWrappedStatus` as a card (phase, counters, announcement, dates like `20 Dec 2026`) |
 | `resume` | admin | `resumeWrappedRun` |
+| `preview [year] [member] [members] [all]` | admin | start a private preview (see "Private wrapped (preview)"); `member` is one user, `members` up to 10 ids or mentions, `all` processes every member for the counts |
+| `preview-discard` | admin | delete the admin's preview and its links |
 | `optin`, `optout` | anyone | record the choice, ephemeral confirmation (or `wrapped.signup-closed`) |
 | `me` | anyone | their own link for the latest run's year (opted in or not); `me-not-ready` before any run, `me-empty` without activity. A member a run missed gets a link made on the spot. |
 
@@ -315,6 +320,7 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 | `POST /api/activity/wrapped/signup/close` | admin | close sign-ups; the `WrappedSignupState` |
 | `POST /api/activity/wrapped/signup/reopen` | admin | reopen sign-ups; the `WrappedSignupState` |
 | `GET /api/activity/wrapped/optins` | admin | `{ count }` |
+| `GET /api/activity/wrapped/failed?year=` | admin | `WrappedFailedList`: `{ year, items: { userId, state: "failed" }[], truncated }`, the failed DMs of members still opted in (never skipped, pending or sent), by user id, at most 200 (`truncated` when more exist); one SQL query (`listFailedDms`), no Discord call. Year defaults to the latest run's, else the current UTC year; 400 for a bad year |
 | `GET /api/activity/wrapped/link/:userId?year=` | admin | `{ url }`, making the snapshot first if needed; 404 without activity |
 | `GET /api/activity/wrapped/server-link?year=` | admin | `{ url }` of the server story, building its snapshot first if needed; 404 when nothing happened |
 | `GET /api/activity/wrapped/t/:token` | public | `WrappedLinkResponse` (snapshot plus `displayName`, `soulmateName`, `mostRepliedToName`, `topChannelName` and `topChannelParentName` resolved now); counts an open; 404 otherwise |
@@ -338,6 +344,56 @@ has no emoji font, so a unicode top emoji is shown by its use count only and a c
 channel (`thread in #parent` for a thread), the best club and the president. The best pair is never
 drawn. Both renderers return null on failure.
 
+## Private wrapped (preview)
+
+An admin can generate the year's Wrapped privately, to check it before the real run. Rulings
+R-P1..R-P7 in the plan's DECISIONS.md. Code: `wrapped/preview.ts`.
+
+- **A separate run kind.** A preview is a row in `activity_wrapped_runs` with `kind = "private"` and
+  `ownerUserId` = the admin. Its links are rows with `private = 1` and `ownerUserId` set (the links
+  key is (`userId`, `year`, `ownerUserId`), so a member can hold a real link and a preview link), and
+  its server snapshot lives in the run's `preview` JSON with its own `serverToken`. The real run
+  never sees private rows: every real-run query (latest run, counts, `skipped`, the failed list,
+  sending, resend, the announcement check) filters `kind = "real"` or `private = 0`. A preview never
+  touches the real run, its links, the sign-up message, `announcedAt` or the public server story,
+  and a real run can run before, during or after one. One active preview per admin.
+- **Scope.** The admin plus the most active members of the year by messages (3 by default, at most
+  10), or an explicit list of at most 10 ids (which replaces the sample; non-numeric ids or more
+  than 10 are refused). With `all`, every active member's snapshot is built too, for the counts; the
+  DMs still cover the sample only.
+- **Opt-ins are ignored** when generating. The status reports `wouldSkip` (processed members not
+  opted in) and a per-member flag for the sample; each member preview says "would not be sent: not
+  opted in" when that applies. The best pair is still named only when both opted in.
+- **Delivery.** When processing is done the bot DMs the admin, and only the admin: the intro
+  (`wrapped.preview-intro`), then for each sampled member with activity the exact DM they would get
+  (`wrapped.dm` with their private link) under a "preview for <name>" label (`wrapped.preview-for` or
+  `wrapped.preview-skip`), then the announcement (`wrapped.announce` with its buttons disabled, under
+  `wrapped.preview-announce`), then the private server link (`wrapped.preview-server`). Nothing is
+  DM'd to a member and nothing is posted to any channel. When the admin's DMs are closed the status
+  records `dmFailed` and an `error`, and nothing is retried; the links are in the status.
+- **Lifecycle.** `processing` -> `processed` -> `sending` -> `done`, plus `failed` and `interrupted`
+  (no update for 120 seconds); `resumeWrappedPreview` continues processing (only the members not yet
+  built) or the DMs not yet sent. Starting a preview is always a manual admin action; voice
+  readiness is checked once at the start (the two-month rule applies).
+- **Expiry and discard.** A preview and its links last 14 days. After that the token routes give
+  the uniform 404 (a lazy check on lookup) and the rows are deleted at the next preview start, by
+  any admin; starting a new preview also replaces the admin's previous one. `discardWrappedPreview`
+  deletes the run, its links and its server story at once (refused while it is still running).
+- **Public pages.** The token routes (`t/:token`, `s/:token` and their cards) serve preview links
+  too, with `preview: true` in the response so the story page shows a preview ribbon; real links
+  give `preview: false`.
+- **Routes** (admin; the owner is always the session's user, never a body field, and an admin only
+  ever sees their own preview):
+
+| Route | Response |
+|---|---|
+| `POST /api/activity/wrapped/preview` | body `{ year?, members?: string[], all?: boolean }`; 202 started, 409 already running, 400 invalid: `PreviewStartResponse` (`{ result, error?, status }`) |
+| `GET /api/activity/wrapped/preview` | the caller's `PreviewStatus` (`idle` when none): status, year, total, done, all, sampled members with display names, `wouldSkip` and `hasLink`, the `wouldSkip` count, `dmFailed`, the sample's links, the server token, `expiresAt`, `error` |
+| `POST /api/activity/wrapped/preview/discard` | `PreviewDiscardResponse` (`discarded`, `nothing`, or `running` with 409) |
+
+- **Command.** `/wrapped preview` (options `year`, `member`, `members`, `all`) and
+  `/wrapped preview-discard`, admin only with the same check as `/wrapped start`; both defer first.
+
 ## Tests
 
 ```sh
@@ -350,7 +406,10 @@ ties, thresholds, club and president titles), `server.test.ts` (server totals, t
 naming, best club, president, server token, announcement, public routes), `links.test.ts` (tokens,
 reuse, isolation, the public member routes), `run.test.ts` (the three steps, the starter's DM and
 its fallback, progress, DMs, opt-in, interruption and resume, mod-log, nothing automatic) and
-`optin.test.ts` (opt-in, buttons, sign-up control, `/wrapped`, the message catalog). DMs, channel
+`optin.test.ts` (opt-in, buttons, sign-up control, `/wrapped`, the message catalog) and
+`preview.test.ts` (private previews: isolation from the real run both ways, admin-only DMs and no
+channel post, the sample, opt-ins ignored, the voice rule, `all`, discard, expiry, resume, closed
+DMs, the routes and the command). DMs, channel
 posts and message edits go to the plain fake client in `testing.ts`; a 50007-shaped error stands in
 for closed DMs. Tests set `wrappedRunTiming.sendDelayMs` to 0 and wait for the background work with
 `waitForWrappedRun()`.
