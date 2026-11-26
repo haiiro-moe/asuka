@@ -127,7 +127,8 @@ export interface StepConfirm {
 }
 
 /**
- * How many opted-in members a send still reaches: opted in now minus the DMs this run delivered.
+ * How many opted-in members a send still reaches: opted in now minus `sent` (the server sets it to the
+ * year's sent links whenever this run sends, and it is 0 on a run that has not sent).
  * `exact` is false once the run has sent some, because a member who was sent their link and then
  * opted out is in `sent` but no longer in `optedIn`, so the figure can be a little low.
  *

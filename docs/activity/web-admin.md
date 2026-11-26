@@ -129,13 +129,17 @@ Four windows:
 
 1. **Overview** (`fish: ~/wrapped`): the run's year and line, opted-in count, started and
    finished days, and once done the sent, failed, not-opted-in counts and the announcement day.
+   The run's `error` shows as a subtle line through `runErrorText`, which drops member ids (the
+   server writes `a snapshot failed (<id>): <cause>`; a bare id becomes `a member`).
    An interrupted run shows `resume` (`POST .../wrapped/run/resume`). The server-wide link (`GET
    .../wrapped/server-link?year=`) is fetched only once the run is processed, sending, done or
    announced, because that route builds a snapshot when none exists; it shows the URL, `copy
    link` and `open`.
 2. **1 process** (`POST .../wrapped/run`, `{ year }`): a year field (four digits, 2015 to 2100),
    a progress bar while processing, and once processed the line that a DM has gone to whoever
-   started it.
+   started it. `buildSummary(s)` adds `n members could not be built. Processing went on without
+   them.` when `buildFailed` > 0, and the error, without ids, in a subtle line. The status line
+   (`wrappedStatusLine`) adds `; n could not be built` in every state but idle.
 3. **2 send dms** (`POST .../wrapped/send`, `{ announce }`): `DMs go to opted-in members only: n of
    N`, the `announce when the dms finish` chip (on by default), a bar of links settled, the counts,
    and the failed DMs (see below).
@@ -155,7 +159,7 @@ the announce step.
 **Confirms.** The two outward, server-wide steps ask first, through `useConfirm` (gold): `send
 dms` (`sendConfirm(s, announce)`: "Send the 2026 DMs now to the 212 members who opted in and have
 not been sent yet? ...", with whether the announcement follows; the count is `notYetSent(s)`, opted
-in now minus this run's `sent`, worded "about N" once the run has sent some, because a member sent
+in now minus `sent` (the year's sent links as of this run's last send), worded "about N" once the run has sent some, because a member sent
 their link who then opted out makes it a little low) and `post announcement` (`announceConfirm(s)`: "Post the server
 Wrapped of 2026 in the announcements channel now? ..."). Both return null when the gate is shut, so
 nothing can be confirmed for a disabled step. Every sign-up post asks the same way (it is public), a re-post with a word that a message is up already.
@@ -178,10 +182,10 @@ DMs. Everyone who opted in got theirs.` when empty. The list is fetched again wh
 send) and after every resend.
 
 `resend` exists only on these rows, and `showResend` hides it while the run is `sending`. The
-server refuses a resend with a 409 and a `result` for a member who is not opted in
-(`not-opted-in`), a link already sent (`already-sent`) and any resend while a send runs
-(`sending`); `resendOutcome` reads the result (a 409 included) and `RESEND_WORDS` words each one
-(the first two point at `/wrapped me`). A 401 reads `your session ended`, a 403 `you do not have
+server answers a `WrappedResendResponse`: 200 `sent` or `failed`, 404 `no-link`, and a 409 for a
+member who left (`left`), is not opted in (`not-opted-in`), was already sent the link
+(`already-sent`), or while a send runs (`sending`). `resendOutcome` reads the result whatever the
+status and `RESEND_WORDS` words each one (`not-opted-in` and `already-sent` point at `/wrapped me`). A 401 reads `your session ended`, a 403 `you do not have
 access`. Each row holds a busy lock (a ref, so two clicks in one frame send once), and after a
 resend answered `sent` its `resend` stays disabled until the list answer changes.
 

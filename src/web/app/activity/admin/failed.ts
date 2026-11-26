@@ -5,7 +5,7 @@
  *
  * @module
  */
-import type { WrappedFailedList, WrappedRunStatus } from "../../../../plugins/activity/types/wrapped.ts";
+import type { WrappedFailedList, WrappedResendResult, WrappedRunStatus } from "../../../../plugins/activity/types/wrapped.ts";
 
 /** The most items `GET /api/activity/wrapped/failed` returns. */
 export const FAILED_LIST_CAP = 200;
@@ -63,17 +63,18 @@ export function failedListKey(s: WrappedRunStatus | null): string {
 }
 
 /**
- * What `POST /api/activity/wrapped/resend/:userId` answers: `sent`, `failed` and `no-link` with a 200,
- * and with a 409 `not-opted-in` (the member is not opted in to the DM), `already-sent` (their link went
- * out already) or `sending` (a send is running).
+ * What `POST /api/activity/wrapped/resend/:userId` answers (`WrappedResendResult`): `sent` and `failed`
+ * with a 200, `no-link` with a 404, and with a 409 `left` (the member left the server), `not-opted-in`,
+ * `already-sent` (their link went out already) or `sending` (a send is running).
  */
-export type ResendResult = "sent" | "failed" | "no-link" | "not-opted-in" | "already-sent" | "sending";
+export type ResendResult = WrappedResendResult;
 
 /** The narrator words for a resend's answer. */
 export const RESEND_WORDS: Record<ResendResult, string> = {
   sent: "Sent.",
   failed: "Failed again. Their DMs are probably closed.",
   "no-link": "They have no link that year.",
+  left: "They left the server, so no DM goes out.",
   "not-opted-in": "They have not opted in, so no DM goes out. They can use /wrapped me.",
   "already-sent": "Their link went out already. A member who lost it can use /wrapped me.",
   sending: "A send is running. Try again when it finishes.",

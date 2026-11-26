@@ -7,6 +7,7 @@
  * @module
  */
 import { useRef, useState } from "react";
+import type { WrappedResendResponse } from "../../../../plugins/activity/types/wrapped.ts";
 import { resendOutcome, type ResendResult } from "./failed.ts";
 import { call } from "./http.ts";
 
@@ -52,7 +53,7 @@ export function useMemberDm(year: number | null, onResent?: (result: ResendResul
     setResult(null);
     setError(null);
     try {
-      const res = await call<{ result: ResendResult }>("POST", `/api/activity/wrapped/resend/${userId}${query}`);
+      const res = await call<WrappedResendResponse>("POST", `/api/activity/wrapped/resend/${userId}${query}`);
       const out = resendOutcome(res.status, res.body, res.error);
       if (out.result) {
         setResult(out.result);

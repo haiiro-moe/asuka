@@ -57,6 +57,8 @@ test("resendOutcome reads every known result, also from a 409", () => {
   expect(resendOutcome(409, { result: "not-opted-in" }, "conflict")).toEqual({ result: "not-opted-in", error: null });
   expect(resendOutcome(409, { result: "already-sent" }, "conflict")).toEqual({ result: "already-sent", error: null });
   expect(resendOutcome(409, { result: "sending" }, "conflict")).toEqual({ result: "sending", error: null });
+  expect(resendOutcome(409, { result: "left" }, "conflict")).toEqual({ result: "left", error: null });
+  expect(resendOutcome(404, { result: "no-link" }, "not found")).toEqual({ result: "no-link", error: null });
 });
 
 test("resendOutcome gives plain words for a failure", () => {
