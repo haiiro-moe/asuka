@@ -186,7 +186,7 @@ export type ServerSlide = "intro" | "totals" | "emoji" | "channels" | "rhythm" |
 
 /**
  * The server story's slides: the fixed nine, with `pair`, `club` and `president` left out when that part
- * of the snapshot is null (the best pair is null unless both members opted in).
+ * of the snapshot is null (the best pair is null when the server has none).
  *
  * @param data - The server snapshot.
  */

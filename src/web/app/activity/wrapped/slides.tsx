@@ -837,7 +837,7 @@ export interface ServerSlideViewProps {
 }
 
 /**
- * One slide of the server story. Only the best pair (both opted in), the best club's founder and the
+ * One slide of the server story. Only the best pair, the best club's founder and the
  * president are named; voice figures are left out while they are null. A preview's intro carries the
  * preview line.
  */
