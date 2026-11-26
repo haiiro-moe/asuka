@@ -62,7 +62,7 @@ when those can be shown.
 Not hidden, because they do not count members: `connection.groups` (a count of groups that each
 have 3 or more members), `engagement.messages`, `engagement.voiceHours`, `weekly.replies`,
 `weekly.voiceHours` and `clubs.eventsHeld`. A privacy sweep that looks for "a 1 or a 2 anywhere"
-has to skip these.
+has to skip these. (The two voice figures can be `null` for another reason: rule 7.)
 
 ### 3. A hidden count cannot be recovered by subtraction
 
@@ -125,6 +125,8 @@ What makes the past hold still:
 - A voice segment that is still open counts as running to the end of the period, not to its last
   heartbeat, so the heartbeat does not move the voice hours.
 - Membership changes, events and sign-ups stamped after the period's end are ignored.
+- Whether voice may be used (rule 7) is judged at the period's end and switches at the start of a
+  UTC month, so it changes at a midnight, when the periods move anyway.
 
 What can still change a past period: the history backfill adding old messages, an admin changing
 the excluded channels, a new term start, and the three tables that keep no history (see
@@ -194,6 +196,29 @@ parent column, so a thread under an excluded channel is hidden too, and `activit
 channel column only. A channel excluded today drops out of the next request, for past periods as
 well.
 
+### 7. No voice until the voice log is old enough
+
+Everything derived from voice needs at least two whole UTC months of voice data
+(`voiceReadiness` in `voice-ready.ts`, see [foundation.md](foundation.md)). `presidentScope` asks
+once per request and carries the answer as `scope.voiceReady`. While it is false, **no president
+query reads `activity_voice`**:
+
+| Output | While the voice log is too young |
+|---|---|
+| `weekly.voiceHours` | `null`. Not a list of zeros. |
+| `engagement.voiceHours` | `null`. Not 0. |
+| active members (`total`, `activeMembers`, `other`) | only who wrote a message is active |
+| groups, `connected`, `bridges` | ties come from replies only, no shared-voice ties |
+| `quiet` | only messages count, before and since: a member who has only been in voice lately counts as gone quiet |
+| `clubsActive`, `clubsQuiet` | only a message makes a club active, not time in its voice channel |
+
+For the two voice figures `null` means "not yet", not "hidden for being small". The page shows
+when voice stats unlock (`readyAt` from `GET /api/activity/user/voice-status`) instead of a 0. Once
+the log is old enough everything is as described in the rest of this page.
+
+The privacy rules do not depend on this: with or without voice, the numbers are built the same way
+and go through the same hiding. The tests run the no-id and small-count checks in both states.
+
 ## Routes
 
 All are `GET`, `access: "president"` (admins pass too), and take `?period=week|term`.
@@ -207,7 +232,8 @@ All are `GET`, `access: "president"` (admins pass too), and take `?period=week|t
 | `/api/activity/president/clubs` | `clubEventHealth(scope)` | `PresidentClubEventHealth` |
 
 Every query takes the `PresidentScope` of the request, from `presidentScope(value, now?)`: the
-period, and the shorter period when the request is for the longer one. A handler builds it once.
+period, the shorter period when the request is for the longer one, and whether voice may be used.
+A handler builds it once.
 
 ```jsonc
 // GET /api/activity/president/connection?period=week
@@ -230,6 +256,12 @@ period, and the shorter period when the request is for the longer one. A handler
 
 // GET /api/activity/president/groups?period=term, the same day
 { "sizes": [12, 4], "other": null }
+
+// GET /api/activity/president/weekly?period=week, while the voice log is too young (rule 7)
+{ "replies": [39, 29], "voiceHours": null }
+
+// GET /api/activity/president/engagement?period=week, the same day
+{ "messages": 443, "activeMembers": 13, "voiceHours": null }
 ```
 
 `presidentRoutes` is what `api.ts` collects. `createPresidentRoutes(now)` builds the same routes
@@ -241,7 +273,7 @@ around a clock, which is how the tests pin the day.
 
 A member is **active** in a period when they wrote at least one message or spent time in a voice
 channel in it, outside the excluded channels. Being mentioned or answered does not make a member
-active.
+active. While the voice log is too young (rule 7), only writing a message does.
 
 ### Ties
 
@@ -249,7 +281,8 @@ Two active members are **tied** when, in the period, they answered each other or
 voice channel:
 
 - one reply, in either direction, weighs 1;
-- shared voice time weighs 1 per 10 minutes (`VOICE_TIE_SECONDS`), measured inside the period;
+- shared voice time weighs 1 per 10 minutes (`VOICE_TIE_SECONDS`), measured inside the period, and
+  only once the voice log is old enough (rule 7): until then ties come from replies alone;
 - the two are added, and a tie needs a weight of at least 1 (`MIN_TIE_WEIGHT`), so one reply is
   a tie and five minutes in the same channel are not.
 
@@ -320,20 +353,21 @@ one. The `week` period touches two calendar weeks unless today is a Monday.
 
 - `replies`: messages that answer another member (not a bot, not oneself).
 - `voiceHours`: hours connected to voice, added up over members, one decimal. A session that runs
-  across a Monday is split between the two weeks.
+  across a Monday is split between the two weeks. `null` while the voice log is too young (rule 7).
 
 ### `engagement`
 
 - `messages`: messages written in the period.
 - `activeMembers`: the active members. Always the same value as `connection.total`.
-- `voiceHours`: hours connected to voice, added up over members, one decimal.
+- `voiceHours`: hours connected to voice, added up over members, one decimal. `null` while the
+  voice log is too young (rule 7).
 
 ### `clubs`
 
 - `clubsActive` / `clubsQuiet`: approved clubs, created before the period's end, with and without
   activity in the period. A club is active when a message was written in its thread or its channel,
-  or in a thread under its channel, or when someone was in its voice channel. Spaces archived by a
-  downgrade still count as the club's. A club whose spaces are all excluded from analytics is left
+  or in a thread under its channel, or when someone was in its voice channel (voice only once the
+  voice log is old enough, rule 7). Spaces archived by a downgrade still count as the club's. A club whose spaces are all excluded from analytics is left
   out of both numbers: nothing about it is measured.
 - `eventsHeld`: event occurrences that started in the period, recurring events included.
 - `avgAttendance`: members signed up per held occurrence, one decimal. Sign-ups are kept per event,
@@ -364,8 +398,11 @@ one. The `week` period touches two calendar weeks unless today is a Monday.
   The president causes most of these themselves, and the club list and the sign-ups are visible to
   every member anyway.
 - **Voice is read with a scan.** `activity_voice` has no index on `started_at` alone, so each query
-  reads the whole table. It is small next to the messages (which are read through the `ts` index,
-  period by period). An index would be the first thing to add if voice history grows large.
+  reads the whole table, and so does the readiness check (`min(started_at)`, once per request). It
+  is small next to the messages (which are read through the `ts` index, period by period). An index
+  would be the first thing to add if voice history grows large.
+- **The longer period costs twice.** To decide what may be shown, a request for the longer period
+  works out the shorter period's numbers as well.
 - **Nothing is cached.** The five routes each read the period again. A cache keyed by the period
   would be safe, since the period is fixed for the day, but it would have to be dropped when the
   backfill runs or the excluded channels change.
@@ -392,6 +429,9 @@ All in `queries/president.ts`, except the first two, which the whole plugin shar
   be left out of the list for the longer period. Say so ("3 groups, 2 shown"), do not draw an empty
   bar, and do not put the two periods' bars side by side as if they were the same circles.
 - The tile for `connected` is "in groups": members in a group of 3 or more.
+- `weekly.voiceHours` and `engagement.voiceHours` are `null` while the voice log is too young.
+  That is "not yet", not "hidden": say when voice stats unlock (`readyAt` from
+  `GET /api/activity/user/voice-status`), and do not draw the voice columns as zeros.
 - The page offers `week` and `term` and nothing else.
 - All buckets are UTC, and the page says so.
 
@@ -410,6 +450,7 @@ The tests that pin the rules above:
 | No recovery by subtraction | "a hidden remainder cannot be recovered by subtraction" tries `total - shown groups`, `total - connected` and `activeMembers - connected` next to a hidden pair and next to hidden lone members; "the published member counts always add up, whatever is hidden". |
 | Fixed periods | "two requests minutes apart return identical numbers" (injected clock, live activity recorded in between), "the numbers move once the UTC day has ended". |
 | The two periods cannot be subtracted | "a member active earlier in the term but not this week hides the term's total" (15 against 16 in the raw data), "a difference of three or more between the periods is shown", "no difference between the periods is shown", one test each for a group that grew, the sum of the groups, bridges, clubs, attendance and quiet, "when the term is younger than a week, the week is the longer period", "forty scrambled terms: no count is one or two away from the week's", and the two "every pair of small periods" tests on `showBeside` itself. |
+| No voice until the log is old enough | "while the voice log is too young, no number is taken from voice" against "with a voice log that is old enough, voice counts everywhere" (the same data, both ways), "without any voice rows the routes give null voice figures", "a first voice segment less than two whole months old: null voice figures, groups from replies only", "a first voice segment three months old: the voice figures and voice ties are there", "presidentScope says whether the voice log is old enough, and switches at a UTC midnight". The no-id test, the small-count test and the sixty scrambled servers run in both states. |
 | Only `week` and `term` | "routes reject ?period=30d with 400", "routes reject every period but week and term, and never echo it". |
 | Route file imports | "the route file imports only the president queries and the group detection". |
 | Errors say nothing | "a failure inside a handler is a plain 500 that says nothing about its cause". |

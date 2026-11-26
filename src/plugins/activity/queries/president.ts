@@ -1,7 +1,7 @@
 /**
  * President-tier activity queries: numbers only.
  *
- * A president sees how the server is doing, never who is doing what. Four
+ * A president sees how the server is doing, never who is doing what. Five
  * rules hold for everything exported here (docs/activity/queries-president.md
  * has the reasoning):
  *
@@ -18,6 +18,10 @@
  *    lies inside the other. The shorter is shown as it is; a number of the
  *    longer one that is 1 or 2 away from the shorter one's is hidden
  *    ({@link presidentScope}, {@link showBeside}).
+ * 5. **No voice until the voice log is old enough.** While `voiceReadiness`
+ *    says the log does not hold two whole months yet, nothing here reads
+ *    `activity_voice`: the voice figures are `null`, and active members, ties,
+ *    "gone quiet" and club activity come from messages alone.
  *
  * Excluded channels are filtered out of every query with `notExcluded`.
  */
@@ -31,6 +35,7 @@ import type { Edge } from "../groups.ts";
 import { MIN_GROUP, hideSmall, mergeSmallGroups } from "../privacy.ts";
 import { QUIET_DAYS, lastDays, termPeriod } from "../time.ts";
 import type { Period } from "../time.ts";
+import { voiceReadiness } from "../voice-ready.ts";
 import type {
   PresidentClubEventHealth,
   PresidentConnection,
@@ -127,6 +132,12 @@ export interface PresidentScope {
    * shorter one, or when the two are the same.
    */
   shorter: Period | null;
+  /**
+   * Whether the voice log is old enough to be used (`voiceReadiness`). While
+   * it is false no query reads `activity_voice`: the voice figures are null,
+   * and everything else is worked out from messages alone.
+   */
+  voiceReady: boolean;
 }
 
 /**
@@ -138,6 +149,10 @@ export interface PresidentScope {
  * number of the shorter period is hidden (see {@link showBeside}). Usually the
  * week is the shorter one; in the first days of a term, the term is.
  *
+ * Voice readiness is read here, once per request, and judged at the end of the
+ * period (today 00:00 UTC). The log becomes ready at the start of a UTC month,
+ * so this switches at a midnight, when the periods move anyway.
+ *
  * @param value - The query value. Null means the parameter is absent (`week`).
  * @param now - The current time in unix seconds. Defaults to the clock.
  * @returns The scope. It is the same for every `now` within one UTC day.
@@ -146,7 +161,11 @@ export interface PresidentScope {
 export function presidentScope(value: string | null, now: number = nowSec()): PresidentScope {
   const period = presidentPeriod(value, now);
   const other = presidentPeriod(value === "term" ? "week" : "term", now);
-  return { period, shorter: other.from > period.from ? other : null };
+  return {
+    period,
+    shorter: other.from > period.from ? other : null,
+    voiceReady: voiceReadiness(period.to).ready,
+  };
 }
 
 /** Seconds as hours with one decimal. */
@@ -207,10 +226,13 @@ interface VoiceSpan {
  * keeps `lastSeenAt` fresh.
  *
  * @param p - The period.
+ * @param voice - Whether the voice log may be used. When it may not, the table
+ *   is not read and there are no spans.
  * @returns The spans, each at least a second long. A segment with no time
  *   inside the period, or with an end before its start, is left out.
  */
-function voiceSpans(p: Period): VoiceSpan[] {
+function voiceSpans(p: Period, voice: boolean): VoiceSpan[] {
+  if (!voice) return [];
   const v = schema.activityVoice;
   const rows = db
     .select({ userId: v.userId, channelId: v.channelId, startedAt: v.startedAt, endedAt: v.endedAt })
@@ -234,9 +256,11 @@ function voiceSpans(p: Period): VoiceSpan[] {
  * The ids are for counting and comparing inside this module only.
  *
  * @param p - The period.
+ * @param voice - Whether the voice log may be used. When it may not, only
+ *   writing a message makes a member active.
  * @returns The member ids; empty for an empty period.
  */
-function activeMemberIds(p: Period): Set<string> {
+function activeMemberIds(p: Period, voice: boolean): Set<string> {
   const ids = new Set<string>();
   if (p.to <= p.from) return ids;
 
@@ -247,6 +271,7 @@ function activeMemberIds(p: Period): Set<string> {
     .where(and(gte(m.ts, p.from), lt(m.ts, p.to), notExcluded(m.channelId, m.parentChannelId)))
     .all();
   for (const row of authors) ids.add(row.userId);
+  if (!voice) return ids;
 
   const v = schema.activityVoice;
   const speakers = db
@@ -293,13 +318,15 @@ function leftMemberIds(before: number): Set<string> {
  * neither in those last `QUIET_DAYS` days, and have not left the guild.
  *
  * @param to - The time to judge at, in unix seconds: the end of the period.
+ * @param voice - Whether the voice log may be used. When it may not, only
+ *   messages count, before and since.
  * @returns The raw count. Pass it through `hideSmall` before returning it.
  */
-function quietCount(to: number): number {
+function quietCount(to: number, voice: boolean): number {
   const cutoff = to - QUIET_DAYS * DAY;
-  const before = activeMemberIds({ from: cutoff - QUIET_LOOKBACK_DAYS * DAY, to: cutoff });
+  const before = activeMemberIds({ from: cutoff - QUIET_LOOKBACK_DAYS * DAY, to: cutoff }, voice);
   if (before.size === 0) return 0;
-  const since = activeMemberIds({ from: cutoff, to });
+  const since = activeMemberIds({ from: cutoff, to }, voice);
   const left = leftMemberIds(to);
 
   let quiet = 0;
@@ -321,9 +348,9 @@ function quietCount(to: number): number {
  * @returns The count, or null when hidden.
  */
 function quietShown(scope: PresidentScope): number | null {
-  const quiet = hideSmall(quietCount(scope.period.to));
+  const quiet = hideSmall(quietCount(scope.period.to, scope.voiceReady));
   if (quiet === null || scope.shorter === null) return quiet;
-  const shorter = hideSmall(quietCount(scope.shorter.to));
+  const shorter = hideSmall(quietCount(scope.shorter.to, scope.voiceReady));
   return shorter !== null && givesAway(quiet, shorter) ? null : quiet;
 }
 
@@ -583,10 +610,16 @@ export function showBeside(web: MemberWeb, shorter: MemberView): MemberView {
   return { sizes, groups: groups.length, connected, other, total, bridges };
 }
 
-/** The member web of a period, read from the database. */
-function memberWebOf(p: Period): MemberWeb {
+/**
+ * The member web of a period, read from the database.
+ *
+ * @param p - The period.
+ * @param voice - Whether the voice log may be used. When it may not, members
+ *   are active and tied through messages alone.
+ */
+function memberWebOf(p: Period, voice: boolean): MemberWeb {
   if (p.to <= p.from) return { sizes: [], bridges: 0 };
-  return memberWeb(messageCounts(p), voiceSpans(p));
+  return memberWeb(messageCounts(p), voiceSpans(p, voice));
 }
 
 /**
@@ -595,9 +628,12 @@ function memberWebOf(p: Period): MemberWeb {
  * @param scope - The scope of the request.
  * @param web - The member web of `scope.period`, when the caller already has it.
  */
-function memberView(scope: PresidentScope, web: MemberWeb = memberWebOf(scope.period)): MemberView {
+function memberView(
+  scope: PresidentScope,
+  web: MemberWeb = memberWebOf(scope.period, scope.voiceReady),
+): MemberView {
   if (scope.shorter === null) return showAlone(web);
-  return showBeside(web, showAlone(memberWebOf(scope.shorter)));
+  return showBeside(web, showAlone(memberWebOf(scope.shorter, scope.voiceReady)));
 }
 
 /**
@@ -641,11 +677,12 @@ export function connection(scope: PresidentScope): PresidentConnection {
  *
  * @param scope - The scope of the request, from {@link presidentScope}.
  * @returns Two lists of the same length, oldest week first; both empty for an
- *   empty period.
+ *   empty period. `voiceHours` is `null`, not a list of zeros, while the voice
+ *   log is too young to be used.
  */
 export function weeklySeries(scope: PresidentScope): PresidentWeeklySeries {
   const p = scope.period;
-  if (p.to <= p.from) return { replies: [], voiceHours: [] };
+  if (p.to <= p.from) return { replies: [], voiceHours: scope.voiceReady ? [] : null };
   const first = weekStart(p.from);
   const weeks = (weekStart(p.to - 1) - first) / WEEK + 1;
 
@@ -668,8 +705,9 @@ export function weeklySeries(scope: PresidentScope): PresidentWeeklySeries {
   const replies = new Array<number>(weeks).fill(0);
   for (const row of rows) replies[row.week] = row.n;
 
+  if (!scope.voiceReady) return { replies, voiceHours: null };
   const seconds = new Array<number>(weeks).fill(0);
-  for (const span of voiceSpans(p)) {
+  for (const span of voiceSpans(p, true)) {
     const last = Math.floor((span.end - 1 - first) / WEEK);
     for (let w = Math.floor((span.start - first) / WEEK); w <= last; w++) {
       const from = first + w * WEEK;
@@ -710,17 +748,20 @@ export function groupSizes(scope: PresidentScope): PresidentGroupSizes {
  * other.
  *
  * @param scope - The scope of the request, from {@link presidentScope}.
- * @returns The three numbers; zeros for an empty period.
+ * @returns The three numbers; zeros for an empty period. `voiceHours` is
+ *   `null`, not 0, while the voice log is too young to be used, and
+ *   `activeMembers` then counts only who wrote.
  */
 export function engagement(scope: PresidentScope): PresidentEngagement {
   const p = scope.period;
-  if (p.to <= p.from) return { messages: 0, activeMembers: 0, voiceHours: 0 };
+  const voice = scope.voiceReady;
+  if (p.to <= p.from) return { messages: 0, activeMembers: 0, voiceHours: voice ? 0 : null };
   const messages = messageCounts(p);
-  const spans = voiceSpans(p);
+  const spans = voiceSpans(p, voice);
   return {
     messages: messages.reduce((sum, row) => sum + row.n, 0),
     activeMembers: memberView(scope, memberWeb(messages, spans)).total,
-    voiceHours: toHours(spans.reduce((sum, span) => sum + span.end - span.start, 0)),
+    voiceHours: voice ? toHours(spans.reduce((sum, span) => sum + span.end - span.start, 0)) : null,
   };
 }
 
@@ -734,9 +775,11 @@ export function engagement(scope: PresidentScope): PresidentEngagement {
  * neither active nor quiet.
  *
  * @param p - The period.
+ * @param voice - Whether the voice log may be used. When it may not, only a
+ *   message makes a club active.
  * @returns The raw counts, not yet through `hideSmall`.
  */
-function clubCounts(p: Period): { active: number; quiet: number } {
+function clubCounts(p: Period, voice: boolean): { active: number; quiet: number } {
   if (p.to <= p.from) return { active: 0, quiet: 0 };
   const c = schema.clubs;
   const clubs = db
@@ -765,7 +808,7 @@ function clubCounts(p: Period): { active: number; quiet: number } {
     channels.add(row.channelId);
     if (row.parentChannelId !== null) parents.add(row.parentChannelId);
   }
-  const voiced = new Set(voiceSpans(p).map((span) => span.channelId));
+  const voiced = new Set(voiceSpans(p, voice).map((span) => span.channelId));
   const excluded = excludedChannelIds();
 
   const known = (ids: (string | null)[]) => ids.filter((id): id is string => id !== null);
@@ -882,12 +925,12 @@ function attendanceShown(held: number, signUps: number): number | null {
  *   gives zeros.
  */
 export function clubEventHealth(scope: PresidentScope): PresidentClubEventHealth {
-  const clubs = clubsShown(clubCounts(scope.period));
+  const clubs = clubsShown(clubCounts(scope.period, scope.voiceReady));
   const events = eventCounts(scope.period);
   let avgAttendance = attendanceShown(events.held, events.signUps);
 
   if (scope.shorter !== null) {
-    const shorterClubs = clubsShown(clubCounts(scope.shorter));
+    const shorterClubs = clubsShown(clubCounts(scope.shorter, scope.voiceReady));
     if (
       clubs.active !== null &&
       clubs.quiet !== null &&

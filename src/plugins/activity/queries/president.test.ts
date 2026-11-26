@@ -84,9 +84,21 @@ function reset() {
   setTermStart(null);
 }
 
-/** The scope of a period looked at on its own, as the shorter of the two fixed periods is. */
-function alone(period: Period): PresidentScope {
-  return { period, shorter: null };
+/**
+ * The scope of a period looked at on its own, as the shorter of the two fixed
+ * periods is. Voice counts as old enough unless `voiceReady` says otherwise.
+ */
+function alone(period: Period, voiceReady = true): PresidentScope {
+  return { period, shorter: null, voiceReady };
+}
+
+/**
+ * Make the voice log old enough to be used: one short segment 150 days ago,
+ * by a member and in a channel no test looks at. That is before every term
+ * and before the lookback of "gone quiet", so it changes no other number.
+ */
+function makeVoiceReady() {
+  voice(user(99), TODAY - 150 * DAY, TODAY - 150 * DAY + MINUTE, channel(98));
 }
 
 let nextId = 0;
@@ -255,22 +267,41 @@ test("any other period is a RangeError", () => {
 test("presidentScope names the week as the shorter period of a longer term", () => {
   setTermStart(TODAY - 40 * DAY);
   const term: Period = { from: TODAY - 40 * DAY, to: TODAY };
-  expect(presidentScope("term", NOW)).toEqual({ period: term, shorter: WEEK });
-  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: null });
-  expect(presidentScope(null, NOW)).toEqual({ period: WEEK, shorter: null });
+  expect(presidentScope("term", NOW)).toEqual({ period: term, shorter: WEEK, voiceReady: false });
+  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: null, voiceReady: false });
+  expect(presidentScope(null, NOW)).toEqual({ period: WEEK, shorter: null, voiceReady: false });
 });
 
 test("presidentScope names a term younger than a week as the shorter period", () => {
   setTermStart(TODAY - 3 * DAY);
   const term: Period = { from: TODAY - 3 * DAY, to: TODAY };
-  expect(presidentScope("term", NOW)).toEqual({ period: term, shorter: null });
-  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: term });
+  expect(presidentScope("term", NOW)).toEqual({ period: term, shorter: null, voiceReady: false });
+  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: term, voiceReady: false });
 });
 
 test("presidentScope has no shorter period when the two are the same", () => {
   setTermStart(TODAY - 7 * DAY);
-  expect(presidentScope("term", NOW)).toEqual({ period: WEEK, shorter: null });
-  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: null });
+  expect(presidentScope("term", NOW)).toEqual({ period: WEEK, shorter: null, voiceReady: false });
+  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: null, voiceReady: false });
+});
+
+test("presidentScope says whether the voice log is old enough, and switches at a UTC midnight", () => {
+  // No voice recorded at all.
+  expect(presidentScope("week", NOW).voiceReady).toBe(false);
+  // First voice on 10 Sep 2026: October and November are the two whole months.
+  const first = Date.UTC(2026, 8, 10, 12) / 1000;
+  voice(user(90), first, first + HOUR);
+  expect(presidentScope("week", NOW).voiceReady).toBe(false);
+  expect(presidentScope("term", NOW).voiceReady).toBe(false);
+  const ready = Date.UTC(2026, 11, 1) / 1000;
+  expect(presidentScope("week", ready - 1).voiceReady).toBe(false);
+  expect(presidentScope("week", ready).voiceReady).toBe(true);
+  expect(presidentScope("term", ready + 9 * HOUR).voiceReady).toBe(true);
+});
+
+test("makeVoiceReady makes the voice log old enough", () => {
+  makeVoiceReady();
+  expect(presidentScope("week", NOW).voiceReady).toBe(true);
 });
 
 test("presidentScope rejects what presidentPeriod rejects", () => {
@@ -764,6 +795,7 @@ test("routes answer with what the queries return for the scope of the day", asyn
   chat(users(1, 4), IN_WEEK);
   chat(users(5, 11), TODAY - 15 * DAY);
   voice(user(1), IN_WEEK, IN_WEEK + HOUR);
+  makeVoiceReady();
   for (const name of ["week", "term"] as const) {
     const scope = presidentScope(name, NOW);
     const bodies = await callAll(() => NOW, name);
@@ -804,6 +836,7 @@ test("the default routes work without an injected clock", async () => {
 });
 
 test("two requests minutes apart return identical numbers", async () => {
+  makeVoiceReady();
   setTermStart(TODAY - 40 * DAY);
   chat(users(1, 5), IN_WEEK);
   chat(users(6, 13), TODAY - 20 * DAY);
@@ -857,8 +890,14 @@ async function everyResponse() {
   return { week: await callAll(() => NOW, "week"), term: await callAll(() => NOW, "term") };
 }
 
-/** Seed a server with groups, a pair, loners, quiet members, clubs and events. */
-function seedBusyServer() {
+/**
+ * Seed a server with groups, a pair, loners, quiet members, clubs and events.
+ *
+ * @param voiceLog - `ready`: the voice log is old enough to be used. `young`:
+ *   the first voice segment is 12 days old.
+ */
+function seedBusyServer(voiceLog: "ready" | "young") {
+  if (voiceLog === "ready") makeVoiceReady();
   setTermStart(TODAY - 50 * DAY);
   chat(users(1, 6), IN_WEEK);
   chat(users(7, 10), IN_WEEK + HOUR);
@@ -898,43 +937,63 @@ function walk(value: unknown, keys: string[], leaves: unknown[]) {
 }
 
 test("no president response holds an id, a name or anything but numbers", async () => {
-  seedBusyServer();
-  const routes = createPresidentRoutes(() => NOW);
-  let checked = 0;
-  for (const name of ROUTE_NAMES) {
-    for (const query of ["", "?period=week", "?period=term"]) {
-      const res = await call(routes, name, query);
-      expect(res.status).toBe(200);
-      const text = await res.text();
-      // No snowflake-like run of digits, in a key or in a value.
-      expect(text).not.toMatch(/\d{15,}/);
+  // Once with a voice log that is old enough to be used, once with a young one.
+  for (const voiceLog of ["ready", "young"] as const) {
+    reset();
+    seedBusyServer(voiceLog);
+    const routes = createPresidentRoutes(() => NOW);
+    let checked = 0;
+    for (const name of ROUTE_NAMES) {
+      for (const query of ["", "?period=week", "?period=term"]) {
+        const res = await call(routes, name, query);
+        expect(res.status).toBe(200);
+        const text = await res.text();
+        // No snowflake-like run of digits, in a key or in a value.
+        expect(text).not.toMatch(/\d{15,}/);
 
-      const keys: string[] = [];
-      const leaves: unknown[] = [];
-      walk(JSON.parse(text), keys, leaves);
-      for (const key of keys) {
-        expect(key).not.toMatch(/userId|channelId|name|id$/i);
+        const keys: string[] = [];
+        const leaves: unknown[] = [];
+        walk(JSON.parse(text), keys, leaves);
+        for (const key of keys) {
+          expect(key).not.toMatch(/userId|channelId|name|id$/i);
+        }
+        // Numbers and hidden numbers only: no string could carry a name.
+        for (const leaf of leaves) {
+          expect(leaf === null || (typeof leaf === "number" && Number.isFinite(leaf))).toBe(true);
+        }
+        expect(leaves.length).toBeGreaterThan(0);
+        checked += 1;
       }
-      // Numbers and hidden numbers only: no string could carry a name.
-      for (const leaf of leaves) {
-        expect(leaf === null || (typeof leaf === "number" && Number.isFinite(leaf))).toBe(true);
-      }
-      expect(leaves.length).toBeGreaterThan(0);
-      checked += 1;
+    }
+    expect(checked).toBe(15);
+
+    // The seed was worth checking: every route had real numbers to show.
+    const { week, term } = await everyResponse();
+    expect(week.engagement.messages).toBeGreaterThan(20);
+    expect(week.clubs).toEqual({ clubsActive: null, clubsQuiet: null, eventsHeld: 2, avgAttendance: 4 });
+    expect(term.clubs).toMatchObject({ clubsActive: 4, clubsQuiet: 0 });
+    if (voiceLog === "ready") {
+      // user(14) sat in voice with three of the group of six: a group of seven.
+      expect(week.groups).toEqual({ sizes: [7, 4], other: 3 });
+      expect(week.connection).toEqual({ connected: 11, total: 14, groups: 2, bridges: 4, quiet: 3 });
+      expect(term.groups).toEqual({ sizes: [7, 4, 4], other: 3 });
+      expect(term.connection).toEqual({ connected: 15, total: 18, groups: 3, bridges: 8, quiet: 3 });
+      expect(week.engagement.voiceHours).toBe(6.3);
+      expect(week.weekly.voiceHours).toEqual([0, 6.3]);
+    } else {
+      // Without voice user(14) was not active in the week at all.
+      expect(week.groups).toEqual({ sizes: [6, 4], other: 3 });
+      expect(week.connection).toEqual({ connected: 10, total: 13, groups: 2, bridges: 4, quiet: 3 });
+      // In the term the five of user(14) are a group of their own, one away from
+      // the week's groups of 6 and 4: it is left out, and the totals with it.
+      expect(term.groups).toEqual({ sizes: [6, 4], other: null });
+      expect(term.connection).toEqual({ connected: null, total: null, groups: 3, bridges: 4, quiet: 3 });
+      expect(week.engagement.voiceHours).toBeNull();
+      expect(week.weekly.voiceHours).toBeNull();
+      expect(term.engagement.voiceHours).toBeNull();
+      expect(term.weekly.voiceHours).toBeNull();
     }
   }
-  expect(checked).toBe(15);
-
-  // The seed was worth checking: every route had real numbers to show.
-  const { week, term } = await everyResponse();
-  expect(week.groups).toEqual({ sizes: [7, 4], other: 3 });
-  expect(week.connection).toEqual({ connected: 11, total: 14, groups: 2, bridges: 4, quiet: 3 });
-  expect(term.groups).toEqual({ sizes: [7, 4, 4], other: 3 });
-  expect(term.connection).toEqual({ connected: 15, total: 18, groups: 3, bridges: 8, quiet: 3 });
-  expect(week.engagement.messages).toBeGreaterThan(20);
-  expect(week.engagement.voiceHours).toBeGreaterThan(0);
-  expect(week.clubs).toEqual({ clubsActive: null, clubsQuiet: null, eventsHeld: 2, avgAttendance: 4 });
-  expect(term.clubs).toMatchObject({ clubsActive: 4, clubsQuiet: 0 });
 });
 
 test("no count of one or two members is ever shown", async () => {
@@ -947,11 +1006,16 @@ test("no count of one or two members is ever shown", async () => {
   club({ channelId: channel(31) });
   attend(event(IN_WEEK).id, 2);
 
-  const { week } = await everyResponse();
-  expect(week.connection).toEqual({ connected: 7, total: null, groups: 2, bridges: null, quiet: null });
-  expect(week.groups).toEqual({ sizes: [4, 3], other: null });
-  expect(week.engagement.activeMembers).toBeNull();
-  expect(week.clubs).toEqual({ clubsActive: null, clubsQuiet: null, eventsHeld: 1, avgAttendance: null });
+  // The same whether the voice log is young (nothing is recorded yet) or old enough.
+  for (const voiceLog of ["young", "ready"] as const) {
+    if (voiceLog === "ready") makeVoiceReady();
+    const { week } = await everyResponse();
+    expect(week.connection).toEqual({ connected: 7, total: null, groups: 2, bridges: null, quiet: null });
+    expect(week.groups).toEqual({ sizes: [4, 3], other: null });
+    expect(week.engagement.activeMembers).toBeNull();
+    expect(week.engagement.voiceHours).toBe(voiceLog === "ready" ? 0 : null);
+    expect(week.clubs).toEqual({ clubsActive: null, clubsQuiet: null, eventsHeld: 1, avgAttendance: null });
+  }
 });
 
 /**
@@ -990,7 +1054,14 @@ test("a hidden remainder cannot be recovered by subtraction", async () => {
         post(user(12), IN_WEEK + HOUR);
       },
     },
-    { name: "one member only in voice", hidden: 1, seed: () => voice(user(11), IN_WEEK, IN_WEEK + HOUR) },
+    {
+      name: "one member only in voice",
+      hidden: 1,
+      seed: () => {
+        makeVoiceReady();
+        voice(user(11), IN_WEEK, IN_WEEK + HOUR);
+      },
+    },
   ];
 
   for (const scenario of scenarios) {
@@ -1069,7 +1140,11 @@ test("sixty scrambled servers: the counts are right, and never give a small one 
   let shownRounds = 0;
   for (let round = 0; round < 60; round++) {
     reset();
-    // Counted here, independently of the queries: who wrote or was in voice.
+    // Every other server has a voice log that is old enough to be used.
+    const voiceReady = round % 2 === 0;
+    if (voiceReady) makeVoiceReady();
+    // Counted here, independently of the queries: who wrote or, where voice
+    // may be used, was in voice.
     const active = new Set<string>();
     const members = 2 + next(14);
     const replies = next(40);
@@ -1088,7 +1163,7 @@ test("sixty scrambled servers: the counts are right, and never give a small one 
     for (let i = 0; i < inVoice; i++) {
       const start = IN_WEEK + next(HOUR);
       voice(user(21 + i), start, start + 5 * MINUTE + next(HOUR), next(2) === 0 ? VOICE : channel(22));
-      active.add(user(21 + i));
+      if (voiceReady) active.add(user(21 + i));
     }
 
     const { week } = await everyResponse();
@@ -1114,11 +1189,117 @@ test("sixty scrambled servers: the counts are right, and never give a small one 
     expect([1, 2]).not.toContain(week.connection.bridges);
     expect(week.connection.quiet).toBe(0);
     expect(week.engagement.messages).toBe(replies + posts);
+    expect(week.engagement.voiceHours === null).toBe(!voiceReady);
+    expect(week.weekly.voiceHours === null).toBe(!voiceReady);
     expectNoSmallRemainder(nestedCounts(week));
   }
   // Both cases came up often enough to mean something.
   expect(hiddenRounds).toBeGreaterThan(5);
   expect(shownRounds).toBeGreaterThan(5);
+});
+
+// --- voice readiness ----------------------------------------------------------
+
+/**
+ * A week with three members who answer each other, three who only sat in voice
+ * together, three who wrote 40 days ago and have only been in voice since, and
+ * six clubs: three with messages, three with voice only.
+ */
+function seedVoiceAndText() {
+  chat(users(1, 3), IN_WEEK);
+  for (const n of [4, 5, 6]) voice(user(n), IN_WEEK, IN_WEEK + 30 * MINUTE);
+  for (const n of [7, 8, 9]) {
+    lastSeen(user(n), 40);
+    voice(user(n), TODAY - 5 * DAY, TODAY - 5 * DAY + HOUR, channel(20 + n));
+  }
+  for (const n of [1, 2, 3]) {
+    club({ channelId: channel(30 + n) });
+    post(user(n), IN_WEEK, { channelId: channel(30 + n) });
+  }
+  for (const n of [4, 5, 6]) {
+    club({ voiceChannelId: channel(40 + n) });
+    voice(user(10 + n), IN_WEEK, IN_WEEK + HOUR, channel(40 + n));
+  }
+}
+
+test("with a voice log that is old enough, voice counts everywhere", () => {
+  seedVoiceAndText();
+  const scope = alone(WEEK, true);
+  // Twelve active: the three who write, the three in voice together, and six alone in voice.
+  expect(groupSizes(scope)).toEqual({ sizes: [3, 3], other: 6 });
+  expect(connection(scope)).toEqual({ connected: 6, total: 12, groups: 2, bridges: 0, quiet: 0 });
+  expect(engagement(scope)).toEqual({ messages: 9, activeMembers: 12, voiceHours: 7.5 });
+  // Saturday 21 Nov is in the first UTC week of the period, Tuesday 24 Nov in the second.
+  expect(weeklySeries(scope)).toEqual({ replies: [0, 6], voiceHours: [3, 4.5] });
+  expect(clubEventHealth(scope)).toMatchObject({ clubsActive: 6, clubsQuiet: 0 });
+});
+
+test("while the voice log is too young, no number is taken from voice", () => {
+  seedVoiceAndText();
+  const scope = alone(WEEK, false);
+  // The voice figures are hidden, not zero.
+  expect(weeklySeries(scope)).toEqual({ replies: [0, 6], voiceHours: null });
+  expect(engagement(scope)).toEqual({ messages: 9, activeMembers: 3, voiceHours: null });
+  // Groups come from replies only, and only who wrote is active.
+  expect(groupSizes(scope)).toEqual({ sizes: [3], other: 0 });
+  // Being in voice does not end a quiet either, and does not make a club active.
+  expect(connection(scope)).toEqual({ connected: 3, total: 3, groups: 1, bridges: 0, quiet: 3 });
+  expect(clubEventHealth(scope)).toMatchObject({ clubsActive: 3, clubsQuiet: 3 });
+});
+
+test("while the voice log is too young, an empty period has null voice figures too", () => {
+  const empty: Period = { from: TODAY, to: TODAY };
+  expect(weeklySeries(alone(empty, false))).toEqual({ replies: [], voiceHours: null });
+  expect(engagement(alone(empty, false))).toEqual({ messages: 0, activeMembers: 0, voiceHours: null });
+});
+
+test("without any voice rows the routes give null voice figures", async () => {
+  chat(users(1, 4), IN_WEEK);
+  const { week, term } = await everyResponse();
+  for (const bodies of [week, term]) {
+    expect(bodies.weekly.voiceHours).toBeNull();
+    expect(bodies.engagement.voiceHours).toBeNull();
+    expect(bodies.weekly.replies.length).toBeGreaterThan(0);
+    expect(bodies.groups).toEqual({ sizes: [4], other: 0 });
+  }
+  expect(week.engagement).toEqual({ messages: 12, activeMembers: 4, voiceHours: null });
+});
+
+/** Three members who answer each other; one of them and three others sat in voice together. */
+function seedVoiceTies() {
+  chat(users(1, 3), IN_WEEK);
+  for (const n of [1, 4, 5, 6]) voice(user(n), IN_WEEK, IN_WEEK + HOUR);
+}
+
+test("a first voice segment less than two whole months old: null voice figures, groups from replies only", async () => {
+  // The first voice segment ever is in this week.
+  seedVoiceTies();
+  const { week, term } = await everyResponse();
+  for (const bodies of [week, term]) {
+    expect(bodies.weekly.voiceHours).toBeNull();
+    expect(bodies.engagement.voiceHours).toBeNull();
+    expect(bodies.groups).toEqual({ sizes: [3], other: 0 });
+    expect(bodies.connection).toMatchObject({ connected: 3, total: 3, groups: 1 });
+    expect(bodies.engagement.activeMembers).toBe(3);
+  }
+  // With voice it would have been six members.
+  expect(connection(alone(WEEK, true)).total).toBe(6);
+});
+
+test("a first voice segment three months old: the voice figures and voice ties are there", async () => {
+  // 23 Aug 2026: September and October are whole, so voice is usable from 1 Nov.
+  voice(user(90), TODAY - 95 * DAY, TODAY - 95 * DAY + HOUR, channel(98));
+  expect(presidentScope("week", NOW).voiceReady).toBe(true);
+  seedVoiceTies();
+
+  const { week } = await everyResponse();
+  expect(week.weekly).toEqual({ replies: [0, 6], voiceHours: [0, 4] });
+  expect(week.engagement).toEqual({ messages: 6, activeMembers: 6, voiceHours: 4 });
+  expect(week.connection).toMatchObject({ total: 6 });
+  expect(sum(week.groups.sizes) + week.groups.other!).toBe(6);
+  // The same as the queries give when told that voice is usable.
+  expect(week.groups).toEqual(groupSizes(alone(WEEK, true)));
+  expect(week.groups).not.toEqual(groupSizes(alone(WEEK, false)));
 });
 
 // --- week next to term: the routes ------------------------------------------

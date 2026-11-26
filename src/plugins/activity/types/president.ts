@@ -10,6 +10,14 @@
  * it would point at one or two members, on its own or held against another
  * number the president can see (the same number of the other period, or the
  * parts it is the sum of). Draw it as "off", never as 0. A real 0 is sent as 0.
+ *
+ * The two voice figures are the exception: there `null` means that the voice
+ * log is not old enough to be used yet (two whole months, see
+ * `voice-ready.ts`). Say when voice stats unlock instead of showing a 0; the
+ * date is in `GET /api/activity/user/voice-status`. Until then no other number
+ * here uses voice either: active members, groups, "gone quiet" and club
+ * activity come from messages alone.
+ *
  * See docs/activity/queries-president.md.
  */
 
@@ -75,8 +83,12 @@ export interface PresidentConnection {
 export interface PresidentWeeklySeries {
   /** Replies from one member to another, per week. */
   replies: number[];
-  /** Hours members spent connected to voice, added up over members, per week. One decimal. */
-  voiceHours: number[];
+  /**
+   * Hours members spent connected to voice, added up over members, per week.
+   * One decimal. `null`, not a list of zeros, while the voice log is too young
+   * to be used.
+   */
+  voiceHours: number[] | null;
 }
 
 /** `GET /api/activity/president/groups`: how large the groups are. */
@@ -105,12 +117,16 @@ export interface PresidentEngagement {
   /** Messages written in the period. */
   messages: number;
   /**
-   * Members who wrote a message or were in voice in the period. Always the
-   * same value as {@link PresidentConnection.total}, hidden when that is.
+   * Members who wrote a message or were in voice in the period (who wrote a
+   * message, while the voice log is too young to be used). Always the same
+   * value as {@link PresidentConnection.total}, hidden when that is.
    */
   activeMembers: number | null;
-  /** Hours members spent connected to voice, added up over members. One decimal. */
-  voiceHours: number;
+  /**
+   * Hours members spent connected to voice, added up over members. One
+   * decimal. `null`, not 0, while the voice log is too young to be used.
+   */
+  voiceHours: number | null;
 }
 
 /** `GET /api/activity/president/clubs`: club and event health. */
