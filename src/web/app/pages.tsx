@@ -34,6 +34,7 @@ import { StoreItemsPage } from "./StoreItemsPage.tsx";
 import { ProfilePage } from "./ProfilePage.tsx";
 import { BotMessagesTab } from "./BotMessagesTab.tsx";
 import { EventsPage, EventsEditorPage } from "./EventsPages.tsx";
+import { ACTIVITY_PAGES } from "./activity/index.tsx";
 
 /* ------------------------------------------------------------------------------------------------ */
 /* helpers                                                                                          */
@@ -295,7 +296,7 @@ interface ConfigField {
   label: string;
   hint?: string;
   type?: string;
-  group: "channels" | "roles" | "rules";
+  group: "channels" | "roles" | "rules" | "activity";
 }
 
 const CONFIG_FIELDS: ConfigField[] = [
@@ -316,12 +317,19 @@ const CONFIG_FIELDS: ConfigField[] = [
   { key: "starboardThreshold", label: "starboard threshold", type: "number", group: "rules" },
   { key: "serverNameTemplate", label: "server name template", hint: "%s is where the president's theme name goes.", group: "rules" },
   { key: "xpMessageCooldownSec", label: "xp message cooldown (s)", type: "number", group: "rules" },
+  {
+    key: "activityExcludedChannelIds",
+    label: "activity excluded channel ids",
+    hint: "A comma-separated list of channel ids the activity recorder skips.",
+    group: "activity",
+  },
 ];
 
 const CONFIG_GROUPS: { id: ConfigField["group"]; title: string }[] = [
   { id: "channels", title: "channels" },
   { id: "roles", title: "roles" },
   { id: "rules", title: "rules" },
+  { id: "activity", title: "activity" },
 ];
 
 /** The settings tab of the config page: guild config fields and the link fixer, both saved together. */
@@ -333,6 +341,7 @@ function ConfigSettingsTab() {
   const save = async () => {
     const patch: Record<string, any> = {};
     for (const f of CONFIG_FIELDS) patch[f.key] = data[f.key];
+    patch.activityEnabled = data.activityEnabled;
     patch.linkFixerEnabled = data.linkFixerEnabled;
     patch.linkFixerDisabledPlatforms = data.linkFixerDisabledPlatforms;
     const fresh = await api.updateConfig(patch);
@@ -381,6 +390,14 @@ function ConfigSettingsTab() {
                 }
               />
             ))}
+            {g.id === "activity" && (
+              <Toggle
+                label="activity recording"
+                description="Records who talks where, and when. Off records nothing; what is already stored stays."
+                checked={!!data.activityEnabled}
+                onChange={(on) => setData({ ...data, activityEnabled: on ? 1 : 0 })}
+              />
+            )}
           </div>
         ))}
         {saveRow}
@@ -1046,6 +1063,7 @@ export const PAGES: {
   { id: "moderation", label: "moderation", el: <ModerationPage />, minRole: "admin" },
   { id: "store-items", label: "store items", el: <StoreItemsPage />, minRole: "admin" },
   { id: "events-editor", label: "events editor", el: <EventsEditorPage />, minRole: "president" },
+  ...ACTIVITY_PAGES,
 ];
 
 export type { Me };
