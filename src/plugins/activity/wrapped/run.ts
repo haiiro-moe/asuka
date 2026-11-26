@@ -136,6 +136,8 @@ export function getWrappedStatus(): WrappedRunStatus {
       finishedAt: null,
       announce: false,
       announcedAt: null,
+      buildFailed: 0,
+      error: null,
     };
   }
   return {
@@ -152,6 +154,8 @@ export function getWrappedStatus(): WrappedRunStatus {
     finishedAt: row.finishedAt,
     announce: row.announce === 1,
     announcedAt: getServerRow(row.year)?.announcedAt ?? null,
+    buildFailed: row.buildFailed,
+    error: row.error,
   };
 }
 
@@ -218,7 +222,7 @@ export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy
     })
     .returning({ id: schema.activityWrappedRuns.id })
     .get().id;
-  launch({ id, work: () => processWork(ctx, { id, year: opts.year, startedBy: opts.startedBy, members, voiceReady }) });
+  launch({ id, work: () => processWork(ctx, { id, year: opts.year, startedBy: opts.startedBy, members, voiceReady, fresh: true }) });
   return "started";
 }
 
@@ -255,6 +259,7 @@ export function startWrappedSend(
     announce: announce ? 1 : 0,
     sent: linkCount(row.year, "sent"),
     failed: 0,
+    error: null,
     finishedAt: null,
   });
   launch({ id: row.id, work: () => sendWork(ctx, { id: row.id, year: row.year, startedBy: opts.startedBy, announce }) });
@@ -283,7 +288,7 @@ export function resumeWrappedRun(ctx: BotContext): "resumed" | "nothing-to-resum
     clearWrappedSharedMemo();
     const voiceReady = voiceReadinessForYear(row.year).ready;
     const members = activeMemberIds(row.year, voiceReady);
-    launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members, voiceReady }) });
+    launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members, voiceReady, fresh: false }) });
   } else {
     const announce = row.announce === 1;
     launch({ id: row.id, work: () => sendWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, announce }) });
@@ -446,7 +451,7 @@ function launch(job: { id: number; work: () => Promise<void> }): void {
 /** Mark a run failed and report it to the mod-log channel. Never throws. */
 async function failRun(ctx: BotContext, id: number, err: unknown): Promise<void> {
   console.error(`[wrapped] run ${id} failed:`, err);
-  updateRun(id, { status: "failed", finishedAt: nowSec() });
+  updateRun(id, { status: "failed", finishedAt: nowSec(), error: errorText(err) });
   const row = runRow(id);
   await postModLog(ctx, "wrapped.run-failed", { processed: row?.processed ?? 0, total: row?.total ?? 0 });
 }
@@ -454,10 +459,19 @@ async function failRun(ctx: BotContext, id: number, err: unknown): Promise<void>
 /** The processing step: members, server snapshot, `processed`, the starter's DM. Never throws. */
 async function processWork(
   ctx: BotContext,
-  job: { id: number; year: number; startedBy: string; members: string[]; voiceReady: boolean },
+  job: { id: number; year: number; startedBy: string; members: string[]; voiceReady: boolean; fresh: boolean },
 ): Promise<void> {
   try {
-    const shared = await processMembers(job);
+    const live = await liveMemberIds(ctx);
+    let members = job.members;
+    if (live) {
+      members = members.filter((userId) => live.has(userId));
+      // A fresh run's total is the members still in the guild; a resumed one never shrinks.
+      if (job.fresh) updateRun(job.id, { total: members.length });
+    } else {
+      noteError(job.id, MEMBER_FETCH_FALLBACK);
+    }
+    const shared = await processMembers({ ...job, members });
     await storeServerSnapshot(ctx, job.year, shared);
     updateRun(job.id, { status: "processed", finishedAt: nowSec() });
   } catch (err) {
@@ -514,6 +528,11 @@ function processedByRun(id: number, year: number): Set<string> {
  * progress after each. `processed` counts the links this run has processed;
  * `total` is that plus the members still to do, and never shrinks.
  *
+ * A link whose DM was already `sent` keeps its snapshot (a delivered story
+ * never changes) and is only stamped. A member whose snapshot throws is
+ * counted in `buildFailed`, the first such error is kept in `error`, and
+ * processing carries on with the next member.
+ *
  * @returns The year aggregates, computed once for every member.
  */
 async function processMembers(job: { id: number; year: number; members: string[]; voiceReady: boolean }): Promise<WrappedShared> {
@@ -523,8 +542,21 @@ async function processMembers(job: { id: number; year: number; members: string[]
   let processed = done.size;
   updateRun(job.id, { processed, total: Math.max(runRow(job.id)?.total ?? 0, processed + todo.length) });
   for (const userId of todo) {
-    const data = buildWrapped(userId, job.year, shared);
-    if (data) upsertWrappedLink(userId, job.year, data, job.id);
+    const existing = getWrappedLink(userId, job.year);
+    if (existing?.dmStatus === "sent") {
+      // A delivered story never changes: only mark it as processed by this run.
+      markProcessed(userId, job.year, job.id);
+    } else {
+      try {
+        const data = buildWrapped(userId, job.year, shared);
+        if (data) upsertWrappedLink(userId, job.year, data, job.id);
+      } catch (err) {
+        console.error(`[wrapped] snapshot of ${userId} failed:`, err);
+        const r = schema.activityWrappedRuns;
+        updateRun(job.id, { buildFailed: sql`${r.buildFailed} + 1` });
+        noteError(job.id, `a snapshot failed (${userId}): ${errorText(err)}`);
+      }
+    }
     processed += 1;
     updateRun(job.id, { processed });
     // Let the event loop breathe (gateway, web requests) between members.
@@ -535,9 +567,12 @@ async function processMembers(job: { id: number; year: number; members: string[]
 
 /**
  * Build and store the server Wrapped once per processing step, with names from
- * the guild cache. The year's token is kept.
+ * the guild cache. The year's token is kept. A year already announced keeps
+ * the snapshot it was announced with.
  */
 async function storeServerSnapshot(ctx: BotContext, year: number, shared: WrappedShared): Promise<void> {
+  // Once announced, the public story never changes.
+  if (getServerRow(year)?.announcedAt != null) return;
   const deps = await serverWrappedDeps(ctx);
   const data = buildServerWrapped(year, { ...deps, clubs: shared.clubs, terms: shared.terms, voiceReady: shared.voiceReady });
   if (data) storeServerWrapped(year, data);
@@ -604,6 +639,11 @@ function dmStatusOf(userId: string, year: number): RunLinkStatus | null {
  * DM every pending link of an opted-in member, one per `sendDelayMs`; mark the
  * pending links of the others skipped. Members who left are passed over.
  *
+ * Circuit breaker: after {@link SEND_BREAKER_LIMIT} failures in a row that are
+ * not a refusal of one member (closed DMs and the like, `PER_MEMBER_DM_CODES`)
+ * the step throws, so the run ends `failed` with that error and every link
+ * not yet tried stays `pending` for the next send.
+ *
  * Each link is read again right before its DM: one that is no longer
  * `pending` (a resend delivered it meanwhile) or whose DM is in flight
  * elsewhere is skipped. After each DM the run's `sent` counter is set to the
@@ -625,6 +665,7 @@ async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Pr
     .all();
 
   let first = true;
+  let streak = 0;
   for (const link of pending) {
     if (left.has(link.userId)) continue;
     const key = flightKey(link.userId, job.year);
@@ -648,7 +689,59 @@ async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Pr
     setDmStatus(link.userId, job.year, outcome.status);
     const r = schema.activityWrappedRuns;
     updateRun(job.id, outcome.status === "sent" ? { sent: linkCount(job.year, "sent") } : { failed: sql`${r.failed} + 1` });
+    streak = outcome.status === "failed" && !outcome.perMember ? streak + 1 : 0;
+    if (outcome.status === "failed" && streak >= SEND_BREAKER_LIMIT) {
+      throw new Error(
+        `stopped after ${SEND_BREAKER_LIMIT} dms in a row failed with a discord or network error (last: ${outcome.message}); ` +
+          "the remaining links are still pending, send again to continue",
+      );
+    }
   }
+}
+
+/** Failures in a row (not per-member refusals) after which a send step stops. */
+export const SEND_BREAKER_LIMIT = 5;
+
+/** The run error when the live member list could not be fetched. */
+const MEMBER_FETCH_FALLBACK =
+  "the guild member list could not be fetched; members who left were taken from the membership table only";
+
+/**
+ * The ids of the locked guild's current members, fetched from Discord, so a
+ * member who left before capture started (and so has no `leave` row) gets no
+ * link and does not count. Never throws.
+ *
+ * @returns The ids, or null when the guild or its members cannot be fetched.
+ */
+async function liveMemberIds(ctx: BotContext): Promise<Set<string> | null> {
+  try {
+    const guild = ctx.client.guilds.cache.get(ctx.guildId) ?? (await ctx.client.guilds.fetch(ctx.guildId));
+    const members = await guild.members.fetch();
+    return new Set(members.keys());
+  } catch (err) {
+    console.error("[wrapped] member list fetch failed:", err);
+    return null;
+  }
+}
+
+/** Keep `message` as the run's error unless one is already stored. */
+function noteError(id: number, message: string): void {
+  const r = schema.activityWrappedRuns;
+  db.update(r).set({ error: message, updatedAt: nowSec() }).where(and(eq(r.id, id), isNull(r.error))).run();
+}
+
+/** An error's message, for the run status. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Stamp a link as processed by run `id` without touching its snapshot. */
+function markProcessed(userId: string, year: number, id: number): void {
+  const l = schema.activityWrappedLinks;
+  db.update(l)
+    .set({ processedRunId: id })
+    .where(and(eq(l.userId, userId), eq(l.year, year), eq(l.private, 0)))
+    .run();
 }
 
 /** A link's DM status. */

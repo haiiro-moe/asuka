@@ -209,9 +209,16 @@ Statuses: `processing` -> `processed` -> `sending` -> `done`, plus `failed` and 
 1. **Process**, `startWrappedRun(ctx, { year, startedBy })`: returns `started` or `already-running`
    at once and works in the background. The member list is every member with activity that year
    whose latest membership change is not a leave (`activeMemberIds`, sorted; `total` is set before
-   returning). Each member's snapshot is built and their link upserted and stamped with the run id
-   (`processedRunId`); `processed` is saved after every member. Then the server snapshot is built
-   and stored. The run ends `processed` ("ready to send") and the starting admin gets the
+   returning). When the work starts, that list is intersected with the guild's live member list
+   (`guild.members.fetch()`), so a member who left before capture started (no `leave` row) gets no
+   link and does not count in `total` or the titles; when the fetch fails the run goes on with the
+   membership table alone and says so in `error`. Each member's snapshot is built and their link
+   upserted and stamped with the run id (`processedRunId`); `processed` is saved after every
+   member. A link whose DM was already `sent` keeps its snapshot (a delivered story never changes)
+   and is only stamped; unsent links are rebuilt. A member whose snapshot throws is counted in
+   `buildFailed` (the first error goes to `error`) and processing carries on, still ending
+   `processed`. Then the server snapshot is built and stored, unless the year was already
+   announced: an announced server story is never rebuilt. The run ends `processed` ("ready to send") and the starting admin gets the
    `wrapped.processed` DM with a button to `${PUBLIC_URL}/#/activity-admin`; when that DM fails the
    same card goes to the mod-log channel, and when that is unset too, nothing. That notice never
    fails the run. No member is written to and nothing is announced.
@@ -224,6 +231,10 @@ Statuses: `processing` -> `processed` -> `sending` -> `done`, plus `failed` and 
    (`wrappedRunTiming.sendDelayMs`), and becomes `sent` or `failed`; a pending link of a member who
    has not opted in becomes `skipped`; links already sent are never sent again; members who left
    are passed over. `sent` counts every sent link of the year, `failed` the failures of this send.
+   **Circuit breaker:** five failures in a row that are not a refusal of one member (closed DMs
+   50007, unknown user 10013, opening DMs too fast 40003: `PER_MEMBER_DM_CODES` in `dm.ts`) stop
+   the send; the run ends `failed` with the reason in `error`, and every link not yet tried stays
+   `pending`, so the next send continues. A send clears `error` when it starts.
    The run ends `done`; then, when `announce` is on, `postAnnouncement` runs; then
    `wrapped.run-finished` goes to the mod-log channel. `announce` is stored on the run for a resume.
 3. **Announce**, `postAnnouncement(ctx, year)`: posts `wrapped.announce` (banner and a link button to
@@ -234,7 +245,8 @@ Statuses: `processing` -> `processed` -> `sending` -> `done`, plus `failed` and 
    `done`, or there is no server snapshot; an admin preview alone does not count), `no-channel` (no
    announcement channel is set) or `failed` (the channel could not be reached or the post failed).
 
-`getWrappedStatus()` returns the newest run as a `WrappedRunStatus`, or `idle`. `skipped` and
+`getWrappedStatus()` returns the newest run as a `WrappedRunStatus` (with `buildFailed` and
+`error`), or `idle`. `skipped` and
 `optedIn` come from the links and opt-in tables, `announcedAt` from the year's server row. A
 `processing` or `sending` run not updated for more than 120 seconds, and not running in this
 process, reports `interrupted`.

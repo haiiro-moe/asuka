@@ -797,6 +797,13 @@ export const activityWrappedRuns = sqliteTable("activity_wrapped_runs", {
   sent: integer("sent").notNull().default(0),
   /** DMs that could not be delivered. */
   failed: integer("failed").notNull().default(0),
+  /** Members whose snapshot could not be built; processing carried on without them. */
+  buildFailed: integer("build_failed").notNull().default(0),
+  /**
+   * What went wrong, for the dashboard: the first member whose snapshot failed,
+   * a member-list fallback, or why a step stopped. Null when nothing did.
+   */
+  error: text("error"),
   /** User id of the admin who started the run. */
   startedBy: text("started_by").notNull(),
   /**

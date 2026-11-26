@@ -231,6 +231,18 @@ export interface WrappedRunStatus {
   announce: boolean;
   /** When the server Wrapped of the run's year was announced, unix seconds; null when it has not been. */
   announcedAt: number | null;
+  /**
+   * Members whose snapshot could not be built; processing carried on without
+   * them and still ended `processed`. 0 when none (and when no run exists).
+   */
+  buildFailed?: number;
+  /**
+   * What went wrong in the latest step, for the dashboard: the first member
+   * whose snapshot failed, that the live member list could not be fetched (the
+   * membership table was used instead), or why a step stopped (the send's
+   * circuit breaker, say). Null when nothing did. A send step clears it.
+   */
+  error?: string | null;
 }
 
 /** `POST /api/activity/wrapped/run` (processing only). 202 when started, 409 otherwise. */

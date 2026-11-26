@@ -101,9 +101,19 @@ export interface FakeClientLog {
  * @param opts.onDm - Called before each DM is recorded (to look at run status mid-run).
  * @param opts.failPosts - Channels whose `send` throws (a failed post).
  * @param opts.onChannelFetch - Called on each `channels.fetch` (to check call order).
+ * @param opts.failDms - Users whose DM throws a server error (not a per-member refusal).
+ * @param opts.guildMembers - Put the locked guild in the cache with exactly these members;
+ *   `"fail"` makes its member fetch throw. Left out, the guild is not cached.
  */
 export function fakeClient(
-  opts: { closedDms?: string[]; onDm?: (userId: string) => void; failPosts?: string[]; onChannelFetch?: (channelId: string) => void } = {},
+  opts: {
+    closedDms?: string[];
+    onDm?: (userId: string) => void;
+    failPosts?: string[];
+    onChannelFetch?: (channelId: string) => void;
+    failDms?: string[];
+    guildMembers?: string[] | "fail";
+  } = {},
 ): { client: Client; log: FakeClientLog } {
   const log: FakeClientLog = { dms: [], posts: [], messages: new Map() };
   let messageSeq = 0;
@@ -118,6 +128,7 @@ export function fakeClient(
           async send(payload: Record<string, unknown>) {
             opts.onDm?.(userId);
             if (closed.has(userId)) throw discordError(50007);
+            if (opts.failDms?.includes(userId)) throw Object.assign(new Error("Service Unavailable"), { status: 503 });
             log.dms.push({ userId, payload });
             return {};
           },
@@ -156,14 +167,34 @@ export function fakeClient(
         };
       },
     },
-    guilds: { cache: new Map() },
+    guilds: { cache: new Map<string, unknown>() },
   };
+  if (opts.guildMembers !== undefined) {
+    const members = opts.guildMembers;
+    const cache = new Map(members === "fail" ? [] : members.map((id) => [id, { id, displayName: `name-${id}` }]));
+    client.guilds.cache.set(FAKE_GUILD_ID, {
+      id: FAKE_GUILD_ID,
+      memberCount: cache.size,
+      members: {
+        cache,
+        async fetch() {
+          if (members === "fail") throw discordError(50001, "Missing Access");
+          return cache;
+        },
+      },
+      emojis: { cache: new Map() },
+      channels: { cache: new Map() },
+    });
+  }
   return { client: client as unknown as Client, log };
 }
 
+/** The locked guild id of {@link fakeCtx}. */
+export const FAKE_GUILD_ID = "000000000000000002";
+
 /** A BotContext around a fake client. */
 export function fakeCtx(client: Client): BotContext {
-  return { client, guildId: "000000000000000002", config: getConfig };
+  return { client, guildId: FAKE_GUILD_ID, config: getConfig };
 }
 
 /** Every string in a component tree, flattened. */

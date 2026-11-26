@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { db, initDb, schema } from "../../../db/index.ts";
 import { env } from "../../../config/env.ts";
@@ -6,6 +6,7 @@ import { nowSec } from "../../../core/util.ts";
 import { recordMembership, recordMessage } from "../record.ts";
 import plugin from "../index.ts";
 import { wrappedCommands } from "./commands.ts";
+import * as dataModule from "./data.ts";
 import { buildWrapped } from "./data.ts";
 import { wrappedListeners } from "./listeners.ts";
 import { getLinkByToken, linkUrl, upsertWrappedLink } from "./links.ts";
@@ -98,6 +99,8 @@ test("with no run the status is idle", () => {
     finishedAt: null,
     announce: false,
     announcedAt: null,
+    buildFailed: 0,
+    error: null,
   });
 });
 
@@ -624,4 +627,105 @@ test("a failed send can be retried when processing had completed, not before", a
   // Processing itself failed half way: the send is refused.
   db.update(schema.activityWrappedRuns).set({ status: "failed", processed: 1, total: 2 }).run();
   expect(startWrappedSend(fakeCtx(client), { startedBy: "admin" })).toBe("not-processed");
+});
+
+test("leavers: members missing from the live guild get no link and do not count in the total", async () => {
+  active("u1", "u2", "u3");
+  // u3 left before capture started, so the membership table never saw it.
+  const { client } = fakeClient({ guildMembers: ["u1", "u2"] });
+  const status = await processYear(fakeCtx(client));
+  expect([...links().keys()].sort()).toEqual(["u1", "u2"]);
+  expect(status.total).toBe(2);
+  expect(status.processed).toBe(2);
+  expect(status.error).toBeNull();
+});
+
+test("leavers: a failed member fetch falls back to the membership table and says so", async () => {
+  active("u1", "u2");
+  recordMembership("u2", "leave", at("2026-07-01T00:00:00Z"));
+  const { client } = fakeClient({ guildMembers: "fail" });
+  const status = await processYear(fakeCtx(client));
+  expect(status.status).toBe("processed");
+  expect([...links().keys()]).toEqual(["u1"]);
+  expect(status.error).toContain("membership table");
+});
+
+test("one member's snapshot throwing is counted and processing carries on", async () => {
+  active("u1", "u2", "u3");
+  const real = dataModule.buildWrapped;
+  const spy = spyOn(dataModule, "buildWrapped").mockImplementation((userId, year, shared) => {
+    if (userId === "u2") throw new Error("boom for u2");
+    return real(userId, year, shared);
+  });
+  try {
+    const { client } = fakeClient({ guildMembers: ["u1", "u2", "u3"] });
+    const status = await processYear(fakeCtx(client));
+    expect(status.status).toBe("processed");
+    expect(status.buildFailed).toBe(1);
+    expect(status.error).toContain("boom for u2");
+    expect(status.processed).toBe(3);
+    expect([...links().keys()].sort()).toEqual(["u1", "u3"]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("circuit breaker: five server errors in a row stop the send, the rest stay pending", async () => {
+  const users = ["u1", "u2", "u3", "u4", "u5", "u6", "u7"];
+  active(...users);
+  for (const u of users) setOptIn(u, true);
+  const { client: first } = fakeClient();
+  await processYear(fakeCtx(first));
+  const broken = fakeClient({ failDms: users });
+  const status = await sendYear(fakeCtx(broken.client));
+  expect(status.status).toBe("failed");
+  expect(status.error).toContain("5 dms in a row");
+  const rows = links();
+  expect(users.filter((u) => rows.get(u)!.dmStatus === "failed")).toEqual(["u1", "u2", "u3", "u4", "u5"]);
+  expect(users.filter((u) => rows.get(u)!.dmStatus === "pending")).toEqual(["u6", "u7"]);
+
+  // The send can be retried: every link goes out.
+  const ok = fakeClient();
+  const again = await sendYear(fakeCtx(ok.client));
+  expect(again.status).toBe("done");
+  expect(memberDms(ok.log).map((d) => d.userId)).toEqual(users);
+  expect(again.error).toBeNull();
+});
+
+test("circuit breaker: closed DMs never trip it", async () => {
+  const users = ["u1", "u2", "u3", "u4", "u5", "u6"];
+  active(...users);
+  for (const u of users) setOptIn(u, true);
+  const { client } = fakeClient({ closedDms: users });
+  const status = await run(fakeCtx(client));
+  expect(status.status).toBe("done");
+  expect(status.failed).toBe(6);
+});
+
+test("re-processing never changes a sent link's snapshot; unsent links are rebuilt", async () => {
+  active("u1", "u2");
+  setOptIn("u1", true);
+  const { client } = fakeClient();
+  await run(fakeCtx(client));
+  expect(links().get("u1")!.dmStatus).toBe("sent");
+  const sentData = links().get("u1")!.data;
+
+  recordMessage(msg("u1", at("2026-06-03T12:00:00Z")));
+  recordMessage(msg("u2", at("2026-06-03T12:00:00Z")));
+  const status = await processYear(fakeCtx(client));
+  expect(status.processed).toBe(2);
+  expect(links().get("u1")!.data).toBe(sentData);
+  expect(storedMessages("u2")).toBe(2);
+});
+
+test("re-processing leaves the server snapshot alone once it was announced", async () => {
+  active("u1");
+  setConfig({ announcementChannelId: "ann" });
+  const { client } = fakeClient();
+  await processYear(fakeCtx(client));
+  expect(await postAnnouncement(fakeCtx(client), YEAR)).toBe("posted");
+  const before = db.select().from(schema.activityWrappedServer).get()!.data;
+  recordMessage(msg("u1", at("2026-06-03T12:00:00Z")));
+  await processYear(fakeCtx(client));
+  expect(db.select().from(schema.activityWrappedServer).get()!.data).toBe(before);
 });
