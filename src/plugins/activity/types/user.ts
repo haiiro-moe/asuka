@@ -1,1 +1,73 @@
-export {};
+/**
+ * Shapes returned by the everyone-tier activity views (`queries/user.ts`).
+ * User ids appear only in leaderboards and awards; every other view is
+ * aggregate.
+ */
+
+/** A 7 by 24 grid of counts: rows are UTC weekdays (Monday first), columns UTC hours. */
+export interface Heatmap {
+  /** `cells[weekday][hour]`, weekday 0 = Monday. */
+  cells: number[][];
+  /** The largest cell; 0 for an empty grid. */
+  max: number;
+}
+
+/** One emoji and how often it was used (in text plus net reactions). */
+export interface EmojiRow {
+  /** The stored key: a unicode emoji, or `custom:<id>`. */
+  emoji: string;
+  /** Custom emoji name; null for unicode emoji. */
+  name: string | null;
+  /** Uses in the period. */
+  count: number;
+}
+
+/** One emoji's uses per week, oldest week first. */
+export interface EmojiSeries {
+  /** The stored key: a unicode emoji, or `custom:<id>`. */
+  emoji: string;
+  /** Custom emoji name; null for unicode emoji. */
+  name: string | null;
+  /** Uses per 7-day bucket, counted from the start of the series. */
+  weekly: number[];
+}
+
+/** A message ranked by its net reaction count. */
+export interface ReactedRow {
+  /** The reacted-to message. */
+  messageId: string;
+  /** The channel, or thread, it is in. */
+  channelId: string;
+  /** Its author; null when unknown. */
+  authorId: string | null;
+  /** Reactions added minus reactions removed. */
+  net: number;
+}
+
+/** A channel and a count (messages for text channels, seconds for voice). */
+export interface ChannelRow {
+  /** The channel; for threads, the parent channel. */
+  channelId: string;
+  /** Messages, or connected seconds for voice. */
+  count: number;
+}
+
+/** What members share, by kind. */
+export interface SharingRow {
+  /** The kind of thing shared. */
+  kind: "image" | "video" | "audio" | "link" | "gif" | "sticker";
+  /** A short label: the kind itself, or the domain for links. */
+  label: string;
+  /** How many were shared. */
+  count: number;
+}
+
+/** A named title and the member who holds it. */
+export interface Award {
+  /** Which award. */
+  key: "night-owl" | "earliest-bird" | "longest-voice" | "fastest-replier" | "most-replied-to";
+  /** The winner. */
+  userId: string;
+  /** Messages, seconds or reply count, depending on the award. */
+  value: number;
+}
