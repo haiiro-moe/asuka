@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ServerWrapped, WrappedLinkResponse } from "../../../../plugins/activity/types/wrapped.ts";
-import { PersonalSlideView, ServerSlideView, StoryFrame } from "./slides.tsx";
+import { PersonalSlideView, STORY_TITLE, STORY_WINDOW_SIZE, ServerSlideView, StoryFrame } from "./slides.tsx";
 import { personalSlides, storyLabel } from "./story.ts";
 
 // useReducedMotion reads matchMedia during render; give the server render a quiet one.
@@ -117,4 +117,20 @@ test("the window label of a preview says so", () => {
   const html = frame(true);
   expect(html).toContain("fish: ~/wrapped/2026 (preview)");
   expect(frame(false)).not.toContain("(preview)");
+});
+
+test("the story page has one visually hidden, generic h1", () => {
+  const html = frame();
+  expect(html.match(/<h1/g)?.length).toBe(1);
+  expect(html).toContain(`<h1 class="sr-only">${STORY_TITLE}</h1>`);
+  expect(STORY_TITLE).not.toContain("cakes");
+});
+
+test("the 9:19.5 shape applies only on wide screens at least 800px tall", () => {
+  const classes = STORY_WINDOW_SIZE.split(" ");
+  const shaped = classes.filter((c) => c.includes("aspect-"));
+  expect(shaped).toEqual(["desk:[@media(min-height:800px)]:aspect-[9/19.5]"]);
+  expect(classes).toContain("desk:[@media(max-height:799.98px)]:w-[min(420px,100%)]");
+  expect(classes).toContain("desk:[@media(max-height:799.98px)]:h-[calc(100dvh-48px)]");
+  expect(classes).not.toContain("desk:w-auto");
 });

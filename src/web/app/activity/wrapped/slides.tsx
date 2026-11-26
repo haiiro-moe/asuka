@@ -38,6 +38,22 @@ import {
 /* ------------------------------------------------------------------------------------------------ */
 /* The frame                                                                                         */
 
+/**
+ * The story window's size classes. On a phone (below 721px) it fills the viewport height at full width
+ * (at most 420px). Wider and at least 800px tall, it is centred and keeps a 9:19.5 shape, at most 910px
+ * tall and 420px wide. Wider but shorter (a landscape phone, a short laptop) the shape would shrink the
+ * column to a strip, so it takes `min(420px, 100%)` and the available height instead, and the slide
+ * scrolls. The two wide cases use exclusive height queries, so neither depends on class order.
+ */
+export const STORY_WINDOW_SIZE = [
+  "m-0 flex h-[calc(100dvh-10px)] w-full min-w-0 max-w-[420px] shrink-0 flex-col",
+  "desk:[@media(max-height:799.98px)]:h-[calc(100dvh-48px)] desk:[@media(max-height:799.98px)]:w-[min(420px,100%)]",
+  "desk:[@media(min-height:800px)]:aspect-[9/19.5] desk:[@media(min-height:800px)]:h-[min(calc(100dvh-48px),910px)] desk:[@media(min-height:800px)]:w-auto",
+].join(" ");
+
+/** The story page's one heading, visually hidden: generic, so it names nobody. */
+export const STORY_TITLE = "wrapped: a year on the server";
+
 /** Props of {@link StoryShell}. */
 export interface StoryShellProps {
   /** The window label, like a prompt: `fish: ~/wrapped/2026`. */
@@ -50,19 +66,19 @@ export interface StoryShellProps {
 }
 
 /**
- * The page around a story: the `.fx` scope, the blob backdrop and one tall, phone-shaped Window. On a
- * phone (below 721px) the window fills the viewport height; on wider screens it is centred and keeps a
- * 9:19.5 shape, at most 420px wide and never stretched wide.
+ * The page around a story: the `.fx` scope, the blob backdrop, a visually hidden `h1` ({@link STORY_TITLE})
+ * and one tall, phone-shaped Window, sized by {@link STORY_WINDOW_SIZE}.
  */
 export function StoryShell({ label, ariaLabel, contentClassName, children }: StoryShellProps) {
   return (
     <div className="fx min-h-screen">
       <Blobs />
       <main className="relative z-[1] flex min-h-[100dvh] items-start justify-center pt-[10px] desk:items-center desk:p-6">
+        <h1 className="sr-only">{STORY_TITLE}</h1>
         <Window
           label={label}
           ariaLabel={ariaLabel}
-          className="m-0 flex h-[calc(100dvh-10px)] w-full min-w-0 max-w-[420px] shrink-0 flex-col desk:aspect-[9/19.5] desk:h-[min(calc(100dvh-48px),910px)] desk:w-auto"
+          className={STORY_WINDOW_SIZE}
           contentClassName={cx("flex min-h-0 flex-1 flex-col gap-3 overflow-hidden", contentClassName)}
         >
           {children}

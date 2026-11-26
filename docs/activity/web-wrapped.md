@@ -23,8 +23,16 @@ server's story at `/wrapped/s/<token>`. The data, links, runs and routes are in
   and `save image` and `copy link` work as usual. The copied link is the preview link itself. A
   response without the field counts as not a preview.
 - **Always a phone column.** A tall Window (`fish: ~/wrapped/<year>`, `fish: ~/wrapped/server/<year>`)
-  on the blob backdrop: the full viewport height below 721px, and from 721px up centred with a 9:19.5
-  shape, at most 420px wide and at most `min(100dvh - 48px, 910px)` tall. It is never stretched wide.
+  on the blob backdrop, sized by `STORY_WINDOW_SIZE`: the full viewport height below 721px; from 721px
+  wide and at least 800px tall, centred with a 9:19.5 shape, at most 420px wide and at most
+  `min(100dvh - 48px, 910px)` tall; from 721px wide but shorter than 800px (a landscape phone, a short
+  laptop) `min(420px, 100%)` wide and `100dvh - 48px` tall with no shape, and the slide scrolls, so
+  the column never collapses to a strip. The two wide cases use exclusive height queries
+  (`max-height: 799.98px`, `min-height: 800px`). It is never stretched wide. Widths: 844x390 and
+  932x430 give 420 by 342 and 382; a 1366x768 screen with about 650px inside gives 420 by 602;
+  1920x1080 gives 420 by 910; a 320x568 phone gives 320 by 558.
+- **One heading.** The page has a visually hidden `h1` (`STORY_TITLE`, `wrapped: a year on the
+  server`), generic so it names nobody.
 - **Nothing is ever out of reach.** The slide box scrolls vertically (`overflow-y: auto`,
   `overscroll-behavior: contain`, the thin foam scroll bar of haiiro windows). A slide is centred
   with `margin-block: auto`, so one taller than its box starts at its top and scrolls instead of being
