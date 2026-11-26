@@ -11,7 +11,7 @@ their `access` field, and the web pages with `minRole`.
 
 | Tier | Who | What it sees |
 |---|---|---|
-| everyone | every signed-in member | their own and the server's stats, with names ([queries-user.md](activity/queries-user.md)) |
+| everyone | every signed-in member | server-wide stats, with names; the personal numbers are in the Wrapped and `/profile` ([queries-user.md](activity/queries-user.md)) |
 | president | the elected president (admins too) | numbers only: never a name, an id or a list of people, and no count of one or two members ([queries-president.md](activity/queries-president.md)) |
 | admin | admins | every view with names, the relationship web, drift, moderation and the controls for the backfill and the Wrapped ([queries-admin.md](activity/queries-admin.md)) |
 
