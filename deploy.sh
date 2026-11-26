@@ -367,6 +367,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Optional: automatic updates from GitHub
+# ---------------------------------------------------------------------------
+
+if git -C "$APP_DIR" remote get-url origin >/dev/null 2>&1 && [[ -x "${APP_DIR}/scripts/install-auto-update.sh" ]]; then
+  echo
+  info "This install is a git clone, so it can follow GitHub."
+  if confirm "Enable automatic updates (systemd timer, checks every 15 minutes)?"; then
+    "${APP_DIR}/scripts/install-auto-update.sh" || warn "auto-update setup failed; run scripts/install-auto-update.sh later."
+  else
+    echo "  Skipped. Enable it later with: sudo scripts/install-auto-update.sh"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Post-deploy notes
 # ---------------------------------------------------------------------------
 
