@@ -1,7 +1,7 @@
 /**
  * President-tier activity queries: numbers only.
  *
- * A president sees how the server is doing, never who is doing what. Three
+ * A president sees how the server is doing, never who is doing what. Four
  * rules hold for everything exported here (docs/activity/queries-president.md
  * has the reasoning):
  *
@@ -11,9 +11,13 @@
  * 2. **No count of one or two members.** Such a count is returned as `null`
  *    (`hideSmall`), and a hidden count never enters another number: the totals
  *    that would give it away by subtraction are hidden with it.
- * 3. **Fixed periods.** The routes only pass the two periods of
+ * 3. **Fixed periods.** The routes only ask for the two periods of
  *    {@link presidentPeriod}, which both end at today 00:00 UTC, so asking
  *    again a few minutes later returns the same numbers.
+ * 4. **The two periods cannot be subtracted from each other.** One of them
+ *    lies inside the other. The shorter is shown as it is; a number of the
+ *    longer one that is 1 or 2 away from the shorter one's is hidden
+ *    ({@link presidentScope}, {@link showBeside}).
  *
  * Excluded channels are filtered out of every query with `notExcluded`.
  */
@@ -104,6 +108,45 @@ export function presidentPeriod(value: string | null, now: number = nowSec()): P
     default:
       throw new RangeError("period must be week or term");
   }
+}
+
+/**
+ * What one president request asks for: the period, and the other fixed period
+ * when that one lies inside it.
+ *
+ * Build it with {@link presidentScope}. A president route must not make one by
+ * hand: leaving `shorter` out for the longer period would switch off the rule
+ * that keeps the two periods from being subtracted from each other.
+ */
+export interface PresidentScope {
+  /** The period to report on. */
+  period: Period;
+  /**
+   * The other fixed period, when it is the shorter of the two: it ends at the
+   * same moment as `period` and starts later. Null when `period` is itself the
+   * shorter one, or when the two are the same.
+   */
+  shorter: Period | null;
+}
+
+/**
+ * Turn a president route's `?period=` value into the scope of the request.
+ *
+ * Both fixed periods end at today 00:00 UTC, so one of them always lies inside
+ * the other. The shorter one is shown as it is. The longer one is shown beside
+ * it: a number of the longer period that is one or two away from the same
+ * number of the shorter period is hidden (see {@link showBeside}). Usually the
+ * week is the shorter one; in the first days of a term, the term is.
+ *
+ * @param value - The query value. Null means the parameter is absent (`week`).
+ * @param now - The current time in unix seconds. Defaults to the clock.
+ * @returns The scope. It is the same for every `now` within one UTC day.
+ * @throws RangeError for any value {@link presidentPeriod} does not accept.
+ */
+export function presidentScope(value: string | null, now: number = nowSec()): PresidentScope {
+  const period = presidentPeriod(value, now);
+  const other = presidentPeriod(value === "term" ? "week" : "term", now);
+  return { period, shorter: other.from > period.from ? other : null };
 }
 
 /** Seconds as hours with one decimal. */
@@ -267,6 +310,24 @@ function quietCount(to: number): number {
 }
 
 /**
+ * The gone-quiet count that may be shown for a scope.
+ *
+ * Hidden at 1 and 2, and hidden for the longer period when it is 1 or 2 away
+ * from the shorter period's. Both periods end at the same moment and the count
+ * is judged at that moment, so today the two are always the same number; the
+ * check is there so that this stays a rule and not a coincidence.
+ *
+ * @param scope - The scope of the request.
+ * @returns The count, or null when hidden.
+ */
+function quietShown(scope: PresidentScope): number | null {
+  const quiet = hideSmall(quietCount(scope.period.to));
+  if (quiet === null || scope.shorter === null) return quiet;
+  const shorter = hideSmall(quietCount(scope.shorter.to));
+  return shorter !== null && givesAway(quiet, shorter) ? null : quiet;
+}
+
+/**
  * How long each pair of members shared a voice channel.
  *
  * @param spans - Voice spans of one period, from {@link voiceSpans}.
@@ -305,8 +366,12 @@ function sharedVoiceSeconds(spans: VoiceSpan[]): Map<string, Map<string, number>
   return shared;
 }
 
-/** The members of a period as anonymous sizes: no id survives into this. */
-interface MemberWeb {
+/**
+ * The members of a period as anonymous sizes: no id survives into this.
+ *
+ * @internal Exported for the tests of {@link showAlone} and {@link showBeside}.
+ */
+export interface MemberWeb {
   /**
    * Member count of every group, largest first, followed by a 1 for every
    * active member who is tied to nobody.
@@ -380,78 +445,187 @@ function memberWeb(messages: MessageCount[], spans: VoiceSpan[]): MemberWeb {
   return { sizes, bridges };
 }
 
-/** What may be said about the members of a period. */
-interface MemberSummary {
-  /** Member count of every group of `MIN_GROUP` or more, largest first. */
+/**
+ * What may be said about the members of a period.
+ *
+ * @internal Exported for the tests of {@link showAlone} and {@link showBeside}.
+ */
+export interface MemberView {
+  /** Member count of every group that is listed, largest first. */
   sizes: number[];
-  /** The active members outside those groups; null when that is 1 or 2. */
+  /** How many groups of `MIN_GROUP` or more there are, listed or not. */
+  groups: number;
+  /** Members in a group of `MIN_GROUP` or more; null when a group is not listed. */
+  connected: number | null;
+  /** The active members outside those groups; null when hidden. */
   other: number | null;
-  /** The members of the shown groups, added up. */
-  connected: number;
-  /** `connected + other`; null when `other` is hidden. */
+  /** `connected + other`; null exactly when `other` is. */
   total: number | null;
-  /** Raw count of bridges between the shown groups. Not yet through `hideSmall`. */
-  bridges: number;
+  /** Pairs of members tied across two groups of `MIN_GROUP` or more; null when hidden. */
+  bridges: number | null;
 }
 
 /**
- * Reduce a member web to the numbers that may be shown, with nothing left to
- * subtract.
+ * Reduce a member web to the numbers that may be shown for a period on its
+ * own, with nothing left to subtract.
  *
- * The active members fall into the shown groups and one remainder: everyone in
- * a group under `MIN_GROUP` and everyone tied to nobody. When the remainder is
- * 1 or 2 it is hidden, and then no returned number contains it: `total` is
- * hidden too, since `total - connected` would be exactly that remainder. Every
- * number that is returned is made of whole parts that are each 0 or at least
- * `MIN_GROUP`. The hidden remainder is in none of them, so no arithmetic on
- * them can bring it back.
+ * The active members fall into the groups of `MIN_GROUP` or more and one
+ * remainder: everyone in a smaller group and everyone tied to nobody. When the
+ * remainder is 1 or 2 it is hidden, and then no returned number contains it:
+ * `total` is hidden too, since `total - connected` would be exactly that
+ * remainder. Every number that is returned is made of whole parts that are each
+ * 0 or at least `MIN_GROUP`. The hidden remainder is in none of them, so no
+ * arithmetic on them can bring it back.
  *
  * {@link connection}, {@link groupSizes} and {@link engagement} all take their
  * member counts from here, which is what keeps them consistent with each other.
  *
  * @param web - The member web of the period.
- * @returns The summary.
+ * @returns The view. Every group is listed.
  */
-function summarize(web: MemberWeb): MemberSummary {
+export function showAlone(web: MemberWeb): MemberView {
   const { shown, other } = mergeSmallGroups(web.sizes);
   const connected = shown.reduce((a, b) => a + b, 0);
   return {
     sizes: shown,
-    other,
+    groups: shown.length,
     connected,
+    other,
     total: other === null ? null : connected + other,
-    bridges: web.bridges,
+    bridges: hideSmall(web.bridges),
   };
 }
 
-/** The member summary of a period, read from the database. */
-function memberSummary(p: Period): MemberSummary {
-  if (p.to <= p.from) return summarize({ sizes: [], bridges: 0 });
-  return summarize(memberWeb(messageCounts(p), voiceSpans(p)));
+/**
+ * Whether two numbers of the same kind, one from each period, are close enough
+ * to give a small count away: apart, but by less than `MIN_GROUP`. "15 active
+ * this week, 16 this term" says that one member was active only earlier in the
+ * term, as plainly as a count of 1 would.
+ */
+function givesAway(a: number, b: number): boolean {
+  const apart = Math.abs(a - b);
+  return apart > 0 && apart < MIN_GROUP;
+}
+
+/**
+ * Reduce the longer period's member web to what may be shown beside the
+ * shorter period's numbers.
+ *
+ * The two fixed periods end at the same moment and one lies inside the other,
+ * so a president can hold their numbers against each other. The shorter period
+ * is shown as it is. Of the longer period, a number is shown only when it is
+ * not 1 or 2 away from the same number of the shorter period, and, as in
+ * {@link showAlone}, nothing that is hidden enters a number that is shown:
+ *
+ * 1. **Groups.** A group is listed when the shorter period lists a group of
+ *    the same size (each of its groups is the twin of one group at most), or
+ *    when its size is not 1 or 2 away from the size of any group listed for
+ *    the shorter period. If every group can be listed but their sum is 1 or 2
+ *    away from the shorter period's `connected`, none is listed.
+ * 2. **`connected`** is shown only when every group is listed: with one left
+ *    out, the true number would give that group's size away.
+ * 3. **`other` and `total`** are shown, together, only when `connected` is,
+ *    the remainder is not 1 or 2, the shorter period shows its own `other` and
+ *    `total`, and neither is 1 or 2 away from the shorter period's. A total
+ *    next to a hidden total could pin the hidden one down, because the shorter
+ *    period's members are all members of the longer one.
+ * 4. **`bridges`** are hidden at 1 and 2, and when 1 or 2 away from the
+ *    bridges shown for the shorter period.
+ *
+ * `groups` stays the true count of groups: it is not a count of people. So a
+ * president can see that a group is left out, but not how large it is.
+ *
+ * Only what the shorter period shows is looked at, never what it hides. A rule
+ * that read a hidden number would give it away through what it lets through.
+ *
+ * @param web - The member web of the longer period.
+ * @param shorter - What is shown for the shorter period, from {@link showAlone}.
+ * @returns The view of the longer period.
+ */
+export function showBeside(web: MemberWeb, shorter: MemberView): MemberView {
+  const { shown: groups, other: rest } = mergeSmallGroups(web.sizes);
+
+  // A group with a twin of the same size in the shorter period shows nothing
+  // new next to it. Any other group must keep its distance from all of them.
+  const twins = [...shorter.sizes];
+  let sizes = groups.filter((size) => {
+    const twin = twins.indexOf(size);
+    if (twin >= 0) {
+      twins.splice(twin, 1);
+      return true;
+    }
+    return !shorter.sizes.some((other) => givesAway(size, other));
+  });
+  let connected: number | null = null;
+  if (sizes.length === groups.length) {
+    const all = groups.reduce((a, b) => a + b, 0);
+    if (shorter.connected !== null && givesAway(all, shorter.connected)) sizes = [];
+    else connected = all;
+  }
+
+  let other: number | null = null;
+  let total: number | null = null;
+  if (
+    connected !== null &&
+    rest !== null &&
+    shorter.other !== null &&
+    shorter.total !== null &&
+    !givesAway(rest, shorter.other) &&
+    !givesAway(connected + rest, shorter.total)
+  ) {
+    other = rest;
+    total = connected + rest;
+  }
+
+  let bridges = hideSmall(web.bridges);
+  if (bridges !== null && shorter.bridges !== null && givesAway(bridges, shorter.bridges)) bridges = null;
+
+  return { sizes, groups: groups.length, connected, other, total, bridges };
+}
+
+/** The member web of a period, read from the database. */
+function memberWebOf(p: Period): MemberWeb {
+  if (p.to <= p.from) return { sizes: [], bridges: 0 };
+  return memberWeb(messageCounts(p), voiceSpans(p));
+}
+
+/**
+ * What may be shown about the members of a scope's period.
+ *
+ * @param scope - The scope of the request.
+ * @param web - The member web of `scope.period`, when the caller already has it.
+ */
+function memberView(scope: PresidentScope, web: MemberWeb = memberWebOf(scope.period)): MemberView {
+  if (scope.shorter === null) return showAlone(web);
+  return showBeside(web, showAlone(memberWebOf(scope.shorter)));
 }
 
 /**
  * How connected the members are: the four tiles of the president's connection
  * view.
  *
+ * `connected` is the members in a group of three or more. A pair, or a member
+ * tied to nobody, is never shown as such: they only ever count into `other`
+ * and `total`, and only when those can be shown.
+ *
  * `quiet` is judged at the end of the period (see {@link QUIET_LOOKBACK_DAYS})
  * and does not depend on where the period starts, so it is the same for the
  * week and for the term.
  *
- * @param p - The period, from {@link presidentPeriod}.
+ * @param scope - The scope of the request, from {@link presidentScope}.
  * @returns Counts only. See `PresidentConnection` for each field and for when
  *   one is `null`. An empty period gives zeros.
  */
-export function connection(p: Period): PresidentConnection {
-  const members = memberSummary(p);
+export function connection(scope: PresidentScope): PresidentConnection {
+  const members = memberView(scope);
   return {
-    connected: hideSmall(members.connected),
-    total: members.total === null ? null : hideSmall(members.total),
-    // A count of groups, each of them MIN_GROUP members or more: it points at
-    // nobody at 1 or 2, and groupSizes shows the same groups one by one.
-    groups: members.sizes.length,
-    bridges: hideSmall(members.bridges),
-    quiet: hideSmall(quietCount(p.to)),
+    connected: members.connected,
+    total: members.total,
+    // A count of groups, each of them MIN_GROUP members or more: it is not a
+    // count of people, so it is shown at 1 and 2 as well.
+    groups: members.groups,
+    bridges: members.bridges,
+    quiet: quietShown(scope),
   };
 }
 
@@ -465,11 +639,12 @@ export function connection(p: Period): PresidentConnection {
  * (not a bot, not oneself). Voice time that runs across a Monday is split
  * between the two weeks.
  *
- * @param p - The period, from {@link presidentPeriod}.
+ * @param scope - The scope of the request, from {@link presidentScope}.
  * @returns Two lists of the same length, oldest week first; both empty for an
  *   empty period.
  */
-export function weeklySeries(p: Period): PresidentWeeklySeries {
+export function weeklySeries(scope: PresidentScope): PresidentWeeklySeries {
+  const p = scope.period;
   if (p.to <= p.from) return { replies: [], voiceHours: [] };
   const first = weekStart(p.from);
   const weeks = (weekStart(p.to - 1) - first) / WEEK + 1;
@@ -511,39 +686,40 @@ export function weeklySeries(p: Period): PresidentWeeklySeries {
  * `memberWeb` in this file). Only sizes are returned, largest first, so the
  * order says nothing about who is in which group.
  *
- * @param p - The period, from {@link presidentPeriod}.
- * @returns `sizes`: every group of `MIN_GROUP` members or more. `other`: the
+ * @param scope - The scope of the request, from {@link presidentScope}.
+ * @returns `sizes`: the groups of `MIN_GROUP` members or more. `other`: the
  *   active members outside those groups, pairs and members tied to nobody
- *   alike, added up; `null` when that is 1 or 2.
+ *   alike, added up; `null` when hidden.
  *
  * @example
  * ```ts
  * // Groups of 14, 9 and 5, one pair and one member nobody answered.
- * groupSizes(p); // { sizes: [14, 9, 5], other: 3 }
+ * groupSizes(scope); // { sizes: [14, 9, 5], other: 3 }
  * ```
  */
-export function groupSizes(p: Period): PresidentGroupSizes {
-  const members = memberSummary(p);
+export function groupSizes(scope: PresidentScope): PresidentGroupSizes {
+  const members = memberView(scope);
   return { sizes: members.sizes, other: members.other };
 }
 
 /**
  * How much is going on: messages, active members and voice hours.
  *
- * `activeMembers` is the same number as `connection(p).total` and is hidden
- * under the same condition, so the two cannot be played against each other.
+ * `activeMembers` is the same number as `connection(scope).total` and is
+ * hidden under the same conditions, so the two cannot be played against each
+ * other.
  *
- * @param p - The period, from {@link presidentPeriod}.
+ * @param scope - The scope of the request, from {@link presidentScope}.
  * @returns The three numbers; zeros for an empty period.
  */
-export function engagement(p: Period): PresidentEngagement {
+export function engagement(scope: PresidentScope): PresidentEngagement {
+  const p = scope.period;
   if (p.to <= p.from) return { messages: 0, activeMembers: 0, voiceHours: 0 };
   const messages = messageCounts(p);
   const spans = voiceSpans(p);
-  const total = summarize(memberWeb(messages, spans)).total;
   return {
     messages: messages.reduce((sum, row) => sum + row.n, 0),
-    activeMembers: total === null ? null : hideSmall(total),
+    activeMembers: memberView(scope, memberWeb(messages, spans)).total,
     voiceHours: toHours(spans.reduce((sum, span) => sum + span.end - span.start, 0)),
   };
 }
@@ -660,6 +836,29 @@ function eventCounts(p: Period): { held: number; signUps: number } {
 }
 
 /**
+ * The club counts that may be shown for a period on its own: both, or neither
+ * when one of them is 1 or 2.
+ */
+function clubsShown(counts: { active: number; quiet: number }): { active: number | null; quiet: number | null } {
+  const show = hideSmall(counts.active) !== null && hideSmall(counts.quiet) !== null;
+  return { active: show ? counts.active : null, quiet: show ? counts.quiet : null };
+}
+
+/**
+ * The average attendance that may be shown for a set of occurrences.
+ *
+ * @param held - How many occurrences.
+ * @param signUps - Sign-ups added up over them.
+ * @returns The average with one decimal; 0 when nothing was held or nobody
+ *   signed up; null when it is above 0 and under `MIN_GROUP`, which comes from
+ *   occurrences with one or two sign-ups.
+ */
+function attendanceShown(held: number, signUps: number): number | null {
+  const average = held <= 0 ? 0 : signUps / held;
+  return average > 0 && average < MIN_GROUP ? null : Math.round(average * 10) / 10;
+}
+
+/**
  * Club and event health.
  *
  * The two club counts add up to the number of approved clubs, which every
@@ -671,20 +870,39 @@ function eventCounts(p: Period): { held: number; signUps: number } {
  * changes these numbers during the day; the activity they are compared with is
  * still that of the fixed period.
  *
- * @param p - The period, from {@link presidentPeriod}.
+ * For the longer of the two periods the same rule as for the members holds
+ * (see {@link showBeside}): its club counts are hidden when either is 1 or 2
+ * away from the shorter period's, and its average attendance is hidden when
+ * the occurrences outside the shorter period, taken alone, would have an
+ * average that is hidden. Otherwise `average x held` of the two periods could
+ * be subtracted to get the one or two sign-ups of a single event.
+ *
+ * @param scope - The scope of the request, from {@link presidentScope}.
  * @returns See `PresidentClubEventHealth` for each field. An empty period
  *   gives zeros.
  */
-export function clubEventHealth(p: Period): PresidentClubEventHealth {
-  const clubs = clubCounts(p);
-  const showClubs = hideSmall(clubs.active) !== null && hideSmall(clubs.quiet) !== null;
-  const events = eventCounts(p);
-  const average = events.held === 0 ? 0 : events.signUps / events.held;
-  return {
-    clubsActive: showClubs ? clubs.active : null,
-    clubsQuiet: showClubs ? clubs.quiet : null,
-    eventsHeld: events.held,
-    // An average between 0 and MIN_GROUP comes from occurrences with one or two sign-ups.
-    avgAttendance: average > 0 && average < MIN_GROUP ? null : Math.round(average * 10) / 10,
-  };
+export function clubEventHealth(scope: PresidentScope): PresidentClubEventHealth {
+  const clubs = clubsShown(clubCounts(scope.period));
+  const events = eventCounts(scope.period);
+  let avgAttendance = attendanceShown(events.held, events.signUps);
+
+  if (scope.shorter !== null) {
+    const shorterClubs = clubsShown(clubCounts(scope.shorter));
+    if (
+      clubs.active !== null &&
+      clubs.quiet !== null &&
+      shorterClubs.active !== null &&
+      shorterClubs.quiet !== null &&
+      (givesAway(clubs.active, shorterClubs.active) || givesAway(clubs.quiet, shorterClubs.quiet))
+    ) {
+      clubs.active = null;
+      clubs.quiet = null;
+    }
+    // The occurrences of the longer period that the shorter one does not have.
+    const shorterEvents = eventCounts(scope.shorter);
+    const outside = attendanceShown(events.held - shorterEvents.held, events.signUps - shorterEvents.signUps);
+    if (outside === null) avgAttendance = null;
+  }
+
+  return { clubsActive: clubs.active, clubsQuiet: clubs.quiet, eventsHeld: events.held, avgAttendance };
 }

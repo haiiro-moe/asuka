@@ -10,7 +10,9 @@
  * | `GET /api/activity/president/clubs` | `PresidentClubEventHealth` |
  *
  * All take `?period=week` or `?period=term` (`week` when it is missing) and
- * answer 400 with `{ error }` for anything else.
+ * answer 400 with `{ error }` for anything else. A handler asks the query
+ * module for the scope of the request, which holds the period and, for the
+ * longer of the two, the shorter one it must not be subtracted from.
  *
  * The only code this file may load is the president query module (and the
  * group detection). It must never import the admin or user queries, the
@@ -24,12 +26,12 @@ import {
   connection,
   engagement,
   groupSizes,
-  presidentPeriod,
+  presidentScope,
   weeklySeries,
 } from "../queries/president.ts";
 
-/** A president query: a fixed period in, a plain object of numbers out. */
-type PresidentQuery = (period: ReturnType<typeof presidentPeriod>) => object;
+/** A president query: the scope of a request in, a plain object of numbers out. */
+type PresidentQuery = (scope: ReturnType<typeof presidentScope>) => object;
 
 /**
  * Build one president route.
@@ -54,14 +56,14 @@ function presidentRoute(name: string, query: PresidentQuery, now: (() => number)
     handle(req) {
       try {
         const value = new URL(req.url).searchParams.get("period");
-        let period;
+        let scope;
         try {
-          period = presidentPeriod(value, now?.());
+          scope = presidentScope(value, now?.());
         } catch (error) {
           if (error instanceof RangeError) return Response.json({ error: error.message }, { status: 400 });
           throw error;
         }
-        return Response.json(query(period));
+        return Response.json(query(scope));
       } catch (error) {
         console.error(`[activity] president ${name} query failed:`, error);
         return Response.json({ error: "internal error" }, { status: 500 });
@@ -74,7 +76,7 @@ function presidentRoute(name: string, query: PresidentQuery, now: (() => number)
  * Build the president-tier routes around a clock.
  *
  * The clock only decides which UTC day it is: both periods end at 00:00 UTC of
- * that day, so two requests on the same day are answered for the same period.
+ * that day, so two requests on the same day are answered for the same scope.
  *
  * @param now - Returns the current time in unix seconds. Leave it out to use
  *   the real clock; tests pass a fixed one.

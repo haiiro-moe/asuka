@@ -7,7 +7,7 @@ defined, and the privacy rules that everything on this tier has to keep. Read
 
 | File | Holds |
 |---|---|
-| `src/plugins/activity/queries/president.ts` | The five queries, the fixed periods and the tuning constants. |
+| `src/plugins/activity/queries/president.ts` | The five queries, the fixed periods, the rules for what may be shown (`showAlone`, `showBeside`) and the tuning constants. |
 | `src/plugins/activity/groups.ts` | `detectGroups` and `countBridges`: pure group detection, no database. |
 | `src/plugins/activity/api/president.ts` | `presidentRoutes`, the five HTTP routes. |
 | `src/plugins/activity/types/president.ts` | The response types. Types only, no imports, so the web app can import it. |
@@ -42,10 +42,10 @@ would be.
 goes through `hideSmall` and is `null` at 1 and 2. `null` means **hidden**, not zero: the dashboard
 draws it as "off". A real 0 is sent as 0, because it identifies nobody.
 
-| Field | Counts | Hidden when |
+| Field | Counts | Hidden when (in either period) |
 |---|---|---|
 | `connection.connected` | members | never 1 or 2 by construction (a sum of groups of 3 or more) |
-| `connection.total`, `engagement.activeMembers` | members | `groups.other` is hidden, or the number itself is 1 or 2 |
+| `connection.total`, `engagement.activeMembers` | members | `groups.other` is hidden |
 | `connection.bridges` | pairs of members | 1 or 2 |
 | `connection.quiet` | members | 1 or 2 |
 | `groups.sizes` | members per group | groups under 3 are not listed at all |
@@ -53,10 +53,16 @@ draws it as "off". A real 0 is sent as 0, because it identifies nobody.
 | `clubs.clubsActive`, `clubs.clubsQuiet` | clubs | either of the two is 1 or 2 (both are hidden together) |
 | `clubs.avgAttendance` | members per event | above 0 and under 3 |
 
+The longer of the two periods hides more than this: see rule 5.
+
+**A pair, or a member tied to nobody, is never shown as such.** There is no count of pairs and no
+count of unconnected members. They only ever count into `groups.other` and the totals, and only
+when those can be shown.
+
 Not hidden, because they do not count members: `connection.groups` (a count of groups that each
-have 3 or more members, and the same groups are listed one by one in `groups.sizes`),
-`engagement.messages`, `engagement.voiceHours`, `weekly.replies`, `weekly.voiceHours` and
-`clubs.eventsHeld`. A privacy sweep that looks for "a 1 or a 2 anywhere" has to skip these.
+have 3 or more members), `engagement.messages`, `engagement.voiceHours`, `weekly.replies`,
+`weekly.voiceHours` and `clubs.eventsHeld`. A privacy sweep that looks for "a 1 or a 2 anywhere"
+has to skip these.
 
 ### 3. A hidden count cannot be recovered by subtraction
 
@@ -88,9 +94,10 @@ The same reasoning is applied to the clubs: `clubsActive + clubsQuiet` is the nu
 clubs, which every member can see on the clubs page. If only one of the two were hidden, that public
 number would give it back, so both are hidden when either is 1 or 2.
 
-`connection`, `groupSizes` and `engagement` all take their member counts from one function
-(`summarize` in `queries/president.ts`). Keep it that way: a second place that counts active
-members could disagree with the first by exactly the hidden remainder.
+`connection`, `groupSizes` and `engagement` all take their member counts from one place
+(`memberView` in `queries/president.ts`, which applies `showAlone` or `showBeside`). Keep it that
+way: a second place that counts active members could disagree with the first by exactly the hidden
+remainder.
 
 ### 4. Fixed periods only
 
@@ -108,8 +115,9 @@ minutes apart could be subtracted to see what one member did in between. These p
 day, at 00:00 UTC, so two requests on the same UTC day return identical numbers. The price is that
 the numbers are up to a day old.
 
-`presidentPeriod(value, now?)` builds them. It is the only period source a president route may use;
-`parsePeriodParam` is for the other tiers.
+`presidentPeriod(value, now?)` builds them, and `presidentScope(value, now?)` wraps the period a
+request asks for together with the other one when that is the shorter (rule 5). `presidentScope`
+is the only period source a president route may use; `parsePeriodParam` is for the other tiers.
 
 What makes the past hold still:
 
@@ -122,7 +130,64 @@ What can still change a past period: the history backfill adding old messages, a
 the excluded channels, a new term start, and the three tables that keep no history (see
 "Known limits").
 
-### 5. Excluded channels
+### 5. The two periods cannot be subtracted from each other
+
+Both periods end at the same moment, so one always lies inside the other: usually the week inside
+the term, and in the first days of a term the term inside the week. Every member of the shorter
+period is a member of the longer one. "15 active this week, 16 this term" therefore says that
+exactly one member was active earlier in the term and not since, as plainly as a count of 1 would.
+
+The rule (`presidentScope` picks the shorter period, `showBeside` applies it):
+
+> **The shorter period is shown as it is. A number of the longer period that is 1 or 2 away from
+> the same number of the shorter period is hidden, together with everything it could be rebuilt
+> from.**
+
+It is applied to every count of members, pairs or clubs that both periods have:
+
+| Number of the longer period | Shown only when |
+|---|---|
+| a size in `groups.sizes` | the shorter period lists a group of the same size (each of its groups is the twin of one group at most), or the size is not 1 or 2 away from **any** size listed for the shorter period. Otherwise the group is left out of the list. |
+| all of `groups.sizes` | the groups do not add up to 1 or 2 more or less than the shorter period's `connected`. Otherwise none is listed. |
+| `connection.connected` | every group is listed. With one left out, the true number would give its size away. |
+| `groups.other`, `connection.total`, `engagement.activeMembers` | `connected` is shown, the shorter period shows its own `other` and `total`, and neither `other` nor `total` is 1 or 2 away from the shorter period's. The three are shown or hidden together. |
+| `connection.bridges` | it is not 1 or 2 away from the bridges shown for the shorter period. |
+| `connection.quiet` | it is not 1 or 2 away from the shorter period's. Today the two are always equal, because both are judged at the shared end. |
+| `clubs.clubsActive`, `clubs.clubsQuiet` | neither is 1 or 2 away from the shorter period's. |
+| `clubs.avgAttendance` | the occurrences outside the shorter period would, taken alone, have an average that may be shown. Otherwise `average x held` of the two periods could be subtracted to get the one or two sign-ups of a single event. |
+
+Three things about it that are easy to get wrong:
+
+- **A group that is left out is counted nowhere.** It is not folded into `other`: that would put a
+  hidden size into a shown number. `connected`, `other` and `total` are hidden with it.
+  `connection.groups` still counts it, because a count of groups is not a count of people, so the
+  page can say "3 groups" next to two bars.
+- **The longer period shows no total when the shorter period shows none.** Next to a hidden total,
+  a shown one can pin the hidden one down: if the week shows a group of 8 and hides "one or two
+  more", a term total of 9 says that it was exactly one more, because the week's members are all in
+  the term.
+- **Only what the shorter period shows is looked at, never what it hides.** A rule that compared
+  against a hidden number would give that number away through what it lets through.
+
+For the longer period `null` therefore does not mean "1 or 2". It means hidden: for being small,
+or for being too close to the other period's number.
+
+The rule is checked by enumeration (`president.test.ts`, "every pair of small periods"). For every
+pair of periods with up to three groups of 3 to 8 members and up to 10 members outside them, the
+test confirms that what is shown keeps the table above, and that nothing hidden (either period's
+remainder, the members active only outside the shorter period, the difference in connected members,
+a group that is left out) has only one value that fits what is shown.
+
+What the rule does not cover: `engagement.messages`, `weekly.replies`, the voice hours and
+`clubs.eventsHeld` count messages, hours and events, not people, and are shown for both periods as
+they are. Their difference is the same kind of number, for the part of the longer period that lies
+outside the shorter one.
+
+The cost is that the term's group picture is often incomplete. A circle that had one or two more
+members earlier in the term than in the last week is exactly what must not be shown, and that is
+common.
+
+### 6. Excluded channels
 
 Every query filters with `notExcluded(channelColumn, parentColumn)`: `activity_messages` with its
 parent column, so a thread under an excluded channel is hidden too, and `activity_voice` with its
@@ -135,11 +200,14 @@ All are `GET`, `access: "president"` (admins pass too), and take `?period=week|t
 
 | Route | Query | Response type |
 |---|---|---|
-| `/api/activity/president/connection` | `connection(p)` | `PresidentConnection` |
-| `/api/activity/president/weekly` | `weeklySeries(p)` | `PresidentWeeklySeries` |
-| `/api/activity/president/groups` | `groupSizes(p)` | `PresidentGroupSizes` |
-| `/api/activity/president/engagement` | `engagement(p)` | `PresidentEngagement` |
-| `/api/activity/president/clubs` | `clubEventHealth(p)` | `PresidentClubEventHealth` |
+| `/api/activity/president/connection` | `connection(scope)` | `PresidentConnection` |
+| `/api/activity/president/weekly` | `weeklySeries(scope)` | `PresidentWeeklySeries` |
+| `/api/activity/president/groups` | `groupSizes(scope)` | `PresidentGroupSizes` |
+| `/api/activity/president/engagement` | `engagement(scope)` | `PresidentEngagement` |
+| `/api/activity/president/clubs` | `clubEventHealth(scope)` | `PresidentClubEventHealth` |
+
+Every query takes the `PresidentScope` of the request, from `presidentScope(value, now?)`: the
+period, and the shorter period when the request is for the longer one. A handler builds it once.
 
 ```jsonc
 // GET /api/activity/president/connection?period=week
@@ -156,6 +224,12 @@ All are `GET`, `access: "president"` (admins pass too), and take `?period=week|t
 
 // GET /api/activity/president/clubs?period=week
 { "clubsActive": null, "clubsQuiet": null, "eventsHeld": 2, "avgAttendance": 4 }
+
+// GET /api/activity/president/connection?period=term, with one group left out (rule 5)
+{ "connected": null, "total": null, "groups": 3, "bridges": 8, "quiet": 3 }
+
+// GET /api/activity/president/groups?period=term, the same day
+{ "sizes": [12, 4], "other": null }
 ```
 
 `presidentRoutes` is what `api.ts` collects. `createPresidentRoutes(now)` builds the same routes
@@ -209,9 +283,9 @@ anyone as a list of members, on any tier.
 
 | Field | Meaning |
 |---|---|
-| `connected` | Members in a group of 3 or more. |
+| `connected` | Members in a group of 3 or more. Nothing else: two members who only talk to each other, and a member tied to nobody, are not connected, and are never shown as a number of their own. |
 | `total` | Active members: `connected` plus `groups.other`. |
-| `groups` | Number of groups of 3 or more. Equals `groups.sizes.length`. |
+| `groups` | Number of groups of 3 or more. Equals `groups.sizes.length`, except for the longer period when a group is left out of the list (rule 5). |
 | `bridges` | Pairs of tied members who are in two different groups of 3 or more. A pair counts once. A tie to a member outside those groups is not a bridge. `countBridges` returns 1 for two triangles joined by one edge. |
 | `quiet` | Members who have gone quiet, as of the end of the period. |
 
@@ -224,12 +298,17 @@ The 90-day lookback is there because the log cannot tell who is still a member: 
 records the old messages of people who left long before recording began, and without a bound they
 would count as quiet forever. Someone silent for more than 120 days is gone, not quiet.
 
+This is not the admin tier's `drift` list counted. `drift` is defined over the admin's own period
+("active in the previous period, nothing in the last 30 days") and ends now, not at 00:00 UTC, so
+the president's number and the length of the admin's list can differ.
+
 ### `groups`
 
 `sizes` are the groups of 3 or more, largest first. `other` is everybody active outside them, added
 up: pairs and members tied to nobody alike (`mergeSmallGroups`, with every untied member counted as
 a group of one). Groups of 14, 9 and 5, a pair and one lone member give
-`{ "sizes": [14, 9, 5], "other": 3 }`.
+`{ "sizes": [14, 9, 5], "other": 3 }`. For the longer period a group can be missing from `sizes`,
+and `other` hidden, under rule 5.
 
 ### `weekly`
 
@@ -263,17 +342,23 @@ one. The `week` period touches two calendar weeks unless today is a Monday.
 
 ## Known limits
 
-- **`null` says "1 or 2".** That is how `hideSmall` is defined in the foundation: a hidden number is
-  known to exist, only not whether it is 1 or 2.
+- **For the shorter period, `null` says "1 or 2".** That is how `hideSmall` is defined in the
+  foundation: a hidden number is known to exist, only not whether it is 1 or 2. For the longer
+  period it says less, because a number can also be hidden for being close to the shorter period's.
 - **Numbers can be compared from one day to the next.** The periods move daily, so `quiet` going
   from 3 to 4 says that one more member crossed the 30-day line that day. Fixed periods make this
   a daily step instead of a minute-by-minute one; they do not remove it.
-- **`week` and `term` can be compared with each other.** Both end at the same moment and one lies
-  inside the other, so `term.total - week.total` is the number of members who were active earlier
-  in the term but not in the last seven days, and that can be 1 or 2. The same holds for every
-  other pair of numbers from the two periods. Closing it would mean hiding a period's group sizes
-  whenever its total is within 2 of the other period's, since `sizes` and `other` add up to the
-  total; that was judged too much to hide without a decision by the owner.
+- **The longer period is often incomplete.** Rule 5 hides a group, and the totals with it, whenever
+  a circle differs by one or two members between the week and the term. On a small server that is
+  the usual case, so the term view will often show only some of its groups.
+- **Rule 5 compares numbers, not people.** A group of the longer period is left out when its size
+  is close to any size of the shorter period, whether or not it is the same circle, and is listed
+  when the shorter period has a group of exactly its size, whether or not it is the same circle.
+  The first hides more than strictly needed. The second is what lets an unchanged circle be shown
+  at all: without it, a week with groups of 6 and 4 would blank the same two groups in the term,
+  because 6 is 2 away from 4. The page cannot say which week group a term group "is".
+- **Counts of messages, replies, hours and events can still be subtracted across the periods.**
+  They are not counts of people (see rule 5).
 - **Clubs, events and sign-ups have no history.** They are read as they are now. A club approved or
   ended today, an event edited today, or a sign-up withdrawn today changes `clubs` during the day.
   The president causes most of these themselves, and the club list and the sign-ups are visible to
@@ -301,7 +386,12 @@ All in `queries/president.ts`, except the first two, which the whole plugin shar
 
 - Draw `null` as "off" (hidden), never as 0 and never as a dash that could be read as "none".
 - Do not compute a number the API hides. If `total` is `null`, do not show `connected + other`, and
-  do not add anything up to stand in for it.
+  do not add anything up to stand in for it. If `connected` is `null`, do not show the sum of the
+  bars.
+- `connection.groups` can be larger than the number of bars (`groups.sizes.length`): a group can
+  be left out of the list for the longer period. Say so ("3 groups, 2 shown"), do not draw an empty
+  bar, and do not put the two periods' bars side by side as if they were the same circles.
+- The tile for `connected` is "in groups": members in a group of 3 or more.
 - The page offers `week` and `term` and nothing else.
 - All buckets are UTC, and the page says so.
 
@@ -319,6 +409,7 @@ The tests that pin the rules above:
 | No count of 1 or 2 | "no count of one or two members is ever shown", and one test per field. |
 | No recovery by subtraction | "a hidden remainder cannot be recovered by subtraction" tries `total - shown groups`, `total - connected` and `activeMembers - connected` next to a hidden pair and next to hidden lone members; "the published member counts always add up, whatever is hidden". |
 | Fixed periods | "two requests minutes apart return identical numbers" (injected clock, live activity recorded in between), "the numbers move once the UTC day has ended". |
+| The two periods cannot be subtracted | "a member active earlier in the term but not this week hides the term's total" (15 against 16 in the raw data), "a difference of three or more between the periods is shown", "no difference between the periods is shown", one test each for a group that grew, the sum of the groups, bridges, clubs, attendance and quiet, "when the term is younger than a week, the week is the longer period", "forty scrambled terms: no count is one or two away from the week's", and the two "every pair of small periods" tests on `showBeside` itself. |
 | Only `week` and `term` | "routes reject ?period=30d with 400", "routes reject every period but week and term, and never echo it". |
 | Route file imports | "the route file imports only the president queries and the group detection". |
 | Errors say nothing | "a failure inside a handler is a plain 500 that says nothing about its cause". |

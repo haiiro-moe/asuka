@@ -20,8 +20,12 @@ import {
   engagement,
   groupSizes,
   presidentPeriod,
+  presidentScope,
+  showAlone,
+  showBeside,
   weeklySeries,
 } from "./president.ts";
+import type { MemberWeb, PresidentScope } from "./president.ts";
 
 const MINUTE = 60;
 const HOUR = 3600;
@@ -78,6 +82,11 @@ function reset() {
   for (const table of touchedTables) db.delete(table).run();
   setExcluded("");
   setTermStart(null);
+}
+
+/** The scope of a period looked at on its own, as the shorter of the two fixed periods is. */
+function alone(period: Period): PresidentScope {
+  return { period, shorter: null };
 }
 
 let nextId = 0;
@@ -241,6 +250,35 @@ test("any other period is a RangeError", () => {
   }
 });
 
+// --- presidentScope ---------------------------------------------------------
+
+test("presidentScope names the week as the shorter period of a longer term", () => {
+  setTermStart(TODAY - 40 * DAY);
+  const term: Period = { from: TODAY - 40 * DAY, to: TODAY };
+  expect(presidentScope("term", NOW)).toEqual({ period: term, shorter: WEEK });
+  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: null });
+  expect(presidentScope(null, NOW)).toEqual({ period: WEEK, shorter: null });
+});
+
+test("presidentScope names a term younger than a week as the shorter period", () => {
+  setTermStart(TODAY - 3 * DAY);
+  const term: Period = { from: TODAY - 3 * DAY, to: TODAY };
+  expect(presidentScope("term", NOW)).toEqual({ period: term, shorter: null });
+  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: term });
+});
+
+test("presidentScope has no shorter period when the two are the same", () => {
+  setTermStart(TODAY - 7 * DAY);
+  expect(presidentScope("term", NOW)).toEqual({ period: WEEK, shorter: null });
+  expect(presidentScope("week", NOW)).toEqual({ period: WEEK, shorter: null });
+});
+
+test("presidentScope rejects what presidentPeriod rejects", () => {
+  for (const value of ["30d", "7d", "year", "all", "", "Week"]) {
+    expect(() => presidentScope(value, NOW)).toThrow(RangeError);
+  }
+});
+
 // --- connection: gone quiet -------------------------------------------------
 
 /** A member whose last message is `days` days and one second before the period ends. */
@@ -251,13 +289,13 @@ function lastSeen(userId: string, days: number) {
 test("exactly one member quiet for 30 days or more is hidden", () => {
   lastSeen(user(1), 30);
   chat(users(2, 5), IN_WEEK);
-  expect(connection(WEEK).quiet).toBeNull();
+  expect(connection(alone(WEEK)).quiet).toBeNull();
 });
 
 test("two quiet members are hidden too", () => {
   lastSeen(user(1), 30);
   lastSeen(user(2), 45);
-  expect(connection(WEEK).quiet).toBeNull();
+  expect(connection(alone(WEEK)).quiet).toBeNull();
 });
 
 test("three quiet members are counted", () => {
@@ -265,12 +303,12 @@ test("three quiet members are counted", () => {
   lastSeen(user(2), 45);
   lastSeen(user(3), 80);
   chat(users(4, 7), IN_WEEK);
-  expect(connection(WEEK).quiet).toBe(3);
+  expect(connection(alone(WEEK)).quiet).toBe(3);
 });
 
 test("nobody quiet is 0", () => {
   chat(users(1, 4), IN_WEEK);
-  expect(connection(WEEK).quiet).toBe(0);
+  expect(connection(alone(WEEK)).quiet).toBe(0);
 });
 
 test("a member seen within the last 30 days is not quiet", () => {
@@ -284,13 +322,13 @@ test("a member seen within the last 30 days is not quiet", () => {
   // Still connected: the segment was opened long ago and never closed.
   post(user(6), TODAY - 50 * DAY);
   voice(user(6), TODAY - 45 * DAY, null);
-  expect(connection(WEEK).quiet).toBe(3);
+  expect(connection(alone(WEEK)).quiet).toBe(3);
 });
 
 test("voice counts as having been active before going quiet", () => {
   for (const n of [1, 2]) lastSeen(user(n), 40);
   voice(user(3), TODAY - 50 * DAY, TODAY - 50 * DAY + HOUR);
-  expect(connection(WEEK).quiet).toBe(3);
+  expect(connection(alone(WEEK)).quiet).toBe(3);
 });
 
 test("a member who left is not quiet, one who came back is", () => {
@@ -298,23 +336,23 @@ test("a member who left is not quiet, one who came back is", () => {
   recordMembership(user(4), "leave", TODAY - 35 * DAY);
   recordMembership(user(5), "leave", TODAY - 35 * DAY);
   recordMembership(user(5), "join", TODAY - 33 * DAY);
-  expect(connection(WEEK).quiet).toBe(4);
+  expect(connection(alone(WEEK)).quiet).toBe(4);
   // A leave after the period ended has not happened yet, as far as the period goes.
   recordMembership(user(1), "leave", TODAY + HOUR);
-  expect(connection(WEEK).quiet).toBe(4);
+  expect(connection(alone(WEEK)).quiet).toBe(4);
 });
 
 test("a member silent for longer than the lookback is gone, not quiet", () => {
   for (const n of [1, 2, 3]) lastSeen(user(n), 40);
   lastSeen(user(4), 30 + QUIET_LOOKBACK_DAYS);
-  expect(connection(WEEK).quiet).toBe(3);
+  expect(connection(alone(WEEK)).quiet).toBe(3);
 });
 
 test("activity after the period ended does not end the quiet", () => {
   for (const n of [1, 2, 3]) lastSeen(user(n), 40);
   post(user(1), TODAY + HOUR);
   voice(user(2), TODAY + HOUR, TODAY + 2 * HOUR);
-  expect(connection(WEEK).quiet).toBe(3);
+  expect(connection(alone(WEEK)).quiet).toBe(3);
 });
 
 test("activity in an excluded channel neither makes nor ends a quiet", () => {
@@ -326,9 +364,9 @@ test("activity in an excluded channel neither makes nor ends a quiet", () => {
   // Old, and only in that channel: never seen at all once it is excluded.
   post(user(5), TODAY - 40 * DAY - 1, { channelId: channel(51), parentChannelId: hidden });
   voice(user(6), TODAY - 40 * DAY, TODAY - 40 * DAY + HOUR, hidden);
-  expect(connection(WEEK).quiet).toBe(5);
+  expect(connection(alone(WEEK)).quiet).toBe(5);
   setExcluded(hidden);
-  expect(connection(WEEK).quiet).toBe(4);
+  expect(connection(alone(WEEK)).quiet).toBe(4);
 });
 
 // --- connection: groups, connected, total, bridges --------------------------
@@ -338,48 +376,48 @@ test("groups counts groups of three or more only", () => {
   chat(users(5, 7), IN_WEEK + HOUR);
   chat(users(8, 9), IN_WEEK + 2 * HOUR);
   post(user(10), IN_WEEK + 3 * HOUR);
-  const result = connection(WEEK);
+  const result = connection(alone(WEEK));
   expect(result.groups).toBe(2);
   expect(result.connected).toBe(7);
   // The pair and the member nobody answered are three: enough to be counted.
   expect(result.total).toBe(10);
-  expect(result.groups).toBe(groupSizes(WEEK).sizes.length);
+  expect(result.groups).toBe(groupSizes(alone(WEEK)).sizes.length);
 });
 
 test("nothing recorded is all zeros, not hidden", () => {
-  expect(connection(WEEK)).toEqual({ connected: 0, total: 0, groups: 0, bridges: 0, quiet: 0 });
+  expect(connection(alone(WEEK))).toEqual({ connected: 0, total: 0, groups: 0, bridges: 0, quiet: 0 });
 });
 
 test("an empty period is all zeros", () => {
   chat(users(1, 4), IN_WEEK);
   const empty: Period = { from: TODAY, to: TODAY };
-  expect(connection(empty)).toMatchObject({ connected: 0, total: 0, groups: 0, bridges: 0 });
-  expect(groupSizes(empty)).toEqual({ sizes: [], other: 0 });
-  expect(weeklySeries(empty)).toEqual({ replies: [], voiceHours: [] });
-  expect(engagement(empty)).toEqual({ messages: 0, activeMembers: 0, voiceHours: 0 });
+  expect(connection(alone(empty))).toMatchObject({ connected: 0, total: 0, groups: 0, bridges: 0 });
+  expect(groupSizes(alone(empty))).toEqual({ sizes: [], other: 0 });
+  expect(weeklySeries(alone(empty))).toEqual({ replies: [], voiceHours: [] });
+  expect(engagement(alone(empty))).toEqual({ messages: 0, activeMembers: 0, voiceHours: 0 });
 });
 
 test("connected is the members of the shown groups, total adds the rest when it can be shown", () => {
   chat(users(1, 5), IN_WEEK);
   for (const n of [6, 7, 8]) post(user(n), IN_WEEK + HOUR);
-  expect(connection(WEEK)).toMatchObject({ connected: 5, total: 8, groups: 1 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 5, total: 8, groups: 1 });
 });
 
 test("total is hidden when one or two members are outside the shown groups", () => {
   chat(users(1, 5), IN_WEEK);
   post(user(6), IN_WEEK + HOUR);
-  expect(connection(WEEK)).toMatchObject({ connected: 5, total: null, groups: 1 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 5, total: null, groups: 1 });
   post(user(7), IN_WEEK + HOUR);
-  expect(connection(WEEK)).toMatchObject({ connected: 5, total: null, groups: 1 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 5, total: null, groups: 1 });
   post(user(8), IN_WEEK + HOUR);
-  expect(connection(WEEK)).toMatchObject({ connected: 5, total: 8, groups: 1 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 5, total: 8, groups: 1 });
 });
 
 test("one or two active members alone are hidden entirely", () => {
   post(user(1), IN_WEEK);
   post(user(2), IN_WEEK);
-  expect(connection(WEEK)).toMatchObject({ connected: 0, total: null, groups: 0, bridges: 0 });
-  expect(engagement(WEEK).activeMembers).toBeNull();
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 0, total: null, groups: 0, bridges: 0 });
+  expect(engagement(alone(WEEK)).activeMembers).toBeNull();
 });
 
 test("bridges counts the pairs that tie two shown groups together, hidden under three", () => {
@@ -387,18 +425,18 @@ test("bridges counts the pairs that tie two shown groups together, hidden under 
   const right = users(11, 14);
   chat(left, IN_WEEK);
   chat(right, IN_WEEK + HOUR);
-  expect(connection(WEEK)).toMatchObject({ groups: 2, bridges: 0 });
+  expect(connection(alone(WEEK))).toMatchObject({ groups: 2, bridges: 0 });
 
   reply(left[0]!, right[0]!, IN_WEEK + 2 * HOUR);
-  expect(connection(WEEK)).toMatchObject({ groups: 2, bridges: null });
+  expect(connection(alone(WEEK))).toMatchObject({ groups: 2, bridges: null });
 
   reply(right[1]!, left[1]!, IN_WEEK + 2 * HOUR);
-  expect(connection(WEEK)).toMatchObject({ groups: 2, bridges: null });
+  expect(connection(alone(WEEK))).toMatchObject({ groups: 2, bridges: null });
 
   reply(left[2]!, right[2]!, IN_WEEK + 2 * HOUR);
   // A second reply between the same two members is still one pair.
   reply(right[2]!, left[2]!, IN_WEEK + 2 * HOUR);
-  expect(connection(WEEK)).toMatchObject({ groups: 2, bridges: 3, connected: 8, total: 8 });
+  expect(connection(alone(WEEK))).toMatchObject({ groups: 2, bridges: 3, connected: 8, total: 8 });
 });
 
 test("a tie to a pair outside the shown groups is not a bridge", () => {
@@ -409,8 +447,8 @@ test("a tie to a pair outside the shown groups is not a bridge", () => {
     reply(user(6), user(5), IN_WEEK + HOUR + i);
   }
   reply(user(5), user(1), IN_WEEK + 2 * HOUR);
-  const result = connection(WEEK);
-  expect(groupSizes(WEEK)).toEqual({ sizes: [4], other: null });
+  const result = connection(alone(WEEK));
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [4], other: null });
   expect(result).toMatchObject({ groups: 1, bridges: 0, connected: 4, total: null });
 });
 
@@ -423,51 +461,51 @@ test("a reply to yourself, to a bot or to someone not active in the period ties 
   post(user(9), TODAY - 20 * DAY);
   for (const n of [3, 4, 5]) reply(user(n), user(9), IN_WEEK);
   // Five members wrote, each tied to nobody. user(9) is not one of them.
-  expect(groupSizes(WEEK)).toEqual({ sizes: [], other: 5 });
-  expect(connection(WEEK)).toMatchObject({ connected: 0, total: 5, groups: 0, bridges: 0 });
-  expect(engagement(WEEK).activeMembers).toBe(5);
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [], other: 5 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 0, total: 5, groups: 0, bridges: 0 });
+  expect(engagement(alone(WEEK)).activeMembers).toBe(5);
 });
 
 test("a mention is not a tie", () => {
   for (const n of [1, 2, 3]) {
     post(user(n), IN_WEEK, { mentionedUserIds: users(1, 3).filter((id) => id !== user(n)) });
   }
-  expect(groupSizes(WEEK)).toEqual({ sizes: [], other: 3 });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [], other: 3 });
 });
 
 test("sharing a voice channel ties members together", () => {
   for (const n of [1, 2, 3]) voice(user(n), IN_WEEK, IN_WEEK + 30 * MINUTE);
-  expect(groupSizes(WEEK)).toEqual({ sizes: [3], other: 0 });
-  expect(connection(WEEK)).toMatchObject({ connected: 3, total: 3, groups: 1 });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [3], other: 0 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 3, total: 3, groups: 1 });
 });
 
 test("a few minutes in the same voice channel are not a tie", () => {
   for (const n of [1, 2, 3]) voice(user(n), IN_WEEK, IN_WEEK + 9 * MINUTE);
-  expect(groupSizes(WEEK)).toEqual({ sizes: [], other: 3 });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [], other: 3 });
 });
 
 test("voice in different channels, or at different times, is not shared", () => {
   voice(user(1), IN_WEEK, IN_WEEK + HOUR, channel(21));
   voice(user(2), IN_WEEK, IN_WEEK + HOUR, channel(22));
   voice(user(3), IN_WEEK + 2 * HOUR, IN_WEEK + 3 * HOUR, channel(21));
-  expect(groupSizes(WEEK)).toEqual({ sizes: [], other: 3 });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [], other: 3 });
 });
 
 test("shared voice is measured inside the period only", () => {
   // Together for an hour, of which only the last five minutes are in the week.
   for (const n of [1, 2, 3]) voice(user(n), WEEK.from - 55 * MINUTE, WEEK.from + 5 * MINUTE);
-  expect(groupSizes(WEEK)).toEqual({ sizes: [], other: 3 });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [], other: 3 });
 });
 
 test("activity outside the period is not counted", () => {
   chat(users(1, 4), WEEK.from - 1);
   chat(users(5, 8), TODAY);
-  expect(connection(WEEK)).toMatchObject({ connected: 0, total: 0, groups: 0 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 0, total: 0, groups: 0 });
   // The first and the last second of the period are in it; its end is not.
   chat(users(1, 3), WEEK.from);
-  expect(connection(WEEK)).toMatchObject({ connected: 3, total: 3, groups: 1 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 3, total: 3, groups: 1 });
   chat(users(5, 7), TODAY - 1);
-  expect(connection(WEEK)).toMatchObject({ connected: 6, total: 6, groups: 2 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 6, total: 6, groups: 2 });
 });
 
 test("excluded channels, and threads under them, are left out of every number", () => {
@@ -477,15 +515,15 @@ test("excluded channels, and threads under them, are left out of every number", 
   for (const n of [9, 10, 11]) voice(user(n), IN_WEEK, IN_WEEK + HOUR, hidden);
   chat(users(12, 14), IN_WEEK + 2 * HOUR);
 
-  expect(connection(WEEK)).toMatchObject({ connected: 14, total: 14, groups: 4 });
-  expect(engagement(WEEK)).toEqual({ messages: 30, activeMembers: 14, voiceHours: 3 });
-  expect(sum(weeklySeries(WEEK).replies)).toBe(30);
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 14, total: 14, groups: 4 });
+  expect(engagement(alone(WEEK))).toEqual({ messages: 30, activeMembers: 14, voiceHours: 3 });
+  expect(sum(weeklySeries(alone(WEEK)).replies)).toBe(30);
 
   setExcluded(`${hidden}, ${channel(60)}`);
-  expect(connection(WEEK)).toMatchObject({ connected: 3, total: 3, groups: 1 });
-  expect(groupSizes(WEEK)).toEqual({ sizes: [3], other: 0 });
-  expect(engagement(WEEK)).toEqual({ messages: 6, activeMembers: 3, voiceHours: 0 });
-  expect(weeklySeries(WEEK)).toEqual({ replies: [0, 6], voiceHours: [0, 0] });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 3, total: 3, groups: 1 });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [3], other: 0 });
+  expect(engagement(alone(WEEK))).toEqual({ messages: 6, activeMembers: 3, voiceHours: 0 });
+  expect(weeklySeries(alone(WEEK))).toEqual({ replies: [0, 6], voiceHours: [0, 0] });
 });
 
 // --- groupSizes -------------------------------------------------------------
@@ -497,21 +535,21 @@ test("groupSizes shows the groups of three or more and merges the rest into othe
   chat(users(24, 25), IN_WEEK + 2 * HOUR);
   post(user(26), IN_WEEK + 3 * HOUR);
   chat(users(27, 31), IN_WEEK + 4 * HOUR);
-  expect(groupSizes(WEEK)).toEqual({ sizes: [14, 9, 5], other: 3 });
-  expect(connection(WEEK)).toMatchObject({ connected: 28, total: 31, groups: 3 });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [14, 9, 5], other: 3 });
+  expect(connection(alone(WEEK))).toMatchObject({ connected: 28, total: 31, groups: 3 });
 });
 
 test("groupSizes hides other when it is one small group of two", () => {
   chat(users(1, 4), IN_WEEK);
   chat(users(5, 6), IN_WEEK + HOUR);
-  expect(groupSizes(WEEK)).toEqual({ sizes: [4], other: null });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [4], other: null });
 });
 
 test("groupSizes lists the largest group first, whatever the ids are", () => {
   chat(users(1, 3), IN_WEEK);
   chat(users(11, 16), IN_WEEK + HOUR);
   chat(users(21, 24), IN_WEEK + 2 * HOUR);
-  expect(groupSizes(WEEK)).toEqual({ sizes: [6, 4, 3], other: 0 });
+  expect(groupSizes(alone(WEEK))).toEqual({ sizes: [6, 4, 3], other: 0 });
 });
 
 // --- weeklySeries -----------------------------------------------------------
@@ -536,7 +574,7 @@ test("weeklySeries buckets replies and voice hours by UTC week, Monday first", (
   // Still open: it runs to the end of the period, not to now.
   voice(user(3), TODAY - 2 * HOUR, null);
 
-  expect(weeklySeries(WEEK)).toEqual({ replies: [2, 3], voiceHours: [2.5, 4] });
+  expect(weeklySeries(alone(WEEK))).toEqual({ replies: [2, 3], voiceHours: [2.5, 4] });
 });
 
 test("weeklySeries has one bucket for every UTC week the period touches", () => {
@@ -548,10 +586,10 @@ test("weeklySeries has one bucket for every UTC week the period touches", () => 
   reply(user(1), user(2), MONDAY - 14 * DAY + 5);
   reply(user(1), user(2), MONDAY + 5);
   voice(user(1), MONDAY - 8 * DAY, MONDAY - 8 * DAY + 3 * HOUR);
-  expect(weeklySeries(term)).toEqual({ replies: [1, 2, 0, 1], voiceHours: [0, 3, 0, 0] });
+  expect(weeklySeries(alone(term))).toEqual({ replies: [1, 2, 0, 1], voiceHours: [0, 3, 0, 0] });
 
   // Three whole weeks ending on a Monday are exactly three buckets.
-  expect(weeklySeries({ from: MONDAY - 21 * DAY, to: MONDAY })).toEqual({
+  expect(weeklySeries(alone({ from: MONDAY - 21 * DAY, to: MONDAY }))).toEqual({
     replies: [2, 2, 0],
     voiceHours: [0, 3, 0],
   });
@@ -565,22 +603,22 @@ test("engagement counts messages, active members and voice hours", () => {
   post(user(2), IN_WEEK + HOUR);
   // Only in voice: active without a message.
   for (const n of [4, 5, 6]) voice(user(n), IN_WEEK, IN_WEEK + 30 * MINUTE);
-  expect(engagement(WEEK)).toEqual({ messages: 8, activeMembers: 6, voiceHours: 1.5 });
+  expect(engagement(alone(WEEK))).toEqual({ messages: 8, activeMembers: 6, voiceHours: 1.5 });
 });
 
 test("engagement gives voice hours to one decimal", () => {
   voice(user(1), IN_WEEK, IN_WEEK + 100 * MINUTE);
-  expect(engagement(WEEK).voiceHours).toBe(1.7);
+  expect(engagement(alone(WEEK)).voiceHours).toBe(1.7);
 });
 
 test("activeMembers is the same number as the connection total", () => {
   chat(users(1, 5), IN_WEEK);
   post(user(6), IN_WEEK + HOUR);
-  expect(engagement(WEEK).activeMembers).toBeNull();
-  expect(connection(WEEK).total).toBeNull();
+  expect(engagement(alone(WEEK)).activeMembers).toBeNull();
+  expect(connection(alone(WEEK)).total).toBeNull();
   for (const n of [7, 8]) post(user(n), IN_WEEK + HOUR);
-  expect(engagement(WEEK).activeMembers).toBe(8);
-  expect(connection(WEEK).total).toBe(8);
+  expect(engagement(alone(WEEK)).activeMembers).toBe(8);
+  expect(connection(alone(WEEK)).total).toBe(8);
 });
 
 // --- clubEventHealth --------------------------------------------------------
@@ -605,7 +643,7 @@ test("clubEventHealth splits the approved clubs into active and quiet", () => {
   club({ status: "terminated", channelId: channel(39) });
   club({ channelId: channel(40), createdAt: TODAY + HOUR });
 
-  expect(clubEventHealth(WEEK)).toMatchObject({ clubsActive: 3, clubsQuiet: 3 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ clubsActive: 3, clubsQuiet: 3 });
 });
 
 test("clubEventHealth hides both club counts when either is one or two", () => {
@@ -613,9 +651,9 @@ test("clubEventHealth hides both club counts when either is one or two", () => {
     club({ channelId: channel(30 + n) });
     post(user(n), IN_WEEK, { channelId: channel(30 + n) });
   }
-  expect(clubEventHealth(WEEK)).toMatchObject({ clubsActive: 4, clubsQuiet: 0 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ clubsActive: 4, clubsQuiet: 0 });
   club({ channelId: channel(40) });
-  expect(clubEventHealth(WEEK)).toMatchObject({ clubsActive: null, clubsQuiet: null });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ clubsActive: null, clubsQuiet: null });
 });
 
 test("clubEventHealth leaves out a club whose channels are excluded", () => {
@@ -625,9 +663,9 @@ test("clubEventHealth leaves out a club whose channels are excluded", () => {
   }
   club({ channelId: channel(40), voiceChannelId: channel(41) });
   post(user(4), IN_WEEK, { channelId: channel(40) });
-  expect(clubEventHealth(WEEK)).toMatchObject({ clubsActive: 4, clubsQuiet: 0 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ clubsActive: 4, clubsQuiet: 0 });
   setExcluded(`${channel(40)},${channel(41)}`);
-  expect(clubEventHealth(WEEK)).toMatchObject({ clubsActive: 3, clubsQuiet: 0 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ clubsActive: 3, clubsQuiet: 0 });
 });
 
 test("clubEventHealth counts the event occurrences in the period and their attendance", () => {
@@ -641,35 +679,35 @@ test("clubEventHealth counts the event occurrences in the period and their atten
   event(WEEK.from - DAY);
   event(TODAY + HOUR, { createdAt: TODAY - DAY });
 
-  expect(clubEventHealth(WEEK)).toMatchObject({ eventsHeld: 2, avgAttendance: 5 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ eventsHeld: 2, avgAttendance: 5 });
   const ninetyDays: Period = { from: TODAY - 90 * DAY, to: TODAY };
   // 5 occurrences with 6, one with 4, one with nobody: 34 / 7.
-  expect(clubEventHealth(ninetyDays)).toMatchObject({ eventsHeld: 7, avgAttendance: 4.9 });
+  expect(clubEventHealth(alone(ninetyDays))).toMatchObject({ eventsHeld: 7, avgAttendance: 4.9 });
 });
 
 test("clubEventHealth hides an average attendance under three", () => {
   const small = event(IN_WEEK);
   attend(small.id, 2);
-  expect(clubEventHealth(WEEK)).toMatchObject({ eventsHeld: 1, avgAttendance: null });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ eventsHeld: 1, avgAttendance: null });
   const large = event(IN_WEEK + HOUR);
   attend(large.id, 5);
-  expect(clubEventHealth(WEEK)).toMatchObject({ eventsHeld: 2, avgAttendance: 3.5 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ eventsHeld: 2, avgAttendance: 3.5 });
 });
 
 test("clubEventHealth without events or clubs is zeros", () => {
-  expect(clubEventHealth(WEEK)).toEqual({ clubsActive: 0, clubsQuiet: 0, eventsHeld: 0, avgAttendance: 0 });
+  expect(clubEventHealth(alone(WEEK))).toEqual({ clubsActive: 0, clubsQuiet: 0, eventsHeld: 0, avgAttendance: 0 });
   // Nobody signed up: an average of 0 identifies nobody.
   event(IN_WEEK);
-  expect(clubEventHealth(WEEK)).toMatchObject({ eventsHeld: 1, avgAttendance: 0 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ eventsHeld: 1, avgAttendance: 0 });
 });
 
 test("clubEventHealth ignores sign-ups and events made after the period ended", () => {
   const movie = event(IN_WEEK);
   attend(movie.id, 4);
-  expect(clubEventHealth(WEEK)).toMatchObject({ eventsHeld: 1, avgAttendance: 4 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ eventsHeld: 1, avgAttendance: 4 });
   db.insert(schema.eventParticipants).values({ eventId: movie.id, userId: user(150), createdAt: TODAY + HOUR }).run();
   event(IN_WEEK + HOUR, { createdAt: TODAY + HOUR });
-  expect(clubEventHealth(WEEK)).toMatchObject({ eventsHeld: 1, avgAttendance: 4 });
+  expect(clubEventHealth(alone(WEEK))).toMatchObject({ eventsHeld: 1, avgAttendance: 4 });
 });
 
 // --- routes -----------------------------------------------------------------
@@ -721,25 +759,22 @@ test("routes accept week and term, and week when the period is missing", async (
   }
 });
 
-test("routes answer with what the queries return for the fixed period", async () => {
+test("routes answer with what the queries return for the scope of the day", async () => {
   setTermStart(TODAY - 20 * DAY);
   chat(users(1, 4), IN_WEEK);
-  chat(users(5, 9), TODAY - 15 * DAY);
+  chat(users(5, 11), TODAY - 15 * DAY);
   voice(user(1), IN_WEEK, IN_WEEK + HOUR);
-  const term: Period = { from: TODAY - 20 * DAY, to: TODAY };
-  for (const [name, p] of [
-    ["week", WEEK],
-    ["term", term],
-  ] as const) {
+  for (const name of ["week", "term"] as const) {
+    const scope = presidentScope(name, NOW);
     const bodies = await callAll(() => NOW, name);
-    expect(bodies.connection).toEqual(connection(p));
-    expect(bodies.weekly).toEqual(weeklySeries(p));
-    expect(bodies.groups).toEqual(groupSizes(p));
-    expect(bodies.engagement).toEqual(engagement(p));
-    expect(bodies.clubs).toEqual(clubEventHealth(p));
+    expect(bodies.connection).toEqual(connection(scope));
+    expect(bodies.weekly).toEqual(weeklySeries(scope));
+    expect(bodies.groups).toEqual(groupSizes(scope));
+    expect(bodies.engagement).toEqual(engagement(scope));
+    expect(bodies.clubs).toEqual(clubEventHealth(scope));
   }
   expect((await callAll(() => NOW, "week")).connection.connected).toBe(4);
-  expect((await callAll(() => NOW, "term")).connection.connected).toBe(9);
+  expect((await callAll(() => NOW, "term")).connection.connected).toBe(11);
 });
 
 test("a failure inside a handler is a plain 500 that says nothing about its cause", async () => {
@@ -771,8 +806,8 @@ test("the default routes work without an injected clock", async () => {
 test("two requests minutes apart return identical numbers", async () => {
   setTermStart(TODAY - 40 * DAY);
   chat(users(1, 5), IN_WEEK);
-  chat(users(6, 8), TODAY - 20 * DAY);
-  for (const n of [9, 10, 11]) lastSeen(user(n), 33);
+  chat(users(6, 13), TODAY - 20 * DAY);
+  for (const n of [21, 22, 23]) lastSeen(user(n), 33);
   for (const n of [1, 2, 3]) voice(user(n), IN_WEEK, IN_WEEK + 47 * MINUTE);
   // Connected since yesterday evening and still there at the first request.
   voice(user(4), TODAY - 3 * HOUR, null);
@@ -791,7 +826,7 @@ test("two requests minutes apart return identical numbers", async () => {
   closeVoiceSegment(user(4), NOW + 2 * MINUTE);
   voice(user(21), NOW + MINUTE, null);
   post(user(22), NOW + 3 * MINUTE, { channelId: channel(31) });
-  recordMembership(user(10), "leave", NOW + 3 * MINUTE);
+  recordMembership(user(21), "leave", NOW + 3 * MINUTE);
   db.insert(schema.eventParticipants).values({ eventId: movie.id, userId: user(160), createdAt: NOW + MINUTE }).run();
 
   const after = { week: await callAll(() => clock, "week"), term: await callAll(() => clock, "term") };
@@ -800,7 +835,7 @@ test("two requests minutes apart return identical numbers", async () => {
   // The numbers did have something to hold still.
   expect(before.week.connection).toEqual({ connected: 5, total: 5, groups: 1, bridges: 0, quiet: 3 });
   // In the term the three members who went quiet were still writing, each alone.
-  expect(before.term.connection).toMatchObject({ connected: 8, total: 11, groups: 2, quiet: 3 });
+  expect(before.term.connection).toMatchObject({ connected: 13, total: 16, groups: 2, quiet: 3 });
   expect(before.week.clubs).toEqual({ clubsActive: null, clubsQuiet: null, eventsHeld: 1, avgAttendance: 4 });
   expect(before.week.engagement.voiceHours).toBe(5.4);
 });
@@ -1084,6 +1119,561 @@ test("sixty scrambled servers: the counts are right, and never give a small one 
   // Both cases came up often enough to mean something.
   expect(hiddenRounds).toBeGreaterThan(5);
   expect(shownRounds).toBeGreaterThan(5);
+});
+
+// --- week next to term: the routes ------------------------------------------
+
+/** A moment in a 40-day term that is before the week. */
+const EARLIER = TODAY - 20 * DAY;
+/** The term the tests below set: 40 days up to today 00:00 UTC. */
+const TERM: Period = { from: TODAY - 40 * DAY, to: TODAY };
+
+/** In the week: eight members who all answer each other, and seven who write alone. */
+function seedWeekOfFifteen() {
+  chat(users(1, 8), IN_WEEK);
+  for (const id of users(11, 17)) post(id, IN_WEEK + HOUR);
+}
+
+test("a member active earlier in the term but not this week hides the term's total", async () => {
+  setTermStart(TERM.from);
+  seedWeekOfFifteen();
+  // Earlier in the term three of the seven and one more member were a group of four.
+  chat([user(11), user(12), user(13), user(20)], EARLIER);
+
+  // The raw data: 15 members active in the week, 16 in the term. One apart.
+  expect(connection(alone(WEEK)).total).toBe(15);
+  expect(connection(alone(TERM)).total).toBe(16);
+  expect(groupSizes(alone(TERM))).toEqual({ sizes: [8, 4], other: 4 });
+
+  const { week, term } = await everyResponse();
+  // The shorter period is shown as it is.
+  expect(week.groups).toEqual({ sizes: [8], other: 7 });
+  expect(week.connection).toMatchObject({ connected: 8, total: 15, groups: 1 });
+  expect(week.engagement.activeMembers).toBe(15);
+  // The longer one loses its total, and `other` with it: sizes + other would add up to it.
+  expect(term.groups).toEqual({ sizes: [8, 4], other: null });
+  expect(term.connection).toMatchObject({ connected: 12, total: null, groups: 2 });
+  expect(term.engagement.activeMembers).toBeNull();
+});
+
+test("two members apart hides the term's total as well", async () => {
+  setTermStart(TERM.from);
+  seedWeekOfFifteen();
+  chat([user(11), user(12), user(13), user(20), user(21)], EARLIER);
+  expect(connection(alone(TERM)).total).toBe(17);
+
+  const { term } = await everyResponse();
+  expect(term.groups).toEqual({ sizes: [8, 5], other: null });
+  expect(term.connection).toMatchObject({ connected: 13, total: null, groups: 2 });
+  expect(term.engagement.activeMembers).toBeNull();
+});
+
+test("a difference of three or more between the periods is shown", async () => {
+  setTermStart(TERM.from);
+  seedWeekOfFifteen();
+  // Three members who were only active earlier in the term, a group of their own.
+  chat(users(20, 22), EARLIER);
+  expect(connection(alone(TERM)).total).toBe(18);
+
+  const { week, term } = await everyResponse();
+  expect(week.connection).toMatchObject({ connected: 8, total: 15 });
+  expect(term.groups).toEqual({ sizes: [8, 3], other: 7 });
+  expect(term.connection).toMatchObject({ connected: 11, total: 18, groups: 2 });
+  expect(term.engagement.activeMembers).toBe(18);
+});
+
+test("no difference between the periods is shown", async () => {
+  setTermStart(TERM.from);
+  seedWeekOfFifteen();
+  // Earlier in the term the same fifteen wrote, and nobody else.
+  chat(users(1, 8), EARLIER);
+  for (const id of users(11, 17)) post(id, EARLIER);
+
+  const { week, term } = await everyResponse();
+  expect(term.groups).toEqual({ sizes: [8], other: 7 });
+  expect(term.groups).toEqual(week.groups);
+  expect(term.connection).toEqual(week.connection);
+  expect(term.connection).toMatchObject({ connected: 8, total: 15, groups: 1 });
+  expect(term.engagement.activeMembers).toBe(15);
+  expect(term.engagement.messages).toBe(2 * week.engagement.messages);
+});
+
+test("a group that is one larger over the term is not listed, and connected is hidden", async () => {
+  setTermStart(TERM.from);
+  chat(users(1, 6), IN_WEEK);
+  // Earlier in the term the six and a seventh member all answered each other.
+  chat(users(1, 7), EARLIER);
+  expect(connection(alone(WEEK)).connected).toBe(6);
+  expect(connection(alone(TERM)).connected).toBe(7);
+
+  const { week, term } = await everyResponse();
+  expect(week.groups).toEqual({ sizes: [6], other: 0 });
+  expect(week.connection).toMatchObject({ connected: 6, total: 6, groups: 1 });
+  // 7 against 6 would say "one more member": the group is not listed, and
+  // nothing that contains it is shown. The count of groups is not a count of people.
+  expect(term.groups).toEqual({ sizes: [], other: null });
+  expect(term.connection).toMatchObject({ connected: null, total: null, groups: 1 });
+  expect(term.engagement.activeMembers).toBeNull();
+});
+
+test("only the group that grew by one or two is left out of the size list", async () => {
+  setTermStart(TERM.from);
+  chat(users(1, 8), IN_WEEK);
+  chat(users(11, 14), IN_WEEK);
+  // The group of four had a fifth member earlier in the term.
+  chat(users(11, 15), EARLIER);
+  expect(groupSizes(alone(TERM))).toEqual({ sizes: [8, 5], other: 0 });
+
+  const { week, term } = await everyResponse();
+  expect(week.groups).toEqual({ sizes: [8, 4], other: 0 });
+  expect(term.groups).toEqual({ sizes: [8], other: null });
+  expect(term.connection).toMatchObject({ connected: null, total: null, groups: 2 });
+});
+
+test("groups whose members add up to one or two more than the week's are not listed at all", async () => {
+  setTermStart(TERM.from);
+  chat(users(1, 6), IN_WEEK);
+  chat(users(11, 13), IN_WEEK);
+  // Earlier in the term those nine and a tenth member were one circle.
+  chat([...users(1, 6), ...users(11, 13), user(20)], EARLIER);
+  expect(groupSizes(alone(TERM))).toEqual({ sizes: [10], other: 0 });
+  expect(connection(alone(WEEK)).connected).toBe(9);
+
+  const { week, term } = await everyResponse();
+  expect(week.groups).toEqual({ sizes: [6, 3], other: 0 });
+  // 10 is not close to 6 or to 3, but connected would be 10 against 9.
+  expect(term.groups).toEqual({ sizes: [], other: null });
+  expect(term.connection).toMatchObject({ connected: null, total: null, groups: 1 });
+});
+
+test("quiet is the same for both periods, shown or hidden", async () => {
+  setTermStart(TERM.from);
+  chat(users(1, 6), IN_WEEK);
+  for (const n of [31, 32, 33]) lastSeen(user(n), 50);
+  let both = await everyResponse();
+  expect(both.week.connection.quiet).toBe(3);
+  expect(both.term.connection.quiet).toBe(3);
+
+  recordMembership(user(33), "leave", TODAY - 45 * DAY);
+  both = await everyResponse();
+  expect(both.week.connection.quiet).toBeNull();
+  expect(both.term.connection.quiet).toBeNull();
+});
+
+test("bridges one or two apart hide the term's bridges", async () => {
+  setTermStart(TERM.from);
+  const left = users(1, 4);
+  const right = users(11, 14);
+  chat(left, IN_WEEK);
+  chat(right, IN_WEEK);
+  for (const i of [0, 1, 2]) reply(left[i]!, right[i]!, IN_WEEK + HOUR);
+  // One more pair across the two groups earlier in the term: 4 against 3.
+  reply(left[3]!, right[3]!, EARLIER);
+  expect(connection(alone(TERM)).bridges).toBe(4);
+
+  let both = await everyResponse();
+  expect(both.week.connection).toMatchObject({ groups: 2, bridges: 3 });
+  expect(both.term.connection).toMatchObject({ groups: 2, bridges: null, connected: 8, total: 8 });
+
+  // Two more pairs: 6 against 3 is far enough apart.
+  reply(left[0]!, right[1]!, EARLIER);
+  reply(left[1]!, right[0]!, EARLIER);
+  both = await everyResponse();
+  expect(both.week.connection.bridges).toBe(3);
+  expect(both.term.connection).toMatchObject({ groups: 2, bridges: 6 });
+});
+
+test("club counts one or two apart hide the term's club counts", async () => {
+  setTermStart(TERM.from);
+  for (let n = 1; n <= 10; n++) club({ channelId: channel(30 + n) });
+  for (const n of [1, 2, 3]) post(user(n), IN_WEEK, { channelId: channel(30 + n) });
+  // A fourth club was only active earlier in the term: 4 against 3.
+  post(user(4), EARLIER, { channelId: channel(34) });
+  expect(clubEventHealth(alone(TERM))).toMatchObject({ clubsActive: 4, clubsQuiet: 6 });
+
+  let both = await everyResponse();
+  expect(both.week.clubs).toMatchObject({ clubsActive: 3, clubsQuiet: 7 });
+  expect(both.term.clubs).toMatchObject({ clubsActive: null, clubsQuiet: null });
+
+  // Two more: 6 against 3, and 4 against 7.
+  for (const n of [5, 6]) post(user(n), EARLIER, { channelId: channel(30 + n) });
+  both = await everyResponse();
+  expect(both.week.clubs).toMatchObject({ clubsActive: 3, clubsQuiet: 7 });
+  expect(both.term.clubs).toMatchObject({ clubsActive: 6, clubsQuiet: 4 });
+});
+
+test("an event with one or two sign-ups outside the week hides the term's average", async () => {
+  setTermStart(TERM.from);
+  attend(event(IN_WEEK).id, 5);
+  const small = event(EARLIER);
+  attend(small.id, 2);
+  // On its own the term's average is fine: 7 sign-ups over 2 events.
+  expect(clubEventHealth(alone(TERM))).toMatchObject({ eventsHeld: 2, avgAttendance: 3.5 });
+
+  let both = await everyResponse();
+  expect(both.week.clubs).toMatchObject({ eventsHeld: 1, avgAttendance: 5 });
+  // 3.5 x 2 - 5 x 1 would be the 2 sign-ups of the other event.
+  expect(both.term.clubs).toMatchObject({ eventsHeld: 2, avgAttendance: null });
+
+  // With four sign-ups the other event could be shown on its own, so the average is too.
+  attend(small.id, 2);
+  both = await everyResponse();
+  expect(both.term.clubs).toMatchObject({ eventsHeld: 2, avgAttendance: 4.5 });
+});
+
+test("when the term is younger than a week, the week is the longer period", async () => {
+  setTermStart(TODAY - 3 * DAY);
+  // IN_WEEK is two days ago: inside the three-day term.
+  seedWeekOfFifteen();
+  // Five days ago, before the term began, there was that group of four.
+  chat([user(11), user(12), user(13), user(20)], TODAY - 5 * DAY);
+
+  const { week, term } = await everyResponse();
+  expect(term.groups).toEqual({ sizes: [8], other: 7 });
+  expect(term.connection).toMatchObject({ connected: 8, total: 15, groups: 1 });
+  expect(week.groups).toEqual({ sizes: [8, 4], other: null });
+  expect(week.connection).toMatchObject({ connected: 12, total: null, groups: 2 });
+  expect(week.engagement.activeMembers).toBeNull();
+});
+
+test("a term that began today takes nothing away from the week", async () => {
+  setTermStart(TODAY + HOUR);
+  seedWeekOfFifteen();
+  const { week, term } = await everyResponse();
+  expect(week.groups).toEqual({ sizes: [8], other: 7 });
+  expect(week.connection).toMatchObject({ connected: 8, total: 15, groups: 1 });
+  expect(term.connection).toMatchObject({ connected: 0, total: 0, groups: 0, bridges: 0 });
+});
+
+/** Fail when two numbers of the same kind, one from each period, are 1 or 2 apart. */
+function expectNothingBetween(a: Awaited<ReturnType<typeof callAll>>, b: Awaited<ReturnType<typeof callAll>>) {
+  const pairs: [number | null, number | null][] = [
+    [a.connection.connected, b.connection.connected],
+    [a.connection.total, b.connection.total],
+    [a.connection.bridges, b.connection.bridges],
+    [a.connection.quiet, b.connection.quiet],
+    [a.groups.other, b.groups.other],
+    [a.engagement.activeMembers, b.engagement.activeMembers],
+    [a.clubs.clubsActive, b.clubs.clubsActive],
+    [a.clubs.clubsQuiet, b.clubs.clubsQuiet],
+  ];
+  for (const [x, y] of pairs) {
+    if (x !== null && y !== null) expect([1, 2]).not.toContain(Math.abs(x - y));
+  }
+  // Group sizes: once equal sizes are paired off, what is left of the longer
+  // period's list keeps its distance from every size of the shorter period's.
+  const [longer, shorter] = sum(a.groups.sizes) >= sum(b.groups.sizes) ? [a, b] : [b, a];
+  expect(unpaired(longer.groups.sizes, shorter.groups.sizes).filter((x) => closeToAny(x, shorter.groups.sizes))).toEqual(
+    [],
+  );
+}
+
+/** The sizes of `list` that are left when each size of `twins` has taken one equal size away. */
+function unpaired(list: number[], twins: number[]): number[] {
+  const left = [...twins];
+  return list.filter((size) => {
+    const twin = left.indexOf(size);
+    if (twin < 0) return true;
+    left.splice(twin, 1);
+    return false;
+  });
+}
+
+/** Whether `size` is 1 or 2 away from one of `sizes`. */
+function closeToAny(size: number, sizes: number[]): boolean {
+  return sizes.some((other) => Math.abs(size - other) === 1 || Math.abs(size - other) === 2);
+}
+
+test("forty scrambled terms: no count is one or two away from the week's", async () => {
+  // A fixed pseudo-random sequence: the same forty servers on every run.
+  let state = 7_112_026;
+  const next = (bound: number) => {
+    state = (state * 1103515245 + 12345) % 2147483648;
+    return state % bound;
+  };
+  let hiddenTotals = 0;
+  let shownTotals = 0;
+  for (let round = 0; round < 40; round++) {
+    reset();
+    setTermStart(TERM.from);
+    const members = 4 + next(14);
+    // Most of it in the week, a part of it only earlier in the term.
+    for (const [at, replies] of [
+      [IN_WEEK, 10 + next(40)],
+      [EARLIER, next(25)],
+    ] as const) {
+      for (let i = 0; i < replies; i++) {
+        reply(user(1 + next(members)), user(1 + next(members)), at + next(DAY));
+      }
+    }
+    for (let n = 1; n <= 6; n++) club({ channelId: channel(30 + n) });
+    for (let i = next(7); i > 0; i--) post(user(1), next(2) === 0 ? IN_WEEK : EARLIER, { channelId: channel(30 + i) });
+
+    const { week, term } = await everyResponse();
+    expectNothingBetween(week, term);
+    expectNoSmallRemainder(nestedCounts(week));
+    expectNoSmallRemainder(nestedCounts(term));
+    expect(term.engagement.activeMembers).toBe(term.connection.total);
+    expect(term.connection.quiet).toBe(week.connection.quiet);
+    // The week never depends on the term: it is what it would be alone.
+    expect(week.connection).toEqual(connection(alone(WEEK)));
+    expect(week.groups).toEqual(groupSizes(alone(WEEK)));
+    if (term.connection.total === null) hiddenTotals += 1;
+    else shownTotals += 1;
+  }
+  // Both outcomes came up often enough to mean something.
+  expect(hiddenTotals).toBeGreaterThan(5);
+  expect(shownTotals).toBeGreaterThan(5);
+});
+
+// --- week next to term: the rule itself, without a database ------------------
+
+/** A member web: groups of three or more, and `rest` members outside them. */
+function web(groups: number[], rest: number, bridges = 0): MemberWeb {
+  return { sizes: [...groups, ...new Array<number>(rest).fill(1)], bridges };
+}
+
+/** The shorter period's view, as a president gets it. */
+const shorterView = (groups: number[], rest: number, bridges = 0) => showAlone(web(groups, rest, bridges));
+
+test("showAlone hides the remainder and the total together", () => {
+  expect(showAlone(web([6, 4], 3, 5))).toEqual({
+    sizes: [6, 4],
+    groups: 2,
+    connected: 10,
+    other: 3,
+    total: 13,
+    bridges: 5,
+  });
+  expect(showAlone(web([6, 4], 2, 1))).toEqual({
+    sizes: [6, 4],
+    groups: 2,
+    connected: 10,
+    other: null,
+    total: null,
+    bridges: null,
+  });
+  expect(showAlone(web([], 0))).toEqual({ sizes: [], groups: 0, connected: 0, other: 0, total: 0, bridges: 0 });
+});
+
+test("showBeside shows everything when nothing is one or two apart", () => {
+  expect(showBeside(web([9, 3], 4, 6), shorterView([6], 7, 3))).toEqual({
+    sizes: [9, 3],
+    groups: 2,
+    connected: 12,
+    other: 4,
+    total: 16,
+    bridges: 6,
+  });
+  // The same numbers as the shorter period are fine too.
+  expect(showBeside(web([6], 7, 3), shorterView([6], 7, 3))).toEqual(shorterView([6], 7, 3));
+});
+
+test("showBeside leaves out a group one or two away from any group of the shorter period", () => {
+  for (const size of [4, 5, 7, 8]) {
+    expect(showBeside(web([12, size], 0), shorterView([6], 0))).toMatchObject({
+      sizes: [12],
+      groups: 2,
+      connected: null,
+      other: null,
+      total: null,
+    });
+  }
+  for (const size of [3, 6, 9]) {
+    expect(showBeside(web([12, size], 0), shorterView([6], 0))).toMatchObject({
+      sizes: [12, size],
+      groups: 2,
+      connected: 12 + size,
+      other: 0,
+      total: 12 + size,
+    });
+  }
+});
+
+test("showBeside lists a group that has a twin of the same size in the shorter period", () => {
+  // 6 is two away from 4, but the shorter period shows a 6 and a 4 itself.
+  expect(showBeside(web([6, 4], 0), shorterView([6, 4], 0))).toEqual(shorterView([6, 4], 0));
+  // One twin for one group: the second 6 has none, and is two away from the 4.
+  expect(showBeside(web([6, 6], 0), shorterView([6, 4], 0))).toMatchObject({
+    sizes: [6],
+    groups: 2,
+    connected: null,
+    other: null,
+    total: null,
+  });
+  expect(showBeside(web([5, 5, 3], 0), shorterView([5, 3], 0))).toMatchObject({ sizes: [5, 3], groups: 3, connected: null });
+  // A second group of the same size is fine when no other size is close to it.
+  expect(showBeside(web([6, 6], 0), shorterView([6], 0))).toMatchObject({ sizes: [6, 6], groups: 2, connected: 12, total: 12 });
+});
+
+test("showBeside lists no group when connected would be one or two apart", () => {
+  expect(showBeside(web([10], 3), shorterView([6, 3], 3))).toMatchObject({
+    sizes: [],
+    groups: 1,
+    connected: null,
+    other: null,
+    total: null,
+  });
+  expect(showBeside(web([12], 3), shorterView([6, 3], 3))).toMatchObject({
+    sizes: [12],
+    connected: 12,
+    other: 3,
+    total: 15,
+  });
+});
+
+test("showBeside hides other and the total when either is one or two apart", () => {
+  // other 4 against 3.
+  expect(showBeside(web([9], 4), shorterView([6], 3))).toMatchObject({ sizes: [9], connected: 9, other: null, total: null });
+  // Groups and other are each far enough apart, the totals are 16 against 15.
+  expect(showBeside(web([8, 4], 4), shorterView([8], 7))).toMatchObject({
+    sizes: [8, 4],
+    connected: 12,
+    other: null,
+    total: null,
+  });
+});
+
+test("showBeside shows no total when the shorter period shows none", () => {
+  // Otherwise 9 members in the longer period, next to "8 and one or two more"
+  // in the shorter one, would say that it was exactly one more.
+  expect(showBeside(web([5], 4), shorterView([8], 1))).toMatchObject({ sizes: [5], connected: 5, other: null, total: null });
+  expect(showBeside(web([12], 5), shorterView([8], 1))).toMatchObject({
+    sizes: [12],
+    connected: 12,
+    other: null,
+    total: null,
+  });
+});
+
+test("showBeside hides bridges one or two apart, and not when the shorter period hides its own", () => {
+  expect(showBeside(web([6, 6], 0, 4), shorterView([6, 6], 0, 3)).bridges).toBeNull();
+  expect(showBeside(web([6, 6], 0, 6), shorterView([6, 6], 0, 3)).bridges).toBe(6);
+  expect(showBeside(web([6, 6], 0, 3), shorterView([6, 6], 0, 3)).bridges).toBe(3);
+  expect(showBeside(web([6, 6], 0, 2), shorterView([6, 6], 0, 0)).bridges).toBeNull();
+  expect(showBeside(web([6, 6], 0, 4), shorterView([6, 6], 0, 2)).bridges).toBe(4);
+});
+
+/** Every list of at most `max` group sizes out of `values`, largest first. */
+function* sizeLists(values: number[], max: number, start = 0, picked: number[] = []): Generator<number[]> {
+  yield [...picked].sort((a, b) => b - a);
+  if (picked.length === max) return;
+  for (let i = start; i < values.length; i++) {
+    picked.push(values[i]!);
+    yield* sizeLists(values, max, i, picked);
+    picked.pop();
+  }
+}
+
+/** A period reduced to what the rules look at. */
+interface Shape {
+  groups: number[];
+  rest: number;
+}
+
+/** Every shape with up to three groups of 3 to 8 members and up to 10 members outside them. */
+function everyShape(): Shape[] {
+  const shapes: Shape[] = [];
+  for (const groups of sizeLists([3, 4, 5, 6, 7, 8], 3)) {
+    for (let rest = 0; rest <= 10; rest++) shapes.push({ groups, rest });
+  }
+  return shapes;
+}
+
+const members = (shape: Shape) => sum(shape.groups) + shape.rest;
+const apart = (a: number, b: number) => Math.abs(a - b) === 1 || Math.abs(a - b) === 2;
+
+test("every pair of small periods: what is shown for the longer one keeps the rules", () => {
+  const shapes = everyShape();
+  let pairs = 0;
+  let broken = 0;
+  for (const shorter of shapes) {
+    const inner = showAlone(web(shorter.groups, shorter.rest));
+    for (const longer of shapes) {
+      if (members(shorter) > members(longer)) continue;
+      pairs += 1;
+      const shown = showBeside(web(longer.groups, longer.rest), inner);
+      const listedAll = shown.sizes.length === longer.groups.length;
+      const ok =
+        // The count of groups is the real one; a listed size is a real group.
+        shown.groups === longer.groups.length &&
+        shown.sizes.every((size, i) => longer.groups.includes(size) && (i === 0 || shown.sizes[i - 1]! >= size)) &&
+        // Apart from the twins of the shorter period's sizes, no listed size is
+        // one or two away from a size of the shorter period.
+        unpaired(shown.sizes, inner.sizes).every((size) => !closeToAny(size, inner.sizes)) &&
+        // And nothing is left out without a reason: a group with a twin, or far
+        // from every size, is listed, unless the sum of all groups emptied the list.
+        (shown.sizes.length === 0 ||
+          unpaired(longer.groups, shown.sizes).every(
+            (size) => closeToAny(size, inner.sizes) && !unpaired(inner.sizes, shown.sizes).includes(size),
+          )) &&
+        // connected is all the groups, and only when all of them are listed.
+        (shown.connected === null || (listedAll && shown.connected === sum(longer.groups))) &&
+        (shown.connected === null || inner.connected === null || !apart(shown.connected, inner.connected)) &&
+        // other and total come together, are the real numbers, and need connected.
+        (shown.other === null) === (shown.total === null) &&
+        (shown.other === null ||
+          (shown.other === longer.rest && shown.connected !== null && shown.total === members(longer))) &&
+        (shown.other === null || (inner.other !== null && !apart(shown.other, inner.other))) &&
+        (shown.total === null || (inner.total !== null && !apart(shown.total, inner.total))) &&
+        // Nothing shown is a 1 or a 2.
+        ![shown.connected, shown.other, shown.total, ...shown.sizes].some((n) => n === 1 || n === 2);
+      if (!ok) broken += 1;
+    }
+  }
+  expect(pairs).toBeGreaterThan(300_000);
+  expect(broken).toBe(0);
+});
+
+test("every pair of small periods: nothing hidden can be worked out from what is shown", () => {
+  // Two pairs of periods that look the same to a president are in one class. A
+  // hidden number is given away when every pair of a class agrees on it.
+  const shapes = everyShape();
+  const small = (shape: Shape) => shape.rest <= 4 && shape.groups.length <= 2 && shape.groups.every((g) => g <= 5);
+  const classes = new Map<string, { shorter: Shape; longer: Shape; small: boolean }[]>();
+  for (const shorter of shapes) {
+    const inner = showAlone(web(shorter.groups, shorter.rest));
+    const innerKey = JSON.stringify(inner);
+    for (const longer of shapes) {
+      if (members(shorter) > members(longer)) continue;
+      const key = innerKey + JSON.stringify(showBeside(web(longer.groups, longer.rest), inner));
+      let list = classes.get(key);
+      if (!list) classes.set(key, (list = []));
+      list.push({ shorter, longer, small: small(shorter) && small(longer) });
+    }
+  }
+
+  /** What must not be known exactly: null when the number is not a small one. */
+  const secrets: Record<string, (pair: { shorter: Shape; longer: Shape }) => string | null> = {
+    "the shorter period's remainder": ({ shorter }) => (shorter.rest === 1 || shorter.rest === 2 ? `${shorter.rest}` : null),
+    "the longer period's remainder": ({ longer }) => (longer.rest === 1 || longer.rest === 2 ? `${longer.rest}` : null),
+    "members active only outside the shorter period": ({ shorter, longer }) =>
+      apart(members(longer), members(shorter)) ? `${members(longer) - members(shorter)}` : null,
+    "the difference in connected members": ({ shorter, longer }) =>
+      apart(sum(longer.groups), sum(shorter.groups)) ? `${sum(longer.groups) - sum(shorter.groups)}` : null,
+    "the size of a group that is left out": ({ shorter, longer }) => {
+      const shown = showBeside(web(longer.groups, longer.rest), showAlone(web(shorter.groups, shorter.rest)));
+      const hidden = unpaired(longer.groups, shown.sizes);
+      return hidden.length > 0 ? JSON.stringify(hidden) : null;
+    },
+  };
+
+  const givenAway: string[] = [];
+  let judged = 0;
+  for (const [key, list] of classes) {
+    // Only classes with a small pair in them are judged: the larger ones run
+    // into the edge of the shapes above. A pair that is missing from a class
+    // can only make it look more telling than it is, never less, so an empty
+    // result holds for every class that is judged.
+    if (!list.some((pair) => pair.small)) continue;
+    judged += 1;
+    for (const [name, secret] of Object.entries(secrets)) {
+      const values = new Set(list.map(secret));
+      if (values.size === 1 && !values.has(null)) givenAway.push(`${name}: ${key}`);
+    }
+  }
+  expect(judged).toBeGreaterThan(200);
+  expect(givenAway).toEqual([]);
 });
 
 // --- the route file ---------------------------------------------------------

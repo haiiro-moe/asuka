@@ -6,9 +6,11 @@
  * without pulling in server code.
  *
  * Every value is a number, a list of numbers or `null`. There is no id and no
- * name in any of them. `null` means **hidden**: the number exists but is too
- * small to show without pointing at one or two members. Draw it as "off",
- * never as 0. A real 0 is sent as 0. See docs/activity/queries-president.md.
+ * name in any of them. `null` means **hidden**: the number exists, but showing
+ * it would point at one or two members, on its own or held against another
+ * number the president can see (the same number of the other period, or the
+ * parts it is the sum of). Draw it as "off", never as 0. A real 0 is sent as 0.
+ * See docs/activity/queries-president.md.
  */
 
 /**
@@ -18,32 +20,41 @@
  * - `term`: from the start of the current presidency term up to today 00:00
  *   UTC (the 90 days before today when no term is on record).
  *
- * Both end at today 00:00 UTC, so the numbers change once a day.
+ * Both end at today 00:00 UTC, so the numbers change once a day, and one of
+ * the two always lies inside the other. The shorter one (usually the week) is
+ * shown as it is. In the longer one, a number that is 1 or 2 away from the
+ * shorter one's is hidden.
  */
 export type PresidentPeriodName = "week" | "term";
 
 /** `GET /api/activity/president/connection`: how connected the members are. */
 export interface PresidentConnection {
   /**
-   * Members who are part of a group of three or more (the groups of
-   * {@link PresidentGroupSizes.sizes}, added up). 0 when there is no such group.
+   * Members in a group of three or more. A pair, or a member tied to nobody,
+   * is never shown as such: they only ever count into
+   * {@link PresidentGroupSizes.other} and {@link PresidentConnection.total}.
+   * 0 when there is no such group. Hidden when a group is left out of
+   * {@link PresidentGroupSizes.sizes}; otherwise it is those sizes added up.
    */
   connected: number | null;
   /**
    * Members active in the period: {@link PresidentConnection.connected} plus
-   * {@link PresidentGroupSizes.other}. Hidden whenever `other` is hidden,
+   * {@link PresidentGroupSizes.other}. Hidden exactly when `other` is hidden,
    * because the difference to `connected` would give `other` away.
    */
   total: number | null;
   /**
-   * How many groups of three or more there are: the length of
-   * {@link PresidentGroupSizes.sizes}. It counts groups, not members, so it is
-   * shown at 1 and 2 as well and is not `null` today.
+   * How many groups of three or more there are. It counts groups, not members,
+   * so it is shown at 1 and 2 as well and is not `null` today. It is the
+   * length of {@link PresidentGroupSizes.sizes}, except in the longer period
+   * when a group is left out of that list: then it is larger by the groups
+   * left out.
    */
   groups: number | null;
   /**
    * Bridges: pairs of members who are tied to each other across two of those
-   * groups. Hidden at 1 and 2.
+   * groups. Hidden at 1 and 2, and in the longer period when 1 or 2 away from
+   * the shorter period's.
    */
   bridges: number | null;
   /**
@@ -70,11 +81,21 @@ export interface PresidentWeeklySeries {
 
 /** `GET /api/activity/president/groups`: how large the groups are. */
 export interface PresidentGroupSizes {
-  /** Member count of every group of three or more, largest first. */
+  /**
+   * Member count of the groups of three or more, largest first. For the
+   * shorter period that is every group. For the longer period a group is left
+   * out when its size is 1 or 2 away from a size listed for the shorter
+   * period, unless the shorter period lists a group of exactly its size (and
+   * all are left out when their sum is 1 or 2 away from the shorter period's
+   * `connected`). A group that is left out is counted nowhere else.
+   */
   sizes: number[];
   /**
-   * Active members outside those groups (pairs, and members tied to nobody),
-   * added up. Hidden when that is 1 or 2; 0 when there are none.
+   * Active members outside the groups of three or more (pairs, and members
+   * tied to nobody), added up. 0 when there are none. Hidden when it is 1 or
+   * 2, and in the longer period also when a group is left out of `sizes`, when
+   * the shorter period hides its own, or when it or the total is 1 or 2 away
+   * from the shorter period's.
    */
   other: number | null;
 }
@@ -96,7 +117,9 @@ export interface PresidentEngagement {
 export interface PresidentClubEventHealth {
   /**
    * Approved clubs with a message or voice time in their channels in the
-   * period. Hidden together with {@link PresidentClubEventHealth.clubsQuiet} when either is 1 or 2.
+   * period. Hidden together with {@link PresidentClubEventHealth.clubsQuiet}
+   * when either is 1 or 2, and in the longer period when either is 1 or 2 away
+   * from the shorter period's.
    */
   clubsActive: number | null;
   /** Approved clubs with nothing in their channels in the period. */
@@ -105,7 +128,9 @@ export interface PresidentClubEventHealth {
   eventsHeld: number;
   /**
    * Members signed up per held occurrence, on average. One decimal. Hidden
-   * when it is above 0 and under 3; 0 when nothing was held or nobody signed up.
+   * when it is above 0 and under 3, and in the longer period when the
+   * occurrences outside the shorter period have such an average; 0 when
+   * nothing was held or nobody signed up.
    */
   avgAttendance: number | null;
 }
