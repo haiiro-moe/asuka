@@ -13,6 +13,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import { weekdayHour } from "../time.ts";
+import { voiceReady } from "../voice-ready.ts";
 import type { Period } from "../time.ts";
 import type {
   Award,
@@ -20,6 +21,7 @@ import type {
   EmojiRow,
   EmojiSeries,
   Heatmap,
+  Rhythm,
   ReactedRow,
   SharingRow,
 } from "../types/user.ts";
@@ -72,10 +74,12 @@ function voiceSegments(p: Period) {
  * are few, so they are read and spread over their hours in code.
  *
  * @param p - The period.
+ * @param voiceOk - Whether voice data is old enough to show (`voiceReady()`); pass
+ *   the result in when serving several views at once. Defaults to a fresh check.
  * @returns `messages`: messages per cell. `voice`: connected hours per cell
- *   (a segment is spread over the hours it covers).
+ *   (a segment is spread over the hours it covers), or null until voice is ready.
  */
-export function rhythm(p: Period): { messages: Heatmap; voice: Heatmap } {
+export function rhythm(p: Period, voiceOk: boolean = voiceReady()): Rhythm {
   const m = schema.activityMessages;
   // Unix day 0 was a Thursday, so +3 makes Monday 0.
   const weekday = sql<number>`((${m.ts} / 86400) + 3) % 7`;
@@ -90,7 +94,7 @@ export function rhythm(p: Period): { messages: Heatmap; voice: Heatmap } {
   for (const r of rows) msgGrid[r.weekday]![r.hour]! += r.n;
 
   const voiceGrid = emptyGrid();
-  for (const s of voiceSegments(p)) {
+  for (const s of voiceOk ? voiceSegments(p) : []) {
     for (let t = s.start - (s.start % HOUR); t < s.end; t += HOUR) {
       const overlap = Math.min(s.end, t + HOUR) - Math.max(s.start, t);
       if (overlap <= 0) continue;
@@ -98,7 +102,7 @@ export function rhythm(p: Period): { messages: Heatmap; voice: Heatmap } {
       voiceGrid[wd]![h]! += overlap / HOUR;
     }
   }
-  return { messages: heatmap(msgGrid), voice: heatmap(voiceGrid) };
+  return { messages: heatmap(msgGrid), voice: voiceOk ? heatmap(voiceGrid) : null };
 }
 
 /** Condition: text-emoji rows of the period outside excluded channels. */
@@ -247,10 +251,12 @@ export function channelFavourites(p: Period): ChannelRow[] {
  * Voice channels by connected seconds inside the period.
  *
  * @param p - The period.
+ * @param voiceOk - Whether voice data is old enough to show; the list is empty
+ *   until it is. Defaults to a fresh `voiceReady()` check.
  */
-export function voiceFavourites(p: Period): ChannelRow[] {
+export function voiceFavourites(p: Period, voiceOk: boolean = voiceReady()): ChannelRow[] {
   const totals = new Map<string, number>();
-  for (const s of voiceSegments(p)) totals.set(s.channelId, (totals.get(s.channelId) ?? 0) + (s.end - s.start));
+  for (const s of voiceOk ? voiceSegments(p) : []) totals.set(s.channelId, (totals.get(s.channelId) ?? 0) + (s.end - s.start));
   return [...totals]
     .map(([channelId, count]) => ({ channelId, parentChannelId: null, count }))
     .sort((a, b) => b.count - a.count || a.channelId.localeCompare(b.channelId));
@@ -338,8 +344,10 @@ const MIN_REPLIES = 10;
  * - `most-replied-to`: most replies received from others (value: replies).
  *
  * @param p - The period.
+ * @param voiceOk - Whether voice data is old enough to show; `longest-voice` is
+ *   omitted until it is. Defaults to a fresh `voiceReady()` check.
  */
-export function awards(p: Period): Award[] {
+export function awards(p: Period, voiceOk: boolean = voiceReady()): Award[] {
   const m = schema.activityMessages;
   const hour = sql<number>`(${m.ts} % 86400) / 3600`;
   const tally = (key: Award["key"], range: SQL) => {
@@ -363,7 +371,7 @@ export function awards(p: Period): Award[] {
   const replied = top("most-replied-to", new Map(replyRows.map((r) => [r.userId!, r.n])));
 
   const voice = new Map<string, number>();
-  for (const s of voiceSegments(p)) {
+  for (const s of voiceOk ? voiceSegments(p) : []) {
     if (s.closed) voice.set(s.userId, Math.max(voice.get(s.userId) ?? 0, s.full));
   }
 

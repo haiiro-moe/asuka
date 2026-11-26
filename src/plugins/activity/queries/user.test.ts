@@ -103,11 +103,11 @@ beforeEach(reset);
 afterAll(reset);
 
 test("empty database gives empty views and a zero heatmap", () => {
-  const r = rhythm(ALL);
+  const r = rhythm(ALL, true);
   expect(r.messages.max).toBe(0);
   expect(r.messages.cells.length).toBe(7);
   expect(r.messages.cells[0]!.length).toBe(24);
-  expect(r.voice.max).toBe(0);
+  expect(r.voice!.max).toBe(0);
   expect(emojiLeaderboard(ALL)).toEqual([]);
   expect(emojiTrend(ALL)).toEqual([]);
   expect(emojiGraveyard([])).toEqual([]);
@@ -127,10 +127,10 @@ test("rhythm puts a Monday 14:00 UTC message in cells[0][14]", () => {
 
 test("rhythm spreads a two-hour voice segment over both hours", () => {
   talk("u1", "v1", MON + 14 * H, 2 * H);
-  const r = rhythm(ALL);
-  expect(r.voice.cells[0]![14]).toBe(1);
-  expect(r.voice.cells[0]![15]).toBe(1);
-  expect(r.voice.cells[0]![16]).toBe(0);
+  const r = rhythm(ALL, true);
+  expect(r.voice!.cells[0]![14]).toBe(1);
+  expect(r.voice!.cells[0]![15]).toBe(1);
+  expect(r.voice!.cells[0]![16]).toBe(0);
 });
 
 test("emojiLeaderboard merges text and net reaction use", () => {
@@ -184,7 +184,7 @@ test("channelFavourites ranks threads as channels; voiceFavourites sums seconds"
     { channelId: "c2", parentChannelId: null, count: 1 },
   ]);
   talk("u1", "v1", MON, 600);
-  expect(voiceFavourites(ALL)).toEqual([{ channelId: "v1", parentChannelId: null, count: 600 }]);
+  expect(voiceFavourites(ALL, true)).toEqual([{ channelId: "v1", parentChannelId: null, count: 600 }]);
 });
 
 test("a thread under an excluded parent is not ranked", () => {
@@ -246,7 +246,7 @@ test("awards: night owl, earliest bird, longest voice, repliers", () => {
   }
   // A reply whose parent was never recorded counts as replied-to but has no response time.
   recordMessage(msg({ userId: "u5", ts: MON + 11 * H, replyToMessageId: "unknown", replyToUserId: "u8" }));
-  const by = Object.fromEntries(awards(ALL).map((x) => [x.key, x]));
+  const by = Object.fromEntries(awards(ALL, true).map((x) => [x.key, x]));
   expect(by["night-owl"]).toEqual({ key: "night-owl", userId: "u1", value: 2 });
   expect(by["earliest-bird"]).toEqual({ key: "earliest-bird", userId: "u3", value: 1 });
   expect(by["longest-voice"]).toEqual({ key: "longest-voice", userId: "u2", value: 500 });
@@ -260,15 +260,15 @@ test("every query ignores an excluded channel and the threads under it", () => {
   react({ messageId: "x2", channelId: "t9", parentChannelId: "c9" });
   talk("u1", "v9", MON, 100);
   setExcluded("c9,v9");
-  const r = rhythm(ALL);
+  const r = rhythm(ALL, true);
   expect(r.messages.max).toBe(0);
-  expect(r.voice.max).toBe(0);
+  expect(r.voice!.max).toBe(0);
   expect(emojiLeaderboard(ALL)).toEqual([]);
   expect(emojiTrend(ALL)).toEqual([]);
   expect(emojiGraveyard(["5"])).toEqual([{ id: "5" }]);
   expect(mostReacted(ALL)).toEqual([]);
   expect(channelFavourites(ALL)).toEqual([]);
-  expect(voiceFavourites(ALL)).toEqual([]);
+  expect(voiceFavourites(ALL, true)).toEqual([]);
   expect(sharing(ALL)).toEqual([]);
   expect(awards(ALL)).toEqual([]);
 });
@@ -303,4 +303,55 @@ test("sharing and emoji totals count per occurrence across messages", () => {
   expect(get("link", "a.com")).toBe(2);
   expect(get("link", "b.com")).toBe(2);
   expect(emojiLeaderboard(ALL)).toEqual([{ emoji: "🙂", name: null, count: 3 }]);
+});
+
+// --- voice readiness (two whole months) -------------------------------------
+
+const NOW = Math.floor(Date.now() / 1000);
+const DAYS = 86400;
+
+/** Run the three voice-derived views with the default readiness check. */
+function voiceViews() {
+  return { voice: rhythm(ALL).voice, favourites: voiceFavourites(ALL), awards: awards(ALL) };
+}
+
+test("with no voice rows, voice views are withheld", () => {
+  const v = voiceViews();
+  expect(v.voice).toBeNull();
+  expect(v.favourites).toEqual([]);
+  expect(v.awards.find((a) => a.key === "longest-voice")).toBeUndefined();
+});
+
+test("voice younger than two whole months stays withheld", () => {
+  talk("u1", "v1", NOW - 20 * DAYS, 600);
+  const v = voiceViews();
+  expect(v.voice).toBeNull();
+  expect(v.favourites).toEqual([]);
+  expect(v.awards.find((a) => a.key === "longest-voice")).toBeUndefined();
+});
+
+test("voice three months old shows the normal outputs", () => {
+  talk("u1", "v1", NOW - 100 * DAYS, 600);
+  const v = voiceViews();
+  expect(v.voice).not.toBeNull();
+  expect(v.voice!.max).toBeGreaterThan(0);
+  expect(v.favourites).toEqual([{ channelId: "v1", parentChannelId: null, count: 600 }]);
+  expect(v.awards.find((a) => a.key === "longest-voice")).toEqual({ key: "longest-voice", userId: "u1", value: 600 });
+});
+
+test("the voice-status route returns the readiness in each state", async () => {
+  const route = userRoutes.find((r) => r.path === "/api/activity/user/voice-status")!;
+  const call = async () => (await route.handle(new Request("http://x/api/activity/user/voice-status"), {} as ApiContext)).json();
+  expect(await call()).toEqual({ ready: false, readyAt: null });
+
+  talk("u1", "v1", NOW - 20 * DAYS, 600);
+  const young = (await call()) as { ready: boolean; readyAt: number };
+  expect(young.ready).toBe(false);
+  expect(young.readyAt).toBeGreaterThan(NOW);
+
+  reset();
+  talk("u1", "v1", NOW - 100 * DAYS, 600);
+  const old = (await call()) as { ready: boolean; readyAt: number };
+  expect(old.ready).toBe(true);
+  expect(old.readyAt).toBeLessThan(NOW);
 });

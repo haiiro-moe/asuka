@@ -1,5 +1,6 @@
 import type { ApiContext, ApiRoute } from "../../../core/plugin.ts";
 import { parsePeriodParam } from "../time.ts";
+import { voiceReadiness, voiceReady } from "../voice-ready.ts";
 import type { ChannelRow, NamedChannelRow } from "../types/user.ts";
 import type { Period } from "../time.ts";
 import {
@@ -60,11 +61,13 @@ function channelNamer(ctx: ApiContext): (id: string) => string | null {
 /**
  * Everyone-tier activity routes (`access: "user"`), all `GET` with `?period=`
  * (`7d|week|30d|term|year|all`): rhythm, emoji, emoji-trend, emoji-graveyard,
- * reacted, channels, voice, sharing and awards. Members are named only in
+ * reacted, channels, voice, sharing and awards, plus `voice-status` (no period).
+ * Voice views are withheld until the voice log holds two whole months (see
+ * `../voice-ready.ts`). Members are named only in
  * `awards`. See docs/activity/queries-user.md.
  */
 export const userRoutes: ApiRoute[] = [
-  view("rhythm", (p) => rhythm(p)),
+  view("rhythm", (p) => rhythm(p, voiceReady())),
   view("emoji", (p) => emojiLeaderboard(p)),
   view("emoji-trend", (p) => emojiTrend(p)),
   view("emoji-graveyard", (_p, ctx) => {
@@ -73,7 +76,16 @@ export const userRoutes: ApiRoute[] = [
   }),
   view("reacted", (p) => mostReacted(p)),
   view("channels", (p, ctx) => nameChannels(channelFavourites(p), channelNamer(ctx))),
-  view("voice", (p, ctx) => nameChannels(voiceFavourites(p), channelNamer(ctx))),
+  view("voice", (p, ctx) => nameChannels(voiceFavourites(p, voiceReady()), channelNamer(ctx))),
   view("sharing", (p) => sharing(p)),
-  view("awards", (p) => awards(p)),
+  view("awards", (p) => awards(p, voiceReady())),
+  {
+    method: "GET",
+    path: "/api/activity/user/voice-status",
+    access: "user",
+    handle() {
+      const { ready, readyAt } = voiceReadiness();
+      return Response.json({ ready, readyAt });
+    },
+  },
 ];

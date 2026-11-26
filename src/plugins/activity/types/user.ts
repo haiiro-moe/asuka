@@ -82,3 +82,19 @@ export interface Award {
   /** Messages, seconds or reply count, depending on the award. */
   value: number;
 }
+
+/** The `rhythm` view: when members talk and when they are in voice. */
+export interface Rhythm {
+  /** Messages per UTC weekday and hour. */
+  messages: Heatmap;
+  /** Connected voice hours per cell; null until voice has two whole months of data. */
+  voice: Heatmap | null;
+}
+
+/** The `voice-status` route: whether the voice views are unlocked yet. */
+export interface VoiceStatus {
+  /** True once the voice log holds two whole months. */
+  ready: boolean;
+  /** Unix seconds when voice unlocks; null when no voice has been recorded. */
+  readyAt: number | null;
+}
