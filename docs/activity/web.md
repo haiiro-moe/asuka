@@ -28,7 +28,7 @@ src/web/app/activity/
 | `activity-president` | president | `activity/president/` |
 | `activity-admin` | admin | `activity/admin/` |
 
-The ids and roles are fixed; `App.tsx` has a narrator lede for each. The Wrapped story is not a dashboard
+The ids and roles are fixed; `App.tsx` has a narrator lede for each; the `activity` one is server-wide ("The whole server's hours and habits, counted. You see when everyone talks and where."), since the everyone tier shows the server, not the member. The Wrapped story is not a dashboard
 page: it is the standalone routes `/wrapped/:token` and `/wrapped/s/:token` (see [web-wrapped.md](web-wrapped.md)), so it has no entry here.
 
 ## Chart wrappers

@@ -80,14 +80,15 @@ calendar year) and `all time`; `week` is not offered, since the server reads it 
 change shows the loading line, never the previous period's tables (`useActivity` keeps data with
 its path).
 
-- **moderation**: tiles, actions per week (`ActivityColumns`), actions by kind, repeat offenders.
+- **moderation**: tiles, actions per week (`ActivityColumns`), actions by kind (an `h3` under the
+  `h2`), repeat offenders.
 - **newcomers**: joined, got a reply, said nothing; a table with join day, first-week messages and
   `✓ yes` / `× no`.
 - **drift**: members gone quiet, last active day. While voice is withheld, a line says drift is
   judged on messages alone and when voice unlocks.
 - **channels**: one row per channel or thread. A thread shows its own name and a subtle
   `thread in #parent`; a null name falls back to the id (`channelLabel`).
-- **economy**: earned, spent, store sales, earned and spent per week, top earners.
+- **economy**: earned, spent, store sales, earned and spent per week (`h3` headings under the `h2`), top earners.
 - **clubs and events**: clubs with a `dead` or `alive` chip, events by sign-ups.
 - **bot**: runs, failures and commands used.
 - **relations**: a `Segmented` of replies, mentions and voice over a ranked table of the top 25

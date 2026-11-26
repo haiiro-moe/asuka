@@ -51,7 +51,7 @@ export function ModerationTab({ period }: { period: PeriodKey }) {
                       axis={axisLabels(labels)}
                       ariaLabel={columnsAriaLabel("moderation actions per week, utc", d.weekly, (i) => `week of ${labels[i] ?? ""}`, true)}
                     />
-                    <Heading>by kind</Heading>
+                    <Heading as="h3">by kind</Heading>
                     <DataTable
                       head={
                         <>

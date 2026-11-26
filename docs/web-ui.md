@@ -68,7 +68,7 @@ Careful: `text-base` now means the **colour** `--color-base`, not a 16px size. O
 ## Shell and routing
 
 `App.tsx` is the shell (the system's SiteShell): top bar (Jacquard brand, `@ asuka » cd ~/<page>`, role,
-name, logout), a side nav Window `ls ~/asuka` grouped by role (community, president, admin) from 1000px up; between 721 and 999px and on phones the page strip (scrolls sideways, centres the current page) replaces it. The `Blobs` backdrop sits behind everything and a `PageHead` above the page. Page titles are 43px on phones, 129px from 721 to 1100px and 168px above, and break only between words. Windows use `h2` headings (`Heading` defaults to `h2`, use `h3` for nested ones) so the page goes h1 then h2. Every page sets its own `document.title` (`<page> · asuka`).
+name, logout), a side nav Window `ls ~/asuka` grouped by role (community, president, admin) from 1000px up; between 721 and 999px and on phones the page strip (scrolls sideways, centres the current page) replaces it. The `Blobs` backdrop sits behind everything and a `PageHead` above the page. Page titles are 43px on phones, 129px from 721 to 1100px and 168px above, and break only between words. Windows use `h2` headings (`Heading` defaults to `h2`, use `h3` for nested ones) so the page goes h1 then h2. The standalone Wrapped story pages have no `PageHead`; `StoryShell` gives them a visually hidden, generic `h1` instead. Every page sets its own `document.title` (`<page> · asuka`).
 
 Routes live in the hash:
 

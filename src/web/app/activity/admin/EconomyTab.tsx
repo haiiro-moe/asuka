@@ -47,9 +47,9 @@ export function EconomyTab({ period }: { period: PeriodKey }) {
               <Quiet>Weeks start on {formatUtcDate(d.start)}, counted in UTC.</Quiet>
               {moved ? (
                 <>
-                  <Heading>earned per week</Heading>
+                  <Heading as="h3">earned per week</Heading>
                   <ActivityColumns values={earned} axis={axis} ariaLabel={columnsAriaLabel("social credits earned per week, utc", earned, week, true)} />
-                  <Heading>spent per week</Heading>
+                  <Heading as="h3">spent per week</Heading>
                   <ActivityColumns
                     values={spent}
                     axis={axis}
