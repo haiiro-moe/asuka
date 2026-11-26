@@ -28,6 +28,18 @@ export function excludedChannelIds(): Set<string> {
 }
 
 /**
+ * A stable signature of the exclusion list, for keying caches.
+ *
+ * The ids are trimmed, de-duplicated and sorted, so the same set always gives
+ * the same string whatever order or spacing it was saved in.
+ *
+ * @returns The ids joined by `,`; the empty string when none are excluded.
+ */
+export function exclusionSignature(): string {
+  return [...excludedChannelIds()].sort().join(",");
+}
+
+/**
  * Whether activity in a channel must be left out.
  *
  * @param channelId - The channel, or the thread, the activity happened in.

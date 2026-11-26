@@ -59,7 +59,9 @@ channels are never read.
 `guild_config.activityExcludedChannelIds` (a comma-separated list, edited on the dashboard's
 settings tab) names channels that are left out. A **thread follows its parent**: a thread under an
 excluded channel is excluded too. Capture and the backfill write nothing for them, and every
-query hides them, including rows written before the channel was excluded.
+query hides them, including rows written before the channel was excluded. The in-memory view
+memos (the member-tier `/api/activity/user/*` results and the Wrapped year aggregates) include the
+exclusion list in their key, so a change shows on the very next read, not after the ten-minute window.
 
 ## The voice rule
 

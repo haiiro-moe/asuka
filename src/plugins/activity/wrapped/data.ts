@@ -14,7 +14,7 @@
  */
 import { and, asc, count, desc, eq, gt, gte, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
 import { db, schema } from "../../../db/index.ts";
-import { notExcluded } from "../exclusion.ts";
+import { exclusionSignature, notExcluded } from "../exclusion.ts";
 import type { Period } from "../time.ts";
 import type { WrappedData, WrappedEmoji } from "../types/wrapped.ts";
 import { clubFor, clubYearStats, presidencyFor, presidencyTermsIn, yearPeriod } from "./extras.ts";
@@ -74,9 +74,12 @@ export interface WrappedShared {
  *   here, at the year's last second when the year is over.
  */
 export function wrappedShared(year: number, voiceReady: boolean = voiceReadinessForYear(year).ready): WrappedShared {
+  const signature = exclusionSignature();
   const clubs = clubYearStats(year, voiceReady);
   const terms = presidencyTermsIn(year);
-  return { clubs, terms, awards: titleAwards(year, { clubs, terms, voiceReady }), voiceReady };
+  const shared = { clubs, terms, awards: titleAwards(year, { clubs, terms, voiceReady }), voiceReady };
+  builtUnder.set(shared, signature);
+  return shared;
 }
 
 /** How long a memoised {@link WrappedShared} is reused, in milliseconds (10 minutes). */
@@ -85,10 +88,18 @@ export const WRAPPED_SHARED_TTL_MS = 10 * 60 * 1000;
 /** The memo behind {@link sharedFor}, keyed by `year:voiceReady`. */
 const sharedMemo = new Map<string, { at: number; value: WrappedShared }>();
 
+/** The exclusion signature the memo's entries were built under. */
+let sharedMemoSignature = "";
+
+/** The exclusion signature in force when each {@link WrappedShared} began to be built. */
+const builtUnder = new WeakMap<WrappedShared, string>();
+
 /**
  * The year aggregates, memoised: built at most once per year and voice
  * readiness until a run starts ({@link clearWrappedSharedMemo}) or
- * {@link WRAPPED_SHARED_TTL_MS} passes. A run stores the aggregates it built
+ * {@link WRAPPED_SHARED_TTL_MS} passes. The channel exclusion list is part of
+ * the key: when it changes, every memoised entry is dropped and the next read
+ * rebuilds, so an excluded channel never shows in a stale aggregate. A run stores the aggregates it built
  * ({@link rememberWrappedShared}), so the on-demand paths (`/wrapped me`, the
  * admin's open link) reuse them instead of spending seconds per member.
  *
@@ -97,6 +108,7 @@ const sharedMemo = new Map<string, { at: number; value: WrappedShared }>();
  * @returns The aggregates; the same object while the memo holds.
  */
 export function sharedFor(year: number, voiceReady: boolean): WrappedShared {
+  syncSharedMemo(exclusionSignature());
   const key = `${year}:${voiceReady}`;
   const hit = sharedMemo.get(key);
   if (hit && Date.now() - hit.at < WRAPPED_SHARED_TTL_MS) return hit.value;
@@ -105,14 +117,26 @@ export function sharedFor(year: number, voiceReady: boolean): WrappedShared {
 
 /**
  * Store aggregates a run or preview has just built, for {@link sharedFor}.
+ * They are kept under the exclusion list in force when they began to be built
+ * ({@link wrappedShared}); if the list changed meanwhile they are returned to
+ * the caller but not kept, so they are never served for the new list.
  *
  * @param year - The year they are for.
  * @param shared - The aggregates.
  * @returns `shared`.
  */
 export function rememberWrappedShared(year: number, shared: WrappedShared): WrappedShared {
-  sharedMemo.set(`${year}:${shared.voiceReady}`, { at: Date.now(), value: shared });
+  const signature = builtUnder.get(shared) ?? exclusionSignature();
+  syncSharedMemo(exclusionSignature());
+  if (signature === sharedMemoSignature) sharedMemo.set(`${year}:${shared.voiceReady}`, { at: Date.now(), value: shared });
   return shared;
+}
+
+/** Drop every entry when the exclusion list is no longer the one they were built under. */
+function syncSharedMemo(current: string): void {
+  if (current === sharedMemoSignature) return;
+  sharedMemo.clear();
+  sharedMemoSignature = current;
 }
 
 /** Drop every memoised {@link WrappedShared}. Called when a run starts or resumes. */
