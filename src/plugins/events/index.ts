@@ -52,15 +52,15 @@ function upcomingEvents(): { event: EventRow; occurrence: number }[] {
     .sort((a, b) => a.occurrence - b.occurrence);
 }
 
-/** One event per page: [◀] [🔔 participation toggle] [▶]. */
+/** One event per page: [previous] [sign up / sign out toggle] [next]. */
 function eventsView(page: number, viewerId: string) {
   const upcoming = upcomingEvents();
   if (upcoming.length === 0) {
     return v2(
       card({
         accent: Accent.primary,
-        title: "📅 Events",
-        lines: ["No upcoming events. Check back later!"],
+        title: "events",
+        lines: ["no upcoming events. check back later."],
       }),
     );
   }
@@ -84,36 +84,36 @@ function eventsView(page: number, viewerId: string) {
       ),
     );
   }
-  container.addTextDisplayComponents(text(`## 📅 ${event.title}`));
+  container.addTextDisplayComponents(text(`## ${event.title}`));
   if (event.description) container.addTextDisplayComponents(text(event.description));
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       [
-        `**When:** ${formatWhen(event, occurrence)} (<t:${occurrence}:R>)`,
-        `**Where:** ${event.channelId ? `<#${event.channelId}>` : "—"}`,
-        `**Repeats:** ${RECURRENCE_LABELS[event.recurrence]}`,
-        group ? `**Group:** ${group.name}` : null,
-        `**Participants:** ${participants.length}${joined ? " — including you 🔔" : ""}`,
+        `**when:** ${formatWhen(event, occurrence)} (<t:${occurrence}:R>)`,
+        `**where:** ${event.channelId ? `<#${event.channelId}>` : "—"}`,
+        `**repeats:** ${RECURRENCE_LABELS[event.recurrence]}`,
+        group ? `**group:** ${group.name}` : null,
+        `**participants:** ${participants.length}${joined ? " (you're in)" : ""}`,
       ]
         .filter(Boolean)
         .join("\n"),
     ),
-    new TextDisplayBuilder().setContent(`-# Event ${clamped + 1}/${total}`),
+    new TextDisplayBuilder().setContent(`-# event ${clamped + 1}/${total}`),
   );
   container.addActionRowComponents(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`ev:page:${clamped - 1}`)
-        .setEmoji("◀")
+        .setLabel("previous")
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(clamped <= 0),
       new ButtonBuilder()
         .setCustomId(`ev:join:${event.id}:${clamped}`)
-        .setEmoji(joined ? "🔕" : "🔔")
+        .setLabel(joined ? "sign out" : "sign up")
         .setStyle(joined ? ButtonStyle.Danger : ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`ev:page:${clamped + 1}`)
-        .setEmoji("▶")
+        .setLabel("next")
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(clamped >= total - 1),
     ),
@@ -157,8 +157,8 @@ const buttons = defineListener({
           v2(
             card({
               accent: Accent.danger,
-              title: "Something went wrong",
-              lines: ["Run /events again."],
+              title: "something went wrong",
+              lines: ["run /events again."],
             }),
           ),
         )

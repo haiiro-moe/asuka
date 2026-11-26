@@ -1,8 +1,28 @@
+/**
+ * The member storefront (`#/store`): the wallet, the items on sale as windows, the purchase forms
+ * (custom role, sabotage target) and the receipt of the last purchase.
+ *
+ * @module
+ */
 import { useState } from "react";
 import { api } from "./api.ts";
 import { useNames } from "./names.tsx";
 import { useMe } from "./me-context.ts";
-import { card, btn, input, useAsync } from "./ui.ts";
+import { useAsync } from "./ui.ts";
+import {
+  ColourField,
+  Empty,
+  ErrorLine,
+  ImageFrame,
+  InkButton,
+  InkLink,
+  Loading,
+  PromptField,
+  Select,
+  SettingRow,
+  Window,
+  useConfirm,
+} from "./ui/index.ts";
 
 interface StoreData {
   balance: number;
@@ -15,32 +35,66 @@ interface StoreData {
   } | null;
 }
 
-function ItemIcon({ item }: { item: any }) {
-  if (item.iconType === "image") {
-    return <img src={item.icon} alt="" className="w-12 h-12 rounded object-cover" />;
-  }
-  return <span className="text-4xl leading-none">{item.icon}</span>;
-}
+/** Colour a custom role gets when the buyer does not pick one: the haiiro default accent, pine (D-020). */
+const DEFAULT_ROLE_COLOUR = "#31748f";
 
+/** What each item kind is, in the muted caps line under the name. */
 const KIND_LABEL: Record<string, string> = {
-  panel_access: "One-time panel access",
-  role: "Role",
-  custom_role: "Custom role",
-  sabotage: "Election sabotage",
+  panel_access: "one-time panel access",
+  role: "role",
+  custom_role: "custom role",
+  sabotage: "election sabotage",
 };
 
-/** The member-facing storefront: browse items and spend SC. */
+/** A short, path-safe form of an item's name for its window label (`fish: ~/store/night-owl`). */
+function slug(name: string, id: number): string {
+  const s = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24)
+    .replace(/-+$/, "");
+  return s || String(id);
+}
+
+/**
+ * An item's picture: the image URL in a full-colour square frame, or the emoji shown as data inside
+ * the same frame (store icons are user content, so they are never dithered).
+ */
+function ItemIcon({ item, size = 48 }: { item: any; size?: number }) {
+  return item.iconType === "image" ? (
+    <ImageFrame src={item.icon} alt="" size={size} />
+  ) : (
+    <ImageFrame alt="" size={size} className="text-nav">
+      {item.icon}
+    </ImageFrame>
+  );
+}
+
+/**
+ * The member-facing storefront: browse items and spend SC. Buying asks for a confirmation first; the
+ * outcome is told in one line in a window under the wallet.
+ */
 export function StorePage() {
-  const { data, reload } = useAsync<StoreData>(() => api.store());
+  const { data, error, reload } = useAsync<StoreData>(() => api.store());
   const me = useMe();
   const name = useNames((data?.election?.candidates ?? []).map((c) => c.userId));
+  const { confirm, dialog } = useConfirm();
 
   // Per-item purchase form state (custom-role fields / sabotage target).
   const [forms, setForms] = useState<Record<number, any>>({});
   const [busy, setBusy] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string; link?: string } | null>(null);
 
-  if (!data) return <p className="on-bg-soft">Loading…</p>;
+  if (!data) {
+    return error ? (
+      <Window label="fish: ~/store" tone="love">
+        <ErrorLine onRetry={reload}>{error}</ErrorLine>
+      </Window>
+    ) : (
+      <Loading>You count your coins</Loading>
+    );
+  }
 
   const form = (id: number) => forms[id] ?? {};
   const setForm = (id: number, patch: any) =>
@@ -48,14 +102,21 @@ export function StorePage() {
 
   const buy = async (item: any) => {
     const f = form(item.id);
-    if (!window.confirm(`Buy “${item.name}” for ${item.price} SC?`)) return;
+    const ok = await confirm({
+      label: "confirm: ~/store/buy",
+      title: "buy item",
+      message: `Buy "${item.name}" for ${item.price} SC? The coins leave your balance.`,
+      confirmLabel: "buy",
+      tone: "gold",
+    });
+    if (!ok) return;
     setBusy(item.id);
     setNotice(null);
     try {
       const res = await api.buyItem(item.id, {
         targetUserId: f.target,
         roleName: f.roleName,
-        roleColor: f.roleColor ?? "#5865f2",
+        roleColor: f.roleColor ?? DEFAULT_ROLE_COLOUR,
       });
       setNotice({ kind: "ok", text: res.message, link: res.link });
       setForms((cur) => ({ ...cur, [item.id]: {} }));
@@ -70,140 +131,163 @@ export function StorePage() {
   const candidates = (data.election?.candidates ?? []).filter((c) => c.userId !== me?.userId);
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="on-bg text-sm max-w-xl">
-          Spend your Social Credits on perks. Magic links can be opened any time, but expire
-          after one submission.
-        </p>
-        <div className="shrink-0 rounded-full bg-sun border-3 border-black shadow-[3px_3px_0_#000] px-4 py-1.5 font-bold">
-          🪙 {data.balance.toLocaleString()} SC
+    <>
+      <Window label="fish: ~/wallet">
+        <div className="kv">
+          <span className="kv_label">balance</span>
+          <span className="kv_value text-gold">{data.balance.toLocaleString()} SC</span>
         </div>
-      </div>
+        <p className="mt-3 text-subtle">
+          Magic links open any time, but each one dies after a single submission.
+        </p>
+        <p className="mt-1 text-subtle">
+          Everything you buy waits on your <InkLink tone="foam" href="#/profile">profile</InkLink>, magic
+          links included.
+        </p>
+      </Window>
 
       {notice && (
-        <div
-          className={
-            card +
-            " text-sm " +
-            (notice.kind === "ok" ? "border-green-700" : "border-red-700 text-red-700")
-          }
+        <Window
+          label="fish: ~/receipt"
+          tone={notice.kind === "error" ? "love" : notice.link ? "gold" : "foam"}
         >
-          <div>{notice.text}</div>
-          {notice.link && (
-            <div className="mt-2 space-y-1">
-              <a href={notice.link} className="text-accent font-bold break-all underline">
-                {notice.link}
-              </a>
-              <div className="text-amber-800 font-bold">
-                ⚠️ One submission only — the link dies once you hit apply. Copy it somewhere
-                safe.
+          {notice.kind === "error" ? (
+            <ErrorLine onDismiss={() => setNotice(null)}>{notice.text}</ErrorLine>
+          ) : (
+            <>
+              <p className="nar" role="status">
+                {notice.text}
+              </p>
+              {notice.link && (
+                <>
+                  <p className="mt-3">
+                    <InkLink tone="foam" href={notice.link} className="break-all">
+                      {notice.link}
+                    </InkLink>
+                  </p>
+                  <p className="mt-3 text-gold">
+                    One submission only. The link dies once you hit apply, so copy it somewhere safe.
+                  </p>
+                </>
+              )}
+              <div className="btns">
+                <InkButton tone="muted" onClick={() => setNotice(null)}>
+                  dismiss
+                </InkButton>
               </div>
-            </div>
+            </>
           )}
-        </div>
+        </Window>
       )}
 
-      {data.items.length === 0 && (
-        <div className={card + " text-ink-soft"}>Nothing for sale right now — check back later.</div>
-      )}
+      {data.items.length === 0 ? (
+        <Window label="fish: ~/store" tone="off">
+          <Empty>Nothing is for sale right now. The shelves are bare, so check back later.</Empty>
+        </Window>
+      ) : (
+        <div className="fx-grid">
+          {data.items.map((item) => {
+            const f = form(item.id);
+            const owned = item.kind === "custom_role" && data.hasCustomRole;
+            const caps = [
+              KIND_LABEL[item.kind] ?? item.kind,
+              item.remainingStock != null && !item.soldOut ? `${item.remainingStock} left` : null,
+              item.maxPerUser != null ? `limit ${item.maxPerUser} per member` : null,
+            ].filter(Boolean);
+            return (
+              <Window
+                key={item.id}
+                label={`fish: ~/store/${slug(item.name, item.id)}`}
+                tone={item.soldOut ? "off" : "pine"}
+                className="flex flex-col"
+                contentClassName="flex flex-1 flex-col [&_.pr]:shrink-0"
+              >
+                <div className="flex items-start gap-3">
+                  <ItemIcon item={item} />
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words">{item.name}</p>
+                    <p className="kv_label mt-1">{caps.join(" · ")}</p>
+                  </div>
+                  <span className="whitespace-nowrap text-gold">{item.price} SC</span>
+                </div>
+                {item.description && <p className="mt-3 text-subtle break-words">{item.description}</p>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {data.items.map((item) => (
-          <div key={item.id} className={card + " space-y-3 flex flex-col"}>
-            <div className="flex items-start gap-3">
-              <ItemIcon item={item} />
-              <div className="flex-1">
-                <div className="font-medium">
-                  {item.name}
-                  {item.remainingStock != null && !item.soldOut && (
-                    <span className="ml-2 text-xs text-ink-soft font-bold">
-                      {item.remainingStock} left
-                    </span>
+                {item.kind === "custom_role" &&
+                  (data.hasCustomRole ? (
+                    <p className="nar mt-3">
+                      You already have a custom role. You can edit it on your profile page.
+                    </p>
+                  ) : (
+                    <div className="mt-3">
+                      <PromptField
+                        label="role name"
+                        promptWidth={22}
+                        placeholder="night owl"
+                        value={f.roleName ?? ""}
+                        onChange={(v) => setForm(item.id, { roleName: v })}
+                      />
+                      <ColourField
+                        label="role colour"
+                        promptWidth={22}
+                        value={f.roleColor ?? DEFAULT_ROLE_COLOUR}
+                        onChange={(hex) => setForm(item.id, { roleColor: hex })}
+                      />
+                    </div>
+                  ))}
+
+                {item.kind === "sabotage" && !item.soldOut && (
+                  <div className="mt-3">
+                    <SettingRow label="target" labelId={`sab-${item.id}`}>
+                      <Select
+                        ariaLabelledBy={`sab-${item.id}`}
+                        placeholder="pick a candidate"
+                        value={f.target ?? null}
+                        onChange={(v) => setForm(item.id, { target: v })}
+                        options={candidates.map((c) => ({
+                          value: c.userId,
+                          label: name(c.userId),
+                          meta:
+                            [c.silenced && "silenced", c.votingDisabled && "voting disabled"]
+                              .filter(Boolean)
+                              .join(", ") || undefined,
+                        }))}
+                      />
+                    </SettingRow>
+                  </div>
+                )}
+
+                <div className="btns mt-auto">
+                  {item.soldOut ? (
+                    <span className="chip">sold out{item.kind === "sabotage" ? " this election" : ""}</span>
+                  ) : (
+                    <InkButton
+                      tone="gold"
+                      busy={busy === item.id}
+                      busyLabel="buying"
+                      disabled={
+                        item.limitReached ||
+                        item.price > data.balance ||
+                        (item.kind === "sabotage" && !f.target) ||
+                        owned
+                      }
+                      onClick={() => buy(item)}
+                    >
+                      {item.limitReached
+                        ? "limit reached"
+                        : owned
+                          ? "already owned"
+                          : item.price > data.balance
+                            ? "not enough SC"
+                            : "buy"}
+                    </InkButton>
                   )}
                 </div>
-                <div className="text-xs text-ink-soft">{KIND_LABEL[item.kind] ?? item.kind}</div>
-                <div className="text-ink-soft text-sm mt-1">{item.description}</div>
-              </div>
-              <div className="comic-title text-xl whitespace-nowrap">{item.price} SC</div>
-            </div>
-
-            {item.kind === "custom_role" &&
-              (data.hasCustomRole ? (
-                <div className="text-sm text-ink-soft font-bold">
-                  You already have a custom role — edit it on your Profile page.
-                </div>
-              ) : (
-                <div className="flex gap-2 items-center">
-                  <input
-                    className={input}
-                    placeholder="Role name"
-                    value={form(item.id).roleName ?? ""}
-                    onChange={(e) => setForm(item.id, { roleName: e.target.value })}
-                  />
-                  <input
-                    type="color"
-                    className="w-10 h-8 bg-transparent cursor-pointer"
-                    value={form(item.id).roleColor ?? "#5865f2"}
-                    onChange={(e) => setForm(item.id, { roleColor: e.target.value })}
-                  />
-                </div>
-              ))}
-
-            {item.kind === "sabotage" && !item.soldOut && (
-              <select
-                className={input}
-                value={form(item.id).target ?? ""}
-                onChange={(e) => setForm(item.id, { target: e.target.value })}
-              >
-                <option value="">Pick a candidate to sabotage…</option>
-                {candidates.map((c) => (
-                  <option key={c.userId} value={c.userId}>
-                    {name(c.userId)}
-                    {c.silenced ? " (silenced)" : ""}
-                    {c.votingDisabled ? " (voting disabled)" : ""}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            <div className="mt-auto">
-              {item.soldOut ? (
-                <span className="inline-block px-3 py-1.5 rounded-lg bg-paper-dim border-2 border-black/40 text-ink-soft text-sm font-bold">
-                  SOLD OUT{item.kind === "sabotage" ? " this election" : ""}
-                </span>
-              ) : (
-                <button
-                  className={btn}
-                  disabled={
-                    busy === item.id ||
-                    item.limitReached ||
-                    item.price > data.balance ||
-                    (item.kind === "sabotage" && !form(item.id).target) ||
-                    (item.kind === "custom_role" && data.hasCustomRole)
-                  }
-                  onClick={() => buy(item)}
-                >
-                  {busy === item.id
-                    ? "Buying…"
-                    : item.limitReached
-                      ? "Limit reached"
-                      : item.kind === "custom_role" && data.hasCustomRole
-                        ? "Already owned"
-                        : item.price > data.balance
-                          ? "Not enough SC"
-                          : "Buy"}
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className={card + " text-sm text-ink-soft font-bold"}>
-        Bought something? Everything you own lives on your <strong>My Profile</strong> page —
-        magic links included.
-      </div>
-    </div>
+              </Window>
+            );
+          })}
+        </div>
+      )}
+      {dialog}
+    </>
   );
 }

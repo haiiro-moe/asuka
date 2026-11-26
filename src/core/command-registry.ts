@@ -68,7 +68,7 @@ export async function handleInteraction(interaction: Interaction, ctx: BotContex
   } catch (err) {
     console.error(`[commands] "${interaction.commandName}" failed:`, err);
     const payload = {
-      content: "Something went wrong running that command.",
+      content: "something went wrong running that command.",
       flags: MessageFlags.Ephemeral as const,
     };
     if (interaction.replied || interaction.deferred) {

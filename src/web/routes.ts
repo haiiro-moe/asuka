@@ -380,7 +380,7 @@ const statsRoute: ApiRoute = {
     const topMembers = [...members]
       .sort((a, b) => b.socialCredits - a.socialCredits || b.xp - a.xp)
       .slice(0, 5)
-      .map((m) => ({ userId: m.userId, socialCredits: m.socialCredits, level: m.level }));
+      .map((m) => ({ userId: m.userId, socialCredits: m.socialCredits, level: m.level, xp: m.xp }));
     return Response.json({
       members: members.length,
       totalMessages: members.reduce((sum, m) => sum + m.messageCount, 0),

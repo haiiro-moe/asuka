@@ -68,12 +68,12 @@ const timeout: Command = {
     const member = interaction.options.getMember("member") as GuildMember | null;
     const durationStr = interaction.options.getString("duration", true);
     const reason = interaction.options.getString("reason");
-    if (!member) return ack(interaction, Accent.danger, "Failed", ["Member not found."]);
+    if (!member) return ack(interaction, Accent.danger, "failed", ["member not found."]);
 
     const seconds = parseDuration(durationStr);
     if (!seconds || seconds < 1 || seconds > MAX_TIMEOUT_SEC) {
-      return ack(interaction, Accent.danger, "Invalid duration", [
-        "Use a value between 1 second and 28 days, e.g. `10m`, `1h`, `2d`.",
+      return ack(interaction, Accent.danger, "invalid duration", [
+        "use a value between 1 second and 28 days, e.g. `10m`, `1h`, `2d`.",
       ]);
     }
 
@@ -103,7 +103,7 @@ const untimeout: Command = {
     ),
   async execute(interaction, ctx) {
     const member = interaction.options.getMember("member") as GuildMember | null;
-    if (!member) return ack(interaction, Accent.danger, "Failed", ["Member not found."]);
+    if (!member) return ack(interaction, Accent.danger, "failed", ["member not found."]);
     await member.timeout(null);
     await recordModAction({
       client: ctx.client,
@@ -129,7 +129,7 @@ const kick: Command = {
   async execute(interaction, ctx) {
     const member = interaction.options.getMember("member") as GuildMember | null;
     const reason = interaction.options.getString("reason");
-    if (!member) return ack(interaction, Accent.danger, "Failed", ["Member not found."]);
+    if (!member) return ack(interaction, Accent.danger, "failed", ["member not found."]);
     await member.kick(reason ?? undefined);
     await recordModAction({
       client: ctx.client,
@@ -197,7 +197,7 @@ const unban: Command = {
       .remove(userId, reason ?? undefined)
       .catch(() => null);
     if (!removed) {
-      return ack(interaction, Accent.danger, "Failed", ["No ban found for that id."]);
+      return ack(interaction, Accent.danger, "failed", ["no ban found for that id."]);
     }
     await recordModAction({
       client: ctx.client,
@@ -273,8 +273,8 @@ const warnings: Command = {
       ? rows.map(
           (w) => `• <t:${w.createdAt}:d> by <@${w.moderatorId}> — ${w.reason}`,
         )
-      : ["No warnings on record."];
-    return ack(interaction, Accent.primary, `Warnings for ${displayName}`, lines);
+      : ["no warnings on record."];
+    return ack(interaction, Accent.primary, `warnings for ${displayName}`, lines);
   },
 };
 
@@ -313,8 +313,8 @@ const censor: Command = {
 
     if (sub === "list") {
       const words = rule?.triggerMetadata.keywordFilter ?? [];
-      return ack(interaction, Accent.primary, "Censored words", [
-        words.length ? words.map((w) => `• \`${w}\``).join("\n") : "None.",
+      return ack(interaction, Accent.primary, "censored words", [
+        words.length ? words.map((w) => `• \`${w}\``).join("\n") : "none.",
       ]);
     }
 
@@ -345,8 +345,8 @@ const censor: Command = {
       moderatorId: interaction.user.id,
       reason: `${sub} "${word}"`,
     });
-    return ack(interaction, Accent.primary, "Censor updated", [
-      `${sub === "add" ? "Blocked" : "Unblocked"} \`${word}\`. ${filter.length} word(s) total.`,
+    return ack(interaction, Accent.primary, "censor updated", [
+      `${sub === "add" ? "blocked" : "unblocked"} \`${word}\`. ${filter.length} ${filter.length === 1 ? "word" : "words"} total.`,
     ]);
   },
 };
@@ -408,23 +408,23 @@ const simulate: Command = {
         action: "simulate_activity",
         userId: user.id,
         moderatorId: interaction.user.id,
-        reason: `Simulated ${messages} message(s) of activity`,
+        reason: `simulated activity: ${messages} ${messages === 1 ? "message" : "messages"}`,
         metadata: { messages, xpGained: result.gainedXp },
       });
       return ack(
         interaction,
         Accent.primary,
-        "Activity simulated",
+        "activity simulated",
         [
-          `<@${user.id}> gained **${result.gainedXp} XP** from ${messages} simulated message(s).`,
-          result.leveledUp ? `They leveled up to **level ${result.level}**!` : "",
+          `<@${user.id}> gained **${result.gainedXp} XP** from ${messages} simulated ${messages === 1 ? "message" : "messages"}.`,
+          result.leveledUp ? `they reached **level ${result.level}**.` : "",
         ].filter(Boolean),
       );
     }
 
     const club = findClubByName(interaction.options.getString("club", true));
     if (!club || club.status !== "approved") {
-      return ack(interaction, Accent.danger, "Not found", ["No such approved club."]);
+      return ack(interaction, Accent.danger, "not found", ["no such approved club."]);
     }
     bumpActivity(club.id, messages);
     await recordModAction({
@@ -432,12 +432,12 @@ const simulate: Command = {
       action: "simulate_club_activity",
       userId: "—",
       moderatorId: interaction.user.id,
-      reason: `Simulated ${messages} message(s) of activity for "${club.name}"`,
+      reason: `simulated activity for "${club.name}": ${messages} ${messages === 1 ? "message" : "messages"}`,
       metadata: { club: club.name, messages },
     });
-    return ack(interaction, Accent.primary, "Club activity simulated", [
-      `**${club.name}** gained ${messages} simulated message(s) of activity.`,
-      `New activity score: **${clubActivityScore(club.id)}**/100.`,
+    return ack(interaction, Accent.primary, "club activity simulated", [
+      `**${club.name}** gained ${messages} simulated ${messages === 1 ? "message" : "messages"} of activity.`,
+      `new activity score: **${clubActivityScore(club.id)}**/100.`,
     ]);
   },
 };

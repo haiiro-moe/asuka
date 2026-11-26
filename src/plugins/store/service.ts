@@ -98,10 +98,10 @@ export function totalPurchaseCount(itemId: number): number {
  */
 export function limitError(item: StoreItem, userId: string): string | null {
   if (item.stock != null && totalPurchaseCount(item.id) >= item.stock) {
-    return "Sold out.";
+    return "sold out.";
   }
   if (item.maxPerUser != null && userPurchaseCount(item.id, userId) >= item.maxPerUser) {
-    return "You've reached the purchase limit for this item.";
+    return "you've reached the purchase limit for this item.";
   }
   return null;
 }
@@ -174,10 +174,10 @@ export function validateCustomRole(
   const roleName = (typeof name === "string" ? name : "").trim();
   const roleColor = (typeof color === "string" ? color : "").trim();
   if (roleName.length < 2 || roleName.length > 50) {
-    return "Role name must be 2–50 characters.";
+    return "role name must be 2–50 characters.";
   }
   if (!/^#[0-9a-fA-F]{6}$/.test(roleColor)) {
-    return "Role color must be a #RRGGBB hex value.";
+    return "role color must be a #RRGGBB hex value.";
   }
   return { roleName, roleColor };
 }
@@ -208,9 +208,9 @@ export async function editCustomRole(
   body: { roleName?: unknown; roleColor?: unknown },
 ): Promise<{ error: string; status: number } | { ok: true; roleId: string; name: string; color: string }> {
   const guild = await client.guilds.fetch(guildId).catch(() => null);
-  if (!guild) return { error: "Guild unavailable.", status: 500 };
+  if (!guild) return { error: "guild unavailable.", status: 500 };
   const active = activeCustomRole(guild, userId);
-  if (!active) return { error: "You don't have a custom role.", status: 404 };
+  if (!active) return { error: "you don't have a custom role.", status: 404 };
   const invalid = validateCustomRole(body.roleName, body.roleColor);
   if (typeof invalid === "string") return { error: invalid, status: 400 };
   const edited = await active.role
@@ -220,7 +220,7 @@ export async function editCustomRole(
       reason: `Custom role edit by ${userId}`,
     })
     .catch(() => null);
-  if (!edited) return { error: "Couldn't update the role.", status: 500 };
+  if (!edited) return { error: "couldn't update the role.", status: 500 };
   return { ok: true, roleId: edited.id, name: edited.name, color: invalid.roleColor };
 }
 
@@ -268,12 +268,12 @@ export async function buyItem(
   item: StoreItem,
   body: BuyRequest,
 ): Promise<BuyResult> {
-  if (!item.enabled) return fail(404, "This item is not available.");
+  if (!item.enabled) return fail(404, "this item is not available.");
 
   const guild = await client.guilds.fetch(guildId).catch(() => null);
-  if (!guild) return fail(500, "Guild unavailable.");
+  if (!guild) return fail(500, "guild unavailable.");
   const member = await guild.members.fetch(userId).catch(() => null);
-  if (!member) return fail(403, "You must be a member of the server.");
+  if (!member) return fail(403, "you must be a member of the server.");
 
   // --- Cheap validation before any money moves. ---
   const limited = limitError(item, userId);
@@ -284,15 +284,15 @@ export async function buyItem(
   const open = getOpenElection();
 
   if (item.kind === "role") {
-    if (!item.roleId) return fail(500, "Item is misconfigured (no role).");
-    if (member.roles.cache.has(item.roleId)) return fail(409, "You already own this role.");
-    if (!guild.roles.cache.get(item.roleId)) return fail(500, "The role no longer exists.");
+    if (!item.roleId) return fail(500, "item is misconfigured (no role).");
+    if (member.roles.cache.has(item.roleId)) return fail(409, "you already own this role.");
+    if (!guild.roles.cache.get(item.roleId)) return fail(500, "the role no longer exists.");
   }
 
   if (item.kind === "custom_role") {
     // Hard rule across all custom-role items: one active custom role each.
     if (activeCustomRole(guild, userId)) {
-      return fail(409, "You already have a custom role — edit it from your Profile page.");
+      return fail(409, "you already have a custom role. edit it from your profile page.");
     }
     const invalid = validateCustomRole(body.roleName, body.roleColor);
     if (typeof invalid === "string") return fail(400, invalid);
@@ -300,29 +300,29 @@ export async function buyItem(
   }
 
   if (item.kind === "panel_access" && !item.panel) {
-    return fail(500, "Item is misconfigured (no panel).");
+    return fail(500, "item is misconfigured (no panel).");
   }
   if (
     item.kind === "panel_access" &&
     item.panel === "botmessage" &&
     (!item.messageKey || !getMessageDef(item.messageKey))
   ) {
-    return fail(500, "Item is misconfigured (unknown bot message).");
+    return fail(500, "item is misconfigured (unknown bot message).");
   }
 
   let targetUserId = "";
   if (item.kind === "sabotage") {
-    if (!item.sabotageType) return fail(500, "Item is misconfigured (no sabotage type).");
-    if (!open) return fail(409, "No election is open.");
+    if (!item.sabotageType) return fail(500, "item is misconfigured (no sabotage type).");
+    if (!open) return fail(409, "no election is open.");
     if (sabotageUsed(item.id, open.id)) {
-      return fail(409, "This sabotage has already been used this election.");
+      return fail(409, "this sabotage has already been used this election.");
     }
     if (item.sabotageType === "cut_votes" && open.status !== "open") {
-      return fail(409, "Voting hasn't started yet — there are no votes to cut.");
+      return fail(409, "voting hasn't started yet, so there are no votes to cut.");
     }
     targetUserId = body.targetUserId ?? "";
-    if (!targetUserId) return fail(400, "Pick a candidate to sabotage.");
-    if (targetUserId === userId) return fail(400, "You can't sabotage yourself.");
+    if (!targetUserId) return fail(400, "pick a candidate to sabotage.");
+    if (targetUserId === userId) return fail(400, "you can't sabotage yourself.");
     const candidate = db
       .select()
       .from(schema.candidates)
@@ -333,12 +333,12 @@ export async function buyItem(
         ),
       )
       .get();
-    if (!candidate) return fail(400, "That user is not a candidate in this election.");
+    if (!candidate) return fail(400, "that user is not a candidate in this election.");
   }
 
   // --- Charge. ---
   if (!trySpend(userId, item.price)) {
-    return fail(402, `Not enough SC — this costs ${item.price} SC.`);
+    return fail(402, `not enough sc. this costs ${item.price} sc.`);
   }
 
   const token = item.kind === "panel_access" ? crypto.randomUUID() : null;
@@ -372,7 +372,7 @@ export async function buyItem(
       balance: memberBalance(userId),
       link: panelLink(token!),
       message:
-        "Here is your magic link. Open it any time — it expires after one submission.",
+        "here is your magic link. open it any time. it expires after one submission.",
     };
   }
 
@@ -380,13 +380,13 @@ export async function buyItem(
     const added = await member.roles.add(item.roleId!).catch(() => null);
     if (!added) {
       rollback();
-      return fail(500, "Couldn't assign the role — you were not charged.");
+      return fail(500, "couldn't assign the role. you were not charged.");
     }
     db.update(schema.storePurchases)
       .set({ roleId: item.roleId })
       .where(eq(schema.storePurchases.id, purchase.id))
       .run();
-    return { ok: true, balance: memberBalance(userId), roleId: item.roleId!, message: "Role granted!" };
+    return { ok: true, balance: memberBalance(userId), roleId: item.roleId!, message: "role granted." };
   }
 
   if (item.kind === "custom_role") {
@@ -400,12 +400,12 @@ export async function buyItem(
       .catch(() => null);
     if (!role) {
       rollback();
-      return fail(500, "Couldn't create the role — you were not charged.");
+      return fail(500, "couldn't create the role. you were not charged.");
     }
     const added = await member.roles.add(role).catch(() => null);
     if (!added) {
       rollback(() => void role.delete().catch(() => {}));
-      return fail(500, "Couldn't assign the role — you were not charged.");
+      return fail(500, "couldn't assign the role. you were not charged.");
     }
     // Slot the role directly below the configured anchor so its color still
     // shows on names (best-effort: the bot can't move roles above its own).
@@ -418,7 +418,7 @@ export async function buyItem(
       ok: true,
       balance: memberBalance(userId),
       roleId: role.id,
-      message: `Custom role “${roleName}” created and assigned!`,
+      message: `custom role “${roleName}” created and assigned.`,
     };
   }
 
@@ -461,12 +461,12 @@ export async function buyItem(
       rollback(() =>
         db.delete(schema.electionSabotages).where(eq(schema.electionSabotages.id, sabotage.id)).run(),
       );
-      return fail(500, "Couldn't reach the candidate's voting card — you were not charged.");
+      return fail(500, "couldn't reach the candidate's voting card. you were not charged.");
     }
     return {
       ok: true,
       balance: memberBalance(userId),
-      message: `Sabotage deployed: ${removed} vote${removed === 1 ? "" : "s"} removed.`,
+      message: `sabotage deployed: ${removed} vote${removed === 1 ? "" : "s"} removed.`,
     };
   }
 
@@ -475,7 +475,7 @@ export async function buyItem(
     return {
       ok: true,
       balance: memberBalance(userId),
-      message: `Sabotage deployed: they are silenced for ${days} day${days === 1 ? "" : "s"}.`,
+      message: `sabotage deployed: they are silenced for ${days} day${days === 1 ? "" : "s"}.`,
     };
   }
 
@@ -483,7 +483,7 @@ export async function buyItem(
   return {
     ok: true,
     balance: memberBalance(userId),
-    message: `Sabotage deployed: voting for them is disabled for ${days} day${days === 1 ? "" : "s"}.`,
+    message: `sabotage deployed: voting for them is disabled for ${days} day${days === 1 ? "" : "s"}.`,
   };
 }
 

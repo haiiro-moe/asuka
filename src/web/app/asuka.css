@@ -1,0 +1,119 @@
+/* The asuka layer over haiiro: only what the approved Asuka mockups (plans/2026-11-25-asuka-haiiro-redesign,
+   scratch/mockups-approved) use and the system does not carry, plus the system's looks applied to real
+   <button>/<a> elements. Tokens only: no raw colours, no radius, no shadows for structure, no easing.
+   Anything that grows here should go back into the haiiro system. Loaded into the components layer
+   by haiiro.css, after the bundle. */
+
+/* haiiro cuts: nothing slides, fades or eases, whatever a utility class asks for. */
+*, *::before, *::after { transition: none !important; animation: none !important; }
+html { scroll-behavior: auto; }
+
+/* Every focusable thing shows the system's 2px foam ring (components set their own offsets). */
+:focus-visible { outline: 2px solid var(--color-foam); outline-offset: 2px; }
+
+/* Page titles: Jacquard 24, palette white, the system's hard title shadow. One rule, no per-page overrides. */
+h1.title { font-family: var(--font-display); color: var(--color-text); text-shadow: var(--shadow-title); font-weight: 400; }
+/* A title breaks between words only, never inside one: PageHead wraps each word in .w. Sizes are the
+   multiples of 43px where Jacquard 24 is exact, picked so the longest word (`auto-replies`) fits the
+   column: 168px (the system's) from 1101px, 129px from 721px, 43px on phones (360px and up). The
+   selectors carry h1 so they beat the bundle's `.fx .fx-head .title` sizes. */
+.fx .fx-head h1.title { overflow-wrap: normal; word-break: normal; hyphens: manual; }
+h1.title .w { white-space: nowrap; }
+@media (min-width: 721px) and (max-width: 1100px) {
+  .fx .fx-head h1.title { font-size: 129px; }
+  /* four tiles across a narrower column: the system's 52px readouts ("1,900,000") would touch the edge */
+  .fx .fx-tiles .kv_value { font-size: 43px; }
+}
+
+/* A small subtle note line (mockups' note-s). */
+.note-s { margin: 0; font-size: 12px; color: var(--color-subtle); }
+
+/* ListRow, Segmented and spin as real links and buttons, same look as the system's spans. */
+a.li, button.li { font: inherit; color: inherit; text-decoration: none; text-align: left; background: transparent; border: 0; margin: 0; width: 100%; box-sizing: border-box; cursor: pointer; }
+a.li:hover, button.li:hover { color: var(--color-text); }
+a.li:focus-visible, button.li:focus-visible { outline: 2px solid var(--color-foam); outline-offset: -2px; }
+.seg > button { font: inherit; line-height: 1.15; margin: 0; padding: 0 1ch; border: 0; background: transparent; color: var(--color-subtle); cursor: pointer; }
+.seg > button.on, .seg > button[aria-checked="true"] { background: var(--color-pine); color: var(--color-text); }
+.seg > button:disabled { opacity: 0.55; cursor: default; }
+.spin > button { font: inherit; line-height: 1.15; margin: 0; padding: 0; border: 0; background: transparent; color: var(--color-subtle); cursor: pointer; }
+.spin > button:hover { color: var(--color-text); }
+a.ink { display: inline-block; text-decoration: none; }
+
+/* The blob backdrop pinned to the viewport, so a long page does not grow the canvas (with .fx-blobs). */
+.blobs-host { position: fixed; }
+
+/* Swatch: the only place a colour from data appears (decision 2). The colour comes in as --sw. */
+.swatch { display: inline-block; flex: none; box-sizing: border-box; width: 16px; height: 16px; margin: 0; padding: 0; background: var(--sw, var(--color-base)); border: var(--border-hairline) solid var(--color-text); vertical-align: -3px; }
+button.swatch { cursor: pointer; }
+button.swatch:focus-visible { outline: 2px solid var(--color-foam); outline-offset: 2px; }
+button.swatch.on, button.swatch[aria-pressed="true"] { outline: 2px solid var(--color-text); outline-offset: 2px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 4px 8px 8px; }
+/* A 4px stripe in a data colour beside a row (event groups). */
+.stripe { display: block; flex: none; align-self: stretch; width: 4px; background: var(--sw, var(--color-iris)); }
+
+/* Image frame: content images stay full colour in a square crop with a 1px ink-muted hairline (D-012, D-015). */
+.frame { display: inline-block; flex: none; box-sizing: border-box; overflow: hidden; aspect-ratio: 1; border: var(--border-hairline) solid var(--ink-muted); background: var(--color-base); vertical-align: middle; }
+.frame > img { display: block; width: 100%; height: 100%; object-fit: cover; image-rendering: auto; }
+.frame.glyph { display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+
+/* Month calendar (decision 5): hairline cells, today a pine band on the number, events as one-line bars in
+   the group colour with surface text. On phones the agenda list replaces the grid. */
+.mcal-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; padding: 0 0 10px; }
+.mcal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--ink-hairline); border-left: 1px solid var(--ink-hairline); }
+.mcal > .hd7 { padding: 4px 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-muted); border-right: 1px solid var(--ink-hairline); border-bottom: 1px solid var(--ink-hairline); }
+.mcal > .day { display: flex; flex-direction: column; gap: 3px; min-width: 0; min-height: 96px; padding: 4px 6px; border-right: 1px solid var(--ink-hairline); border-bottom: 1px solid var(--ink-hairline); }
+/* Day numbers: this month in text, other months in subtle (5.5:1; muted is too faint at 12px). */
+.mcal > .day > .dn { font-size: 12px; color: var(--color-text); }
+.mcal > .day.o > .dn { color: var(--color-subtle); }
+.mcal > .day.t > .dn { align-self: flex-start; padding: 0 4px; background: var(--color-pine); color: var(--color-text); }
+.mcal .ev { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: 0 4px; border: 0; font: inherit; font-size: 12px; line-height: 16px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--sw, var(--color-iris)); color: var(--color-surface); cursor: pointer; }
+/* The bar's ink is picked per colour (Calendar's barInk) so every bar keeps 4.5:1: surface on light hues,
+   text on dark ones, and for mid tones (pine, blurple) a 4px bar of the colour beside text on overlay. */
+.mcal .ev.on-text { color: var(--color-text); }
+.mcal .ev.on-stripe { background: var(--color-overlay); color: var(--color-text); border-left: 4px solid var(--sw, var(--color-iris)); }
+.mcal .ev:focus-visible { outline-offset: 1px; }
+.mcal .more { align-self: flex-start; margin: 0; padding: 0; border: 0; font: inherit; font-size: 12px; background: transparent; color: var(--color-subtle); cursor: pointer; }
+.mcal span.more { cursor: default; }
+.mcal-agenda { display: none; }
+@media (max-width: 720px) {
+  .mcal { display: none; }
+  .mcal-agenda { display: flex; }
+}
+
+/* PromptField prompts share a width (--pr-w) so values in one window line up; phones drop it. */
+.fld .pr.w { display: inline-block; min-width: var(--pr-w); }
+
+/* ColourField: the hex value is seven characters, so the live swatch sits right after it, not at the far
+   end of the row. */
+.fld.colour input { flex: 0 0 auto; width: 8ch; }
+
+/* The .fx scope's window margin would pull a modal up to the top edge; keep the Modal's own offset. */
+.fx .window.modal { margin-top: 44px; }
+
+@media (max-width: 720px) {
+  .fx .window.modal { margin-top: 16px; }
+}
+
+/* 721px to 999px: the 240px side nav and a 560px column do not fit side by side, so the page strip of
+   the phone layout takes the nav's place and the column keeps the full width. */
+@media (min-width: 721px) and (max-width: 999px) {
+  .fx-strip { display: flex; gap: 0; overflow-x: auto; padding: 0 40px; border-bottom: 1px solid var(--ink-hairline); background: var(--color-surface); white-space: nowrap; scrollbar-width: none; }
+  .fx-strip a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 1ch; color: var(--color-subtle); text-decoration: none; }
+  .fx-strip a.on { background: var(--color-pine); color: var(--color-text); }
+  .fx-side { display: none; }
+}
+
+/* Phones: a filled PromptField value takes its own line under the prompt, so a long label never overlaps
+   it. An empty field that is not being typed in stays on the prompt line, so empty settings do not leave
+   a blank line each; it moves under the prompt once focused. The prompt may wrap between words but never
+   shrinks below its longest word. */
+@media (max-width: 720px) {
+  .fld { flex-wrap: wrap; row-gap: 0; }
+  .fld .pr { flex: 0 1 auto; white-space: normal; }
+  .fld .pr.w { min-width: auto; }
+  .fld input { flex: 1 1 100%; }
+  /* !important: some pages add a basis-full utility to their fields, which would win over this layer */
+  .fld.empty:not(:focus-within) input { flex: 1 1 0 !important; padding-left: 0 !important; }
+  .fld.colour input, .fld.colour.empty:not(:focus-within) input { flex: 0 0 auto !important; }
+  .fx .fx-head h1.title { font-size: 43px; }
+}

@@ -16,6 +16,7 @@ import {
   type JSONEncodable,
 } from "discord.js";
 
+/** Components V2 builders and flags from discord.js, re-exported so plugins import every message part from here. */
 export {
   ContainerBuilder,
   TextDisplayBuilder,
@@ -58,8 +59,10 @@ export function separator(divider = true, large = false): SeparatorBuilder {
 }
 
 /**
- * Build a titled container with markdown body lines. Optional accent color and
- * trailing action row of buttons.
+ * Build a titled container with markdown body lines. Optional accent color
+ * (use an {@link Accent} value) and trailing action row of buttons. The helper
+ * adds no decoration of its own: titles are written lowercase at the call
+ * site, in the haiiro voice, with glyphs (`» @ ★ ✓ ×`) rather than emoji.
  */
 export function card(opts: {
   accent?: number;
@@ -102,7 +105,7 @@ export function pngAttachment(buffer: Buffer, name: string) {
 }
 
 /** Deep-copy raw component JSON, disabling every button along the way. The
- * clicked button (if given) is relabeled as a loading indicator. */
+ * clicked button (if given) is relabeled "loading…" and loses any emoji. */
 function disableButtonsDeep(node: unknown, clickedId?: string): unknown {
   if (Array.isArray(node)) return node.map((n) => disableButtonsDeep(n, clickedId));
   if (node && typeof node === "object") {
@@ -111,8 +114,8 @@ function disableButtonsDeep(node: unknown, clickedId?: string): unknown {
     if (out.type === ComponentType.Button) {
       out.disabled = true;
       if (clickedId && out.custom_id === clickedId) {
-        out.label = "Loading…";
-        out.emoji = { name: "⏳" };
+        out.label = "loading…";
+        delete out.emoji;
       }
     }
     return out;
@@ -122,7 +125,7 @@ function disableButtonsDeep(node: unknown, clickedId?: string): unknown {
 
 /**
  * Acknowledge a button click by immediately re-rendering the message with all
- * buttons disabled and the clicked one showing "⏳ Loading…". Unlike a bare
+ * buttons disabled and the clicked one showing "loading…". Unlike a bare
  * deferUpdate() this gives instant visual feedback and blocks double-clicks
  * while the next state is computed. Callers finish (or restore buttons on
  * failure) with `interaction.editReply(...)`.
@@ -151,13 +154,26 @@ export function isValidComponentsPayload(value: unknown): value is unknown[] {
   );
 }
 
-/** Accent palette reused across feature cards for visual consistency. */
+/**
+ * Accent palette for Components V2 containers, as Rose Pine hex integers. The
+ * key names are the call-site contract and never change; each value is a haiiro
+ * token with one job. The stripe on a Discord container is the only place
+ * colour appears, so pine is only ever a bar, never text.
+ *
+ * - `primary`: pine (`color-pine`), the default frame colour.
+ * - `success`: foam (`color-foam`), things that worked or were approved.
+ * - `warning`: gold (`color-gold`), the one thing that needs a look.
+ * - `danger`: love (`color-love`), destructive or failed.
+ * - `star`: gold (`color-gold`), starboard and leaderboard.
+ * - `club`: iris (`color-iris`), clubs.
+ * - `election`: rose (`color-rose`), elections and the presidency.
+ */
 export const Accent = {
-  primary: 0x5865f2,
-  success: 0x57f287,
-  warning: 0xfee75c,
-  danger: 0xed4245,
-  star: 0xffac33,
-  club: 0xeb459e,
-  election: 0x9b59b6,
+  primary: 0x31748f,
+  success: 0x9ccfd8,
+  warning: 0xf6c177,
+  danger: 0xeb6f92,
+  star: 0xf6c177,
+  club: 0xc4a7e7,
+  election: 0xebbcba,
 } as const;

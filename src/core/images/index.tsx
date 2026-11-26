@@ -1,3 +1,9 @@
+/**
+ * Card renderers: one function per PNG card the bot posts. Every renderer returns null
+ * on failure (fonts, layout, raster) so call sites fall back to their text-only payload.
+ *
+ * @packageDocumentation
+ */
 import { tryRenderPng } from "./render.tsx";
 import { TitleBanner, BANNER_WIDTH, BANNER_HEIGHT } from "./components/title-banner.tsx";
 import {
@@ -10,6 +16,7 @@ import {
   ElectionProfileCard,
   ELECTION_PROFILE_WIDTH,
   ELECTION_PROFILE_HEIGHT,
+  electionProfileHeight,
   type ElectionProfileCardProps,
 } from "./components/election-profile-card.tsx";
 import {
@@ -64,8 +71,10 @@ export type { PresidencyTerm } from "./components/profile-card.tsx";
 export type { LeaderboardRow } from "./components/leaderboard-card.tsx";
 export type { ElectionResultsRow } from "./components/election-results-card.tsx";
 
-/** All renderers return null on failure so callers can fall back to text. */
-
+/**
+ * Announcement title banner (haiiro page head over the still backdrop).
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderTitleBannerPng(title: string): Promise<Buffer | null> {
   return tryRenderPng(<TitleBanner title={title} />, {
     width: BANNER_WIDTH,
@@ -73,6 +82,10 @@ export function renderTitleBannerPng(title: string): Promise<Buffer | null> {
   });
 }
 
+/**
+ * Member profile card.
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderProfileCardPng(props: ProfileCardProps): Promise<Buffer | null> {
   return tryRenderPng(<ProfileCard {...props} />, {
     width: PROFILE_WIDTH,
@@ -80,15 +93,23 @@ export function renderProfileCardPng(props: ProfileCardProps): Promise<Buffer | 
   });
 }
 
+/**
+ * Election-view profile card (candidate stats).
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderElectionProfileCardPng(
   props: ElectionProfileCardProps,
 ): Promise<Buffer | null> {
   return tryRenderPng(<ElectionProfileCard {...props} />, {
     width: ELECTION_PROFILE_WIDTH,
-    height: ELECTION_PROFILE_HEIGHT,
+    height: electionProfileHeight(props),
   });
 }
 
+/**
+ * One leaderboard page.
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderLeaderboardCardPng(props: LeaderboardCardProps): Promise<Buffer | null> {
   return tryRenderPng(<LeaderboardCard {...props} />, {
     width: LEADERBOARD_WIDTH,
@@ -96,6 +117,10 @@ export function renderLeaderboardCardPng(props: LeaderboardCardProps): Promise<B
   });
 }
 
+/**
+ * Election results with vote counts.
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderElectionResultsPng(
   props: ElectionResultsCardProps,
 ): Promise<Buffer | null> {
@@ -105,6 +130,10 @@ export function renderElectionResultsPng(
   });
 }
 
+/**
+ * Election winner announcement card.
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderWinnerCardPng(props: WinnerCardProps): Promise<Buffer | null> {
   return tryRenderPng(<WinnerCard {...props} />, {
     width: WINNER_CARD_WIDTH,
@@ -112,6 +141,10 @@ export function renderWinnerCardPng(props: WinnerCardProps): Promise<Buffer | nu
   });
 }
 
+/**
+ * AniList user profile card.
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderAniListProfilePng(
   props: AniListProfileCardProps,
 ): Promise<Buffer | null> {
@@ -121,6 +154,10 @@ export function renderAniListProfilePng(
   });
 }
 
+/**
+ * AniList anime/manga card.
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderAniListMediaPng(props: AniListMediaCardProps): Promise<Buffer | null> {
   return tryRenderPng(<AniListMediaCard {...props} />, {
     width: ANILIST_MEDIA_WIDTH,
@@ -128,6 +165,10 @@ export function renderAniListMediaPng(props: AniListMediaCardProps): Promise<Buf
   });
 }
 
+/**
+ * AniList character card.
+ * Returns the PNG, or null on any render failure so the caller can send its text fallback.
+ */
 export function renderAniListCharacterPng(
   props: AniListCharacterCardProps,
 ): Promise<Buffer | null> {

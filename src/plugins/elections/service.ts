@@ -138,13 +138,13 @@ export async function openElection(client: Client): Promise<Election | null> {
   if (channel) {
     await channel.send(
       await bannerMessage({
-        banner: "ELECTION OPEN",
-        fallbackTitle: "## 🗳️ Student Council Election is OPEN",
+        banner: "election open",
+        fallbackTitle: "## election open",
         accent: Accent.election,
         lines: [
-          `Use **/election apply** to stand as a candidate.`,
-          `Registration closes and voting begins <t:${votingStartsAt}:R>.`,
-          `Voting closes <t:${endsAt}:R>.`,
+          `use **/election apply** to stand as a candidate.`,
+          `registration closes and voting begins <t:${votingStartsAt}:R>.`,
+          `voting closes <t:${endsAt}:R>.`,
         ],
       }),
     );
@@ -173,13 +173,13 @@ export async function startVoting(client: Client, election: Election): Promise<v
 
   await channel.send(
     await bannerMessage({
-      banner: "VOTING OPEN",
-      fallbackTitle: "## 🗳️ Voting is OPEN",
+      banner: "voting open",
+      fallbackTitle: "## voting open",
       accent: Accent.election,
       lines: [
-        `Candidate registration has closed.`,
-        `React with ${VOTE_EMOJI} on a candidate to vote.`,
-        `Voting closes <t:${election.endsAt}:R>.`,
+        `candidate registration has closed.`,
+        `react with ${VOTE_EMOJI} on a candidate to vote.`,
+        `voting closes <t:${election.endsAt}:R>.`,
       ],
     }),
   );
@@ -210,16 +210,16 @@ export function checkEligibility(member: GuildMember): string | null {
   if (cfg.presidentApplyMinRoleId) {
     const role = member.guild.roles.cache.get(cfg.presidentApplyMinRoleId);
     if (role && member.roles.highest.comparePositionTo(role) < 0) {
-      return "You don't meet the minimum role requirement to run.";
+      return "you don't meet the minimum role requirement to run.";
     }
   }
   // Dev mode skips the membership-age gate so candidacy can be tested freshly.
   const joined = member.joinedTimestamp ? Math.floor(member.joinedTimestamp / 1000) : 0;
   if (!env.DEV && nowSec() - joined < MIN_ACTIVE_SEC) {
-    return "You must be a member for at least a week before applying.";
+    return "you must be a member for at least a week before applying.";
   }
   if (consecutiveTermsFor(member.id) >= MAX_CONSECUTIVE_TERMS) {
-    return `You've already served ${MAX_CONSECUTIVE_TERMS} back-to-back terms — sit this election out and you can run again next time.`;
+    return `you've already served ${MAX_CONSECUTIVE_TERMS} back-to-back terms. sit this election out and you can run again next time.`;
   }
   return null;
 }
@@ -251,14 +251,14 @@ export async function candidateProfile(
     motto,
     vision: role,
     isCandidate: true,
-    subtitle: "CANDIDATE",
+    subtitle: "candidate",
     sabotaged,
   });
 
   const voteNotice =
     votingStartsAt && votingStartsAt > nowSec()
-      ? `-# Voting opens <t:${votingStartsAt}:R> — react with ${VOTE_EMOJI} then!`
-      : `-# React with ${VOTE_EMOJI} to vote!`;
+      ? `-# voting opens <t:${votingStartsAt}:R>. react with ${VOTE_EMOJI} then.`
+      : `-# react with ${VOTE_EMOJI} to vote.`;
   if (png) {
     const { file, gallery } = pngAttachment(png, `candidate-${member.id}.png`);
     const container = new ContainerBuilder()
@@ -272,12 +272,12 @@ export async function candidateProfile(
     new ContainerBuilder()
       .setAccentColor(Accent.election)
       .addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(`## 🗳️ Candidate: ${member.displayName}`),
+        new TextDisplayBuilder().setContent(`## candidate: ${member.displayName}`),
         new TextDisplayBuilder().setContent(
           [
-            `**Motto:** ${sabotaged ? "~~SABOTAGED~~" : motto}`,
-            `**If elected:** ${sabotaged ? "~~SABOTAGED~~" : role}`,
-            `**Leaderboard rank:** #${rank} · **Level:** ${prog.level} · **Credits:** ${m.socialCredits}`,
+            `**motto:** ${sabotaged ? "~~sabotaged~~" : motto}`,
+            `**if elected:** ${sabotaged ? "~~sabotaged~~" : role}`,
+            `**leaderboard rank:** #${rank} · **level:** ${prog.level} · **credits:** ${m.socialCredits}`,
             "",
             voteNotice,
           ].join("\n"),
@@ -340,9 +340,9 @@ export async function applyCandidate(
   roleDescription: string,
 ): Promise<string | null> {
   const election = getOpenElection();
-  if (!election) return "There is no open election right now.";
+  if (!election) return "there is no open election right now.";
   if (election.status !== "registration") {
-    return "Candidate registration has closed — voting is already underway.";
+    return "candidate registration has closed. voting is already underway.";
   }
 
   const existing = db
@@ -355,10 +355,10 @@ export async function applyCandidate(
       ),
     )
     .get();
-  if (existing) return "You are already a candidate in this election.";
+  if (existing) return "you are already a candidate in this election.";
 
   const channel = await getElectionChannel(client);
-  if (!channel) return "The election channel is not configured.";
+  if (!channel) return "the election channel is not configured.";
 
   // The vote reaction is seeded by `startVoting` once registration ends.
   const msg = await channel.send(
@@ -443,26 +443,26 @@ export async function applyTheme(
   const cfg = getConfig();
   const status = getThemeStatus();
   if (!opts.bypassCooldown && status.cooldownRemaining > 0) {
-    return { error: `Theme is on cooldown for ${status.cooldownRemaining}s.` };
+    return { error: `theme is on cooldown for ${status.cooldownRemaining}s.` };
   }
   if (!opts.name && !opts.iconUrl) {
-    return { error: "Provide a name and/or an icon." };
+    return { error: "give a name, an icon, or both." };
   }
 
   const applied: string[] = [];
   if (opts.name) {
     const newName = cfg.serverNameTemplate.replace("%s", opts.name);
     await guild.setName(newName);
-    applied.push(`Name → ${newName}`);
+    applied.push(`name » ${newName}`);
   }
   if (opts.iconUrl) {
     // Fetch the icon ourselves (through remapInternalHost) rather than handing
     // the raw URL to guild.setIcon, which would have discord.js fetch it
     // directly and skip the LAN rewrite.
     const iconDataUri = await fetchImageDataUri(opts.iconUrl);
-    if (!iconDataUri) return { error: "Could not fetch the icon image." };
+    if (!iconDataUri) return { error: "could not fetch the icon image." };
     await guild.setIcon(iconDataUri);
-    applied.push("Server icon updated");
+    applied.push("server icon updated");
   }
 
   if (!opts.bypassCooldown) {
@@ -590,17 +590,17 @@ export async function closeElection(guild: Guild, electionId: number) {
       displayName: winnerName,
       avatarDataUri: winnerAvatar,
       votes: winner.votes,
-      title: "NEW PRESIDENT",
-      message: `${winnerName} won the election with ${winner.votes} vote${winner.votes === 1 ? "" : "s"}!`,
+      title: "new president",
+      message: `${winnerName} won the election with ${winner.votes} vote${winner.votes === 1 ? "" : "s"}.`,
     });
     await announce(guild.client, {
       accent: Accent.success,
-      title: "🎉 New Student Council President",
+      title: "new student council president",
       // Image-only when the card rendered; text fallback otherwise.
       lines: png
         ? []
         : [
-            `Congratulations <@${winner.userId}> on winning the election with **${winner.votes}** vote(s)!`,
+            `congratulations <@${winner.userId}>. you won the election with **${winner.votes}** vote${winner.votes === 1 ? "" : "s"}.`,
           ],
       image: png ? { buffer: png, name: "new-president.png" } : undefined,
     });
@@ -634,11 +634,11 @@ export async function closeElection(guild: Guild, electionId: number) {
           new ContainerBuilder()
             .setAccentColor(Accent.success)
             .addTextDisplayComponents(
-              new TextDisplayBuilder().setContent("## 🎉 Election results"),
+              new TextDisplayBuilder().setContent("## election results"),
               new TextDisplayBuilder().setContent(
                 winner
-                  ? `Congratulations <@${winner.userId}> — our new Student Council President with **${winner.votes}** vote(s)!`
-                  : "No candidates stood. No president was elected.",
+                  ? `congratulations <@${winner.userId}>, our new student council president with **${winner.votes}** vote${winner.votes === 1 ? "" : "s"}.`
+                  : "no candidates stood. no president was elected.",
               ),
             ),
         ),
@@ -654,10 +654,12 @@ export async function closeElection(guild: Guild, electionId: number) {
         displayName: winnerName,
         avatarDataUri: winnerAvatar,
         votes: winner.votes,
+        title: "new president",
+        message: `you won with ${winner.votes} vote${winner.votes === 1 ? "" : "s"}. your term starts now.`,
       });
       const lines = [
-        "You are the new **Student Council President**! 🎉",
-        "You can now set the weekly server theme with **/theme**.",
+        "you are the new **student council president**.",
+        "you can now set the weekly server theme with **/theme**.",
       ];
       const container = new ContainerBuilder().setAccentColor(Accent.success);
       let files: AttachmentBuilder[] = [];
@@ -667,7 +669,7 @@ export async function closeElection(guild: Guild, electionId: number) {
         container.addMediaGalleryComponents(gallery);
       } else {
         container.addTextDisplayComponents(
-          new TextDisplayBuilder().setContent("## 🎉 Congratulations!"),
+          new TextDisplayBuilder().setContent("## congratulations"),
         );
       }
       container.addTextDisplayComponents(new TextDisplayBuilder().setContent(lines.join("\n")));

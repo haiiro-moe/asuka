@@ -51,8 +51,20 @@ src/
     server.ts           Bun.serve: React app + OAuth + /api/me + guarded /api/* dispatch
     auth.ts             Discord OAuth2 code flow + HMAC signed-cookie sessions
     routes.ts           cross-cutting dashboard API (config, clubs, elections, members, modlog)
-    app/                React + Tailwind SPA (own tsconfig with DOM lib)
+    app/                React SPA on the haiiro design system (own tsconfig with DOM lib); see docs/web-ui.md
 ```
+
+### Design and voice
+- The web UI is the **haiiro design system**: one dark theme, tokens only (no raw colours), square, no
+  easing, self-hosted fonts, lowercase labels, no emoji, full-colour images in a hairline frame. Build
+  from `src/web/app/ui/`; Tailwind is for layout utilities only. Rules, primitives and how to add a page:
+  [docs/web-ui.md](docs/web-ui.md). Do not invent one-off controls.
+- Bot messages and cards use the same voice: lowercase, narrator, glyphs `» @ ★ ✓ × ☼`, no emoji, no
+  exclamation marks, dates `4 Nov 2026`, Rosé Pine `Accent` colours. Default templates in
+  `src/core/messages.ts` ship with the code; an edited template (`bot_messages` row) always wins and
+  is never rewritten. See [docs/voice.md](docs/voice.md) and [docs/cards.md](docs/cards.md).
+- The dashboard bundle needs the Tailwind plugin: `bun build` on the CLI does not run it. Check with
+  `bun run build:web` (scripts/build-web.ts, see docs/web-ui.md).
 
 ### Plugin contract (`src/core/plugin.ts`)
 A plugin exports `{ name, commands?, listeners?, schedules?, api? }`. Register it in
@@ -79,7 +91,7 @@ voice-session XP tick, leveling in `xp/leveling.ts`) · `economy` (Social Credit
 every 200–1000 messages, starboard bonus, club daily payout) · `starboard` (reaction sync +
 reward) · `profile` (`/profile` with election-view toggle button, `/leaderboard` paginated; both render PNG cards via `core/images`, text fallback) ·
 `clubs` (tiers: thread→channel→+voice, listing directory, approval buttons, daily payout, ≤3/user) ·
-`elections` (quarterly cron, 1-week registration phase then 1-week 🗳️ reaction voting, max 2
+`elections` (quarterly cron, 1-week registration phase then 1-week reaction voting (the 🗳️ reaction is matched in code), max 2
 back-to-back terms per user, president role + weekly theme powers) ·
 `store` (SC storefront: admin-defined items with optional per-user cap + global stock —
 one-time panel magic links (`/panel/:token`, open freely, burned on submit), role grants,
@@ -94,12 +106,14 @@ cut votes / silence with a SABOTAGED card stamp); failed fulfilment refunds the 
 - Drizzle filters: combine conditions with `and(...)`, never `&&`.
 - Component/button interactions are handled by plugin `InteractionCreate` listeners keyed by
   `customId` prefix (`lb:` leaderboard, `pf:` profile view toggle, `club:` approvals). Button
-  handlers ack with `ackButtonLoading()` (disables all buttons, clicked one shows "⏳ Loading…"),
+  handlers ack with `ackButtonLoading()` (disables all buttons, clicked one shows `loading…`, no emoji),
   then `editReply` the final state — wrap the work in try/catch that edits an error card so the
   message never sticks in the loading state.
 - Image cards (`src/core/images/`, satori + resvg): satori lays React fragments out as a **row**
   (keep panels as siblings), can't tile radial-gradient dots, has no emoji font (strip via
-  `sanitizeText`), and resvg can't decode webp — fetch avatars with `extension: "png"`. Every
+  `cleanText`; IBM VGA plus Unifont cover everything else), and resvg can't decode webp — fetch avatars with `extension: "png"`. Cards are haiiro
+  primitives (`images/components/haiiro/`), crisp only at IBM 16/32px and Jacquard 43/86px, 1x render;
+  avatars and AniList art stay full colour in a hairline `ImageFrame`. See `docs/cards.md`. Every
   call site falls back to the old text-only payload when `tryRenderPng` returns null. On message
   edits that swap an image, pass `attachments: []` or the old upload lingers.
 

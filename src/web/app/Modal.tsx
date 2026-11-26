@@ -1,38 +1,33 @@
 import type { ReactNode } from "react";
+import { Dialog, type DialogProps } from "./ui/Dialog.tsx";
 
-/** Comic-styled modal dialog. Clicking the backdrop or ✕ closes it. */
-export function Modal({
-  title,
-  onClose,
-  children,
-  wide = false,
-}: {
+/** Props of {@link Modal}. */
+export interface ModalProps {
+  /** The dialog's name. Shown in the frame label unless `label` is given; keep it lowercase. */
   title: string;
   onClose: () => void;
   children: ReactNode;
-  /** Widens the dialog for editors that need two columns. */
+  /** Widens the dialog (896px) for editors that need two columns. */
   wide?: boolean;
-}) {
+  /** The frame label, written like a prompt: `vim: ~/events/new`. Defaults to `title`. */
+  label?: ReactNode;
+  /** Frame colour; see {@link Dialog}. */
+  tone?: DialogProps["tone"];
+  /** Footer line; see {@link Dialog}. */
+  foot?: ReactNode | null;
+  /** Called on Enter outside textareas and buttons; see {@link Dialog}. */
+  onSubmit?: () => void;
+}
+
+/**
+ * The dashboard's modal: a haiiro Window over the dither veil (see {@link Dialog} for focus, keys and
+ * scrolling). Esc, the close button and a click on the veil close it. Kept under this name and with its
+ * original props so pages written before the redesign keep working.
+ */
+export function Modal({ title, onClose, children, wide = false, label, tone, foot, onSubmit }: ModalProps) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-6"
-      onClick={onClose}
-    >
-      <div
-        className={`comic-panel w-full ${wide ? "max-w-4xl" : "max-w-lg"} max-h-[85vh] overflow-y-auto p-4 sm:p-5`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-4 mb-3">
-          <h3 className="comic-title text-2xl sm:text-3xl min-w-0">{title}</h3>
-          <button
-            className="comic-btn comic-btn--ghost px-2.5 py-1 text-sm shrink-0"
-            onClick={onClose}
-          >
-            ✕
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
+    <Dialog label={label ?? title} title={title} onClose={onClose} wide={wide} tone={tone} foot={foot} onSubmit={onSubmit}>
+      {children}
+    </Dialog>
   );
 }

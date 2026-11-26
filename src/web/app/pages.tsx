@@ -1,9 +1,33 @@
-import { useState, type ReactElement } from "react";
+/**
+ * The dashboard's main pages (overview, leaderboard, clubs, presidency history, president, config,
+ * auto-replies, elections, moderation) and the `PAGES` list the shell navigates. Every page is written
+ * in the haiiro primitives: labelled Windows, stat tiles, data tables, setting rows and narrator lines.
+ * The page title and its lede are drawn by the shell (`App.tsx`), so a page starts with its content.
+ *
+ * @module
+ */
+import { useId, useState, type ReactElement, type ReactNode } from "react";
 import { api, type Me } from "./api.ts";
 import { ComponentsEditor } from "./ComponentsEditor.tsx";
 import { useNames, UserName, UserLink } from "./names.tsx";
 import { useMe, ROLE_RANK } from "./me-context.ts";
-import { card, btn, btnGhost, input, useAsync } from "./ui.ts";
+import {
+  Chip,
+  Empty,
+  ErrorLine,
+  Heading,
+  InkButton,
+  Loading,
+  PromptField,
+  Saved,
+  Select,
+  SettingRow,
+  Tabs,
+  Toggle,
+  Window,
+  useAsync,
+  useConfirm,
+} from "./ui.ts";
 import { Modal } from "./Modal.tsx";
 import { StorePage } from "./StorePage.tsx";
 import { StoreItemsPage } from "./StoreItemsPage.tsx";
@@ -11,138 +35,300 @@ import { ProfilePage } from "./ProfilePage.tsx";
 import { BotMessagesTab } from "./BotMessagesTab.tsx";
 import { EventsPage, EventsEditorPage } from "./EventsPages.tsx";
 
-function Stat({ value, label }: { value: string | number; label: string }) {
+/* ------------------------------------------------------------------------------------------------ */
+/* helpers                                                                                          */
+/* ------------------------------------------------------------------------------------------------ */
+
+/** Lets a PromptField wrap on phones: the value drops under a long prompt instead of being squeezed. */
+const FIELD_WRAP = "max-[720px]:flex-wrap max-[720px]:[&>input]:basis-full max-[720px]:[&>input]:pl-[calc(1ch+8px)]";
+
+/** Stacks a SettingRow on phones: name, description, then the actions under them. */
+const STACK_ON_PHONE = "max-[720px]:grid-cols-1 max-[720px]:[&>span:nth-child(2)]:order-3 max-[720px]:[&>span:nth-child(2)]:pt-2";
+
+/** The palette's pine, the default accent of a new auto-reply container (never Discord blurple). */
+const DEFAULT_ACCENT = 0x31748f;
+
+/** Formats unix seconds as a day, `4 Nov 2026`. */
+function fmtDate(sec: number): string {
+  return new Date(sec * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** Formats unix seconds as a day and a 24-hour time, `4 Nov 2026, 18:30`. */
+function fmtDateTime(sec: number): string {
+  const d = new Date(sec * 1000);
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${fmtDate(sec)}, ${time}`;
+}
+
+/** `1 candidate` / `2 candidates`. */
+function plural(n: number, one: string, many = one + "s"): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * The line a page shows while its data loads or when the load failed: a loading narrator line, or a love
+ * line with a retry button.
+ *
+ * @param error - The loader's error message, if it failed.
+ * @param reload - Runs the loader again.
+ */
+function Pending({ error, reload }: { error: string | null; reload?: () => void }) {
+  if (error) return <ErrorLine onRetry={reload}>{`That did not load: ${error}.`}</ErrorLine>;
+  return <Loading />;
+}
+
+/** One stat tile (`.fx-tiles` child): a muted label, a big value, a note line. `off` dashes it when there is nothing yet. */
+function Tile({ label, value, unit, note, off }: { label: string; value: ReactNode; unit?: string; note?: string; off?: boolean }) {
   return (
-    <div className={card}>
-      <div className="comic-title text-3xl">{value}</div>
-      <div className="text-ink-soft text-sm font-bold">{label}</div>
+    <div className={off ? "off" : undefined}>
+      <span className="kv_label c1">{label}</span>
+      <span className="kv_value">
+        {value}
+        {unit && <small>{unit}</small>}
+      </span>
+      {note && <span className="note">{note}</span>}
     </div>
   );
 }
 
+/** A table that scrolls sideways inside its window instead of the page (`.fx-scroll > table.fx-table`). */
+function DataTable({ children }: { children: ReactNode }) {
+  return (
+    <div className="fx-scroll">
+      <table className="fx-table">{children}</table>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+/* overview                                                                                         */
+/* ------------------------------------------------------------------------------------------------ */
+
+/**
+ * The club actions shared by the overview's approvals window and the clubs page: approve, and terminate
+ * (the overview calls it reject) behind a confirm dialog.
+ *
+ * @param reload - Reloads the club list after an action.
+ * @returns `approve`, `terminate(club, verb)` and the confirm `dialog` element the caller must render.
+ */
+function useClubActions(reload: () => void) {
+  const { confirm, dialog } = useConfirm();
+  const approve = async (c: any) => {
+    await api.approveClub(c.id);
+    reload();
+  };
+  const terminate = async (c: any, verb: "terminate" | "reject" = "terminate") => {
+    const message =
+      verb === "reject"
+        ? `Reject ${c.name}? The club closes, and it does not come back.`
+        : `Terminate ${c.name}? The club closes, and its members lose their place in it.`;
+    if (!(await confirm({ label: `confirm: ~/clubs/${verb}`, title: `${verb} club`, message, confirmLabel: verb }))) return;
+    await api.terminateClub(c.id);
+    reload();
+  };
+  return { approve, terminate, dialog };
+}
+
+/** What the president may do, shown as the `powers` row of the council window. */
+const PRESIDENT_POWERS = ["weekly theme", "club approval"];
+
+/**
+ * The overview: server numbers as tiles, the council, the top members, and (for the president and admins)
+ * the clubs waiting for a verdict with approve and reject.
+ */
 export function Overview() {
-  const { data } = useAsync(() => api.stats());
+  const { data, error, reload } = useAsync(() => api.stats());
+  const me = useMe();
+  const canManage = ROLE_RANK[me?.role ?? "user"] >= ROLE_RANK.president;
+  const clubs = useAsync(() => (canManage ? api.clubs() : Promise.resolve([] as any[])), [canManage]);
+  const clubActions = useClubActions(clubs.reload);
   const name = useNames([
     data?.president?.userId,
     ...(data?.topMembers ?? []).map((m: any) => m.userId),
+    ...(clubs.data ?? []).filter((c) => c.status === "pending").map((c) => c.ownerId),
   ]);
-  if (!data) return <p className="on-bg-soft">Loading…</p>;
+  if (!data) return <Pending error={error} reload={reload} />;
+  const top: any[] = data.topMembers ?? [];
+  const election = data.election;
+
+  const pendingClubs = (clubs.data ?? []).filter((c) => c.status === "pending");
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
-        <Stat value={data.members} label="Members" />
-        <Stat value={data.totalMessages.toLocaleString()} label="Messages sent" />
-        <Stat value={data.totalCredits.toLocaleString()} label="SC in circulation" />
-        <Stat value={data.totalXp.toLocaleString()} label="Total XP earned" />
-        <Stat value={data.clubs} label="Active clubs" />
-        <Stat value={data.pendingClubs} label="Clubs awaiting approval" />
-        <Stat value={data.starboardPosts} label="Starboard posts" />
-        <Stat
-          value={data.election ? (data.election.status === "registration" ? "Registration" : "Voting") : "—"}
-          label="Election"
+    <>
+      <div className="fx-grid fx-tiles desk:grid-cols-4">
+        <Tile label="members" value={data.members.toLocaleString()} note="in the server" />
+        <Tile label="messages" value={data.totalMessages.toLocaleString()} note="sent so far" />
+        <Tile label="in circulation" value={data.totalCredits.toLocaleString()} unit="sc" note="social credits" />
+        <Tile label="total xp" value={data.totalXp.toLocaleString()} note="earned by everyone" />
+        <Tile label="active clubs" value={data.clubs} note="approved and running" />
+        <Tile label="awaiting approval" value={data.pendingClubs} note="clubs, need a verdict" off={!data.pendingClubs} />
+        <Tile label="starboard" value={data.starboardPosts} note="posts" />
+        <Tile
+          label="election"
+          value={election ? (election.status === "registration" ? "signup" : "voting") : "none"}
+          note={election ? plural(election.candidates, "candidate") : "no ballot open"}
+          off={!election}
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className={card + " space-y-1 text-sm"}>
-          <div className="font-medium mb-1">🏛️ Student Council</div>
+      <div className="fx-grid items-start">
+        <Window label="fish: ~/council">
           {data.president ? (
-            <>
-              <div>
-                President: <strong><UserLink id={data.president.userId} /></strong>
-              </div>
+            <div className="fx-sheet">
+              <span className="kv_label">president</span>
+              <span className="c6">
+                <UserLink id={data.president.userId} />
+              </span>
               {data.president.termStart && (
-                <div className="text-ink-soft">
-                  Term started {new Date(data.president.termStart * 1000).toLocaleDateString()}
-                </div>
+                <>
+                  <span className="kv_label">term</span>
+                  <span>since {fmtDate(data.president.termStart)}</span>
+                </>
               )}
-            </>
+              <span className="kv_label">powers</span>
+              <span className="c6">{PRESIDENT_POWERS.join(", ")}</span>
+            </div>
           ) : (
-            <div className="text-ink-soft">No president currently in office.</div>
+            <Empty>Nobody holds the office. The chair stands empty.</Empty>
           )}
-          {data.election && (
-            <div className="text-ink-soft">
-              {data.election.status === "registration" ? (
-                <>
-                  Election open — {data.election.candidates} candidate(s), voting begins{" "}
-                  {new Date(data.election.votingStartsAt * 1000).toLocaleString()}
-                </>
-              ) : (
-                <>
-                  Voting underway — {data.election.candidates} candidate(s), closes{" "}
-                  {new Date(data.election.endsAt * 1000).toLocaleString()}
-                </>
-              )}
-            </div>
-          )}
-        </div>
+          <p className="nar mt-3">
+            {election
+              ? election.status === "registration"
+                ? `Signup is open with ${plural(election.candidates, "candidate")}. Voting begins ${fmtDateTime(election.votingStartsAt)}.`
+                : `Voting is underway with ${plural(election.candidates, "candidate")}. The ballot closes ${fmtDateTime(election.endsAt)}.`
+              : "No election is open. The ballot box sits empty in the corner."}
+          </p>
+        </Window>
 
-        <div className={card + " text-sm"}>
-          <div className="font-medium mb-2">💰 Top Social Credits</div>
-          {(data.topMembers ?? []).map((m: any, i: number) => (
-            <div key={m.userId} className="flex justify-between py-0.5 border-b border-black/15 last:border-0">
-              <span>
-                {i + 1}. <UserLink id={m.userId} />
-              </span>
-              <span className="text-ink-soft">
-                {m.socialCredits} SC · L{m.level}
-              </span>
-            </div>
-          ))}
-          {(data.topMembers ?? []).length === 0 && (
-            <div className="text-ink-soft">No members tracked yet.</div>
+        <Window label="fish: ~/top" foot={<span className="r">top {top.length} of {data.members.toLocaleString()}</span>}>
+          {top.length === 0 ? (
+            <Empty>No members are tracked yet. The ladder is bare.</Empty>
+          ) : (
+            <DataTable>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>member</th>
+                  <th className="r">level</th>
+                  <th className="r">xp</th>
+                  <th className="r">sc</th>
+                </tr>
+              </thead>
+              <tbody>
+                {top.map((m, i) => (
+                  <tr key={m.userId}>
+                    <td>{i + 1}</td>
+                    <td>
+                      <UserLink id={m.userId} />
+                    </td>
+                    <td className="r">{m.level}</td>
+                    <td className="r">{Number(m.xp).toLocaleString()}</td>
+                    <td className="r">{Number(m.socialCredits).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </DataTable>
           )}
-        </div>
+        </Window>
       </div>
-    </div>
+
+      {canManage && pendingClubs.length > 0 && (
+        <Window label="fish: ~/clubs" tone="gold">
+          <p className="nar">{pendingClubs.length === 1 ? "One club waits" : `${pendingClubs.length} clubs wait`} for a verdict.</p>
+          {pendingClubs.map((c) => (
+            <SettingRow
+              key={c.id}
+              className={STACK_ON_PHONE}
+              label={
+                <>
+                  {c.name} <Chip>tier {c.level}</Chip>
+                </>
+              }
+              description={
+                <>
+                  asked by {name(c.ownerId)} · {fmtDate(c.createdAt)}
+                </>
+              }
+            >
+              <InkButton tone="gold" onClick={() => clubActions.approve(c)}>
+                approve
+              </InkButton>{" "}
+              <InkButton tone="love" onClick={() => clubActions.terminate(c, "reject")}>
+                reject
+              </InkButton>
+            </SettingRow>
+          ))}
+        </Window>
+      )}
+      {clubActions.dialog}
+    </>
   );
 }
 
+/* ------------------------------------------------------------------------------------------------ */
+/* config                                                                                           */
+/* ------------------------------------------------------------------------------------------------ */
+
 /** Mirrors src/plugins/linkfixer/domains.ts PLATFORMS (key + label only). */
 const LINK_FIXER_PLATFORMS: { key: string; label: string }[] = [
-  { key: "twitter", label: "Twitter/X" },
-  { key: "pixiv", label: "Pixiv" },
-  { key: "tiktok", label: "TikTok" },
-  { key: "reddit", label: "Reddit" },
-  { key: "instagram", label: "Instagram" },
-  { key: "twitch_clips", label: "Twitch Clips" },
-  { key: "iwara", label: "Iwara" },
-  { key: "bluesky", label: "Bluesky" },
-  { key: "facebook", label: "Facebook" },
-  { key: "bilibili", label: "Bilibili" },
-  { key: "bilibili_opus", label: "Bilibili Opus" },
-  { key: "tumblr", label: "Tumblr" },
-  { key: "threads", label: "Threads" },
-  { key: "ptt", label: "PTT" },
-  { key: "deviantart", label: "DeviantArt" },
-  { key: "pinterest", label: "Pinterest" },
-  { key: "youtube", label: "YouTube" },
+  { key: "twitter", label: "twitter/x" },
+  { key: "pixiv", label: "pixiv" },
+  { key: "tiktok", label: "tiktok" },
+  { key: "reddit", label: "reddit" },
+  { key: "instagram", label: "instagram" },
+  { key: "twitch_clips", label: "twitch clips" },
+  { key: "iwara", label: "iwara" },
+  { key: "bluesky", label: "bluesky" },
+  { key: "facebook", label: "facebook" },
+  { key: "bilibili", label: "bilibili" },
+  { key: "bilibili_opus", label: "bilibili opus" },
+  { key: "tumblr", label: "tumblr" },
+  { key: "threads", label: "threads" },
+  { key: "ptt", label: "ptt" },
+  { key: "deviantart", label: "deviantart" },
+  { key: "pinterest", label: "pinterest" },
+  { key: "youtube", label: "youtube" },
 ];
 
-const CONFIG_FIELDS: { key: string; label: string; type?: string }[] = [
-  { key: "starboardChannelId", label: "Starboard channel ID" },
-  { key: "clubListingChannelId", label: "Club listing channel ID" },
-  { key: "clubCategoryId", label: "Club category ID" },
-  { key: "electionChannelId", label: "Election channel ID" },
-  { key: "modLogChannelId", label: "Mod-log channel ID" },
-  { key: "levelUpChannelId", label: "Level-up channel ID" },
-  { key: "announcementChannelId", label: "Announcement channel ID" },
-  { key: "approvalChannelId", label: "Admin approval channel ID" },
-  { key: "eventsChannelId", label: "Events channel ID (announcements + reminders)" },
-  { key: "presidentRoleId", label: "President role ID" },
-  { key: "clubCreateMinRoleId", label: "Club-create min role ID" },
-  { key: "clubAdminRoleId", label: "Club admin role ID" },
-  { key: "presidentApplyMinRoleId", label: "President-apply min role ID" },
-  { key: "starboardEmoji", label: "Starboard emoji" },
-  { key: "starboardThreshold", label: "Starboard threshold", type: "number" },
-  { key: "serverNameTemplate", label: "Server name template (%s)" },
-  { key: "xpMessageCooldownSec", label: "XP message cooldown (s)", type: "number" },
+/** One editable `guild_config` column: its key, the prompt, an optional hint, the input type and its group. */
+interface ConfigField {
+  key: string;
+  label: string;
+  hint?: string;
+  type?: string;
+  group: "channels" | "roles" | "rules";
+}
+
+const CONFIG_FIELDS: ConfigField[] = [
+  { key: "starboardChannelId", label: "starboard channel id", group: "channels" },
+  { key: "clubListingChannelId", label: "club listing channel id", group: "channels" },
+  { key: "clubCategoryId", label: "club category id", group: "channels" },
+  { key: "electionChannelId", label: "election channel id", group: "channels" },
+  { key: "modLogChannelId", label: "mod-log channel id", group: "channels" },
+  { key: "levelUpChannelId", label: "level-up channel id", group: "channels" },
+  { key: "announcementChannelId", label: "announcement channel id", group: "channels" },
+  { key: "approvalChannelId", label: "admin approval channel id", group: "channels" },
+  { key: "eventsChannelId", label: "events channel id", hint: "Announcements and reminders go here.", group: "channels" },
+  { key: "presidentRoleId", label: "president role id", group: "roles" },
+  { key: "clubCreateMinRoleId", label: "club-create min role id", group: "roles" },
+  { key: "clubAdminRoleId", label: "club admin role id", group: "roles" },
+  { key: "presidentApplyMinRoleId", label: "president-apply min role id", group: "roles" },
+  { key: "starboardEmoji", label: "starboard emoji", group: "rules" },
+  { key: "starboardThreshold", label: "starboard threshold", type: "number", group: "rules" },
+  { key: "serverNameTemplate", label: "server name template", hint: "%s is where the president's theme name goes.", group: "rules" },
+  { key: "xpMessageCooldownSec", label: "xp message cooldown (s)", type: "number", group: "rules" },
 ];
 
+const CONFIG_GROUPS: { id: ConfigField["group"]; title: string }[] = [
+  { id: "channels", title: "channels" },
+  { id: "roles", title: "roles" },
+  { id: "rules", title: "rules" },
+];
+
+/** The settings tab of the config page: guild config fields and the link fixer, both saved together. */
 function ConfigSettingsTab() {
-  const { data, setData } = useAsync(() => api.getConfig());
+  const { data, error, reload, setData } = useAsync(() => api.getConfig());
   const [saved, setSaved] = useState(false);
-  if (!data) return <p className="on-bg-soft">Loading…</p>;
+  if (!data) return <Pending error={error} reload={reload} />;
 
   const save = async () => {
     const patch: Record<string, any> = {};
@@ -163,96 +349,108 @@ function ConfigSettingsTab() {
     setData({ ...data, linkFixerDisabledPlatforms: next });
   };
 
+  const saveRow = (
+    <div className="btns">
+      <InkButton tone="gold" onClick={save}>
+        save
+      </InkButton>
+      {saved && <Saved />}
+    </div>
+  );
+
   return (
-    <div className="space-y-4">
-      <div className={card}>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {CONFIG_FIELDS.map((f) => (
-            <label key={f.key} className="text-sm space-y-1">
-              <span className="text-ink-soft">{f.label}</span>
-              <input
-                className={input}
+    <>
+      <Window label="fish: ~/config" foot={<span className="r">writes guild_config</span>}>
+        {CONFIG_GROUPS.map((g, gi) => (
+          <div key={g.id}>
+            <Heading first={gi === 0}>{g.title}</Heading>
+            {CONFIG_FIELDS.filter((f) => f.group === g.id).map((f) => (
+              <PromptField
+                key={f.key}
+                className={FIELD_WRAP}
+                label={f.label}
+                promptWidth={42}
                 type={f.type ?? "text"}
-                value={data[f.key] ?? ""}
-                onChange={(e) =>
+                hint={f.hint}
+                value={String(data[f.key] ?? "")}
+                onChange={(v) =>
                   setData({
                     ...data,
-                    [f.key]: f.type === "number" ? Number(e.target.value) : e.target.value,
+                    [f.key]: f.type === "number" ? Number(v) : v,
                   })
                 }
               />
-            </label>
-          ))}
-        </div>
-        <div className="mt-4 flex items-center gap-3">
-          <button className={btn} onClick={save}>Save</button>
-          {saved && <span className="text-green-700 text-sm">Saved ✓</span>}
-        </div>
-      </div>
+            ))}
+          </div>
+        ))}
+        {saveRow}
+      </Window>
 
-      <div className={card}>
-        <div className="font-medium mb-2">🔗 Link Fixer</div>
-        <label className="text-sm flex items-center gap-2 mb-3">
-          <input
-            type="checkbox"
-            checked={!!data.linkFixerEnabled}
-            onChange={(e) => setData({ ...data, linkFixerEnabled: e.target.checked ? 1 : 0 })}
-          />
-          <span>Enabled</span>
-        </label>
-        <div className="text-ink-soft text-xs mb-1">Disabled platforms (unchecked = fixed):</div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
+      <Window label="fish: ~/link-fixer" foot={<span className="r">writes guild_config</span>}>
+        <Toggle
+          label="link fixer"
+          description="Replaces links to the platforms below with embed-friendly ones."
+          checked={!!data.linkFixerEnabled}
+          onChange={(on) => setData({ ...data, linkFixerEnabled: on ? 1 : 0 })}
+        />
+        <Heading>platforms</Heading>
+        <p className="note-s px-2 pb-2">A solid chip means the platform's links are fixed.</p>
+        <div className="flex flex-wrap gap-2 px-2 pb-2">
           {LINK_FIXER_PLATFORMS.map((p) => (
-            <label key={p.key} className="text-sm flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={!disabledPlatforms.includes(p.key)}
-                onChange={() => togglePlatform(p.key)}
-              />
-              <span>{p.label}</span>
-            </label>
+            <Chip key={p.key} on={!disabledPlatforms.includes(p.key)} onToggle={() => togglePlatform(p.key)}>
+              {p.label}
+            </Chip>
           ))}
         </div>
-        <div className="mt-4 flex items-center gap-3">
-          <button className={btn} onClick={save}>Save</button>
-          {saved && <span className="text-green-700 text-sm">Saved ✓</span>}
-        </div>
-      </div>
-    </div>
+        {saveRow}
+      </Window>
+    </>
   );
 }
 
 const CONFIG_TABS = [
-  { id: "settings", label: "Settings" },
-  { id: "messages", label: "Bot Messages" },
+  { value: "settings", label: "settings" },
+  { value: "messages", label: "bot messages" },
 ] as const;
 
+/** The config page: a tab bar between the guild settings and the bot's message templates. */
 export function ConfigPage() {
-  const [tab, setTab] = useState<(typeof CONFIG_TABS)[number]["id"]>("settings");
+  const [tab, setTab] = useState<(typeof CONFIG_TABS)[number]["value"]>("settings");
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        {CONFIG_TABS.map((t) => (
-          <button
-            key={t.id}
-            className={
-              "comic-btn px-4 py-1.5 text-sm" +
-              (tab === t.id ? "" : " comic-btn--ghost")
-            }
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
+    <div className="flex flex-col gap-6">
+      {/* The tab words hang 1ch left of the row (`margin: 0 -1ch`), so the row pads 1ch to line up with the windows. */}
+      <Tabs items={[...CONFIG_TABS]} value={tab} onChange={setTab} ariaLabel="config sections" idPrefix="config" className="pl-[1ch]" />
+      <div
+        role="tabpanel"
+        id={`config-panel-${tab}`}
+        aria-labelledby={`config-tab-${tab}`}
+        className="flex flex-col gap-9 desk:gap-12"
+      >
+        {tab === "settings" ? <ConfigSettingsTab /> : <BotMessagesTab />}
       </div>
-      {tab === "settings" ? <ConfigSettingsTab /> : <BotMessagesTab />}
     </div>
   );
 }
 
+/* ------------------------------------------------------------------------------------------------ */
+/* auto-replies                                                                                     */
+/* ------------------------------------------------------------------------------------------------ */
+
+const MATCH_TYPES = [
+  { value: "contains", label: "contains" },
+  { value: "exact", label: "exact" },
+  { value: "regex", label: "regex" },
+];
+
+/**
+ * The auto-replies page: the list of replies, or the editor for one (a window of fields plus the
+ * Components V2 editor) while a reply is being created or changed.
+ */
 export function AutoRepliesPage() {
-  const { data, reload } = useAsync(() => api.autoreplies());
+  const { data, error, reload } = useAsync(() => api.autoreplies());
   const [editing, setEditing] = useState<any | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const matchId = useId();
 
   const blank = () => ({
     name: "",
@@ -260,7 +458,7 @@ export function AutoRepliesPage() {
     matchType: "contains",
     caseSensitive: 0,
     enabled: 1,
-    responseComponents: [{ type: 17, accent_color: 0x5865f2, components: [{ type: 10, content: "Hello!" }] }],
+    responseComponents: [{ type: 17, accent_color: DEFAULT_ACCENT, components: [{ type: 10, content: "Hello." }] }],
   });
 
   const save = async () => {
@@ -272,216 +470,326 @@ export function AutoRepliesPage() {
 
   if (editing) {
     return (
-      <div className={card + " space-y-4"}>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className="text-sm space-y-1">
-            <span className="text-ink-soft">Name</span>
-            <input className={input} value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-          </label>
-          <label className="text-sm space-y-1">
-            <span className="text-ink-soft">Trigger</span>
-            <input className={input} value={editing.trigger} onChange={(e) => setEditing({ ...editing, trigger: e.target.value })} />
-          </label>
-          <label className="text-sm space-y-1">
-            <span className="text-ink-soft">Match type</span>
-            <select className={input} value={editing.matchType} onChange={(e) => setEditing({ ...editing, matchType: e.target.value })}>
-              <option value="contains">contains</option>
-              <option value="exact">exact</option>
-              <option value="regex">regex</option>
-            </select>
-          </label>
-          <label className="text-sm flex items-center gap-2 mt-5">
-            <input type="checkbox" checked={!!editing.caseSensitive} onChange={(e) => setEditing({ ...editing, caseSensitive: e.target.checked ? 1 : 0 })} />
-            <span className="text-ink-soft">Case sensitive</span>
-          </label>
-        </div>
-
-        <div>
-          <div className="text-ink font-medium mb-2">Reply (Components V2)</div>
-          <ComponentsEditor
-            value={editing.responseComponents}
-            onChange={(payload) => setEditing((cur: any) => ({ ...cur, responseComponents: payload }))}
+      <>
+        <Window label={`vim: ~/autoreplies/${editing.id ? editing.name || editing.id : "new"}`}>
+          <PromptField label="name" className={FIELD_WRAP} promptWidth={28} value={editing.name} onChange={(v) => setEditing({ ...editing, name: v })} />
+          <PromptField
+            label="trigger"
+            className={FIELD_WRAP}
+            promptWidth={28}
+            value={editing.trigger}
+            onChange={(v) => setEditing({ ...editing, trigger: v })}
           />
-        </div>
-
-        <div className="flex gap-2">
-          <button className={btn} onClick={save}>Save</button>
-          <button className={btnGhost} onClick={() => setEditing(null)}>Cancel</button>
-        </div>
-      </div>
+          <SettingRow label="match type" labelId={matchId}>
+            <Select
+              options={MATCH_TYPES}
+              value={editing.matchType}
+              onChange={(v) => setEditing({ ...editing, matchType: v })}
+              ariaLabelledBy={matchId}
+            />
+          </SettingRow>
+          <Toggle
+            label="case sensitive"
+            checked={!!editing.caseSensitive}
+            onChange={(on) => setEditing({ ...editing, caseSensitive: on ? 1 : 0 })}
+          />
+          <Heading>reply</Heading>
+          <div className="px-2">
+            <ComponentsEditor
+              value={editing.responseComponents}
+              onChange={(payload) => setEditing((cur: any) => ({ ...cur, responseComponents: payload }))}
+            />
+          </div>
+          <div className="btns">
+            <InkButton tone="gold" onClick={save}>
+              save
+            </InkButton>
+            <InkButton tone="muted" onClick={() => setEditing(null)}>
+              cancel
+            </InkButton>
+          </div>
+        </Window>
+      </>
     );
   }
 
+  const remove = async (r: any) => {
+    if (!(await confirm({ label: "confirm: ~/autoreplies/delete", title: "delete auto-reply", message: `Delete ${r.name}? The bot stops answering "${r.trigger}", and it does not come back.`, confirmLabel: "delete" })))
+      return;
+    await api.deleteAutoreply(r.id);
+    reload();
+  };
+
   return (
-    <div className="space-y-3">
-      <button className={btn} onClick={() => setEditing(blank())}>+ New auto-reply</button>
-      {(data ?? []).map((r) => (
-        <div key={r.id} className={card + " flex flex-wrap items-center justify-between gap-2"}>
-          <div className="min-w-0">
-            <div className="font-medium">{r.name} {r.enabled ? "" : <span className="text-ink-soft">(disabled)</span>}</div>
-            <div className="text-ink-soft text-sm">{r.matchType}: <code>{r.trigger}</code></div>
-          </div>
-          <div className="flex gap-2">
-            <button className={btnGhost} onClick={() => setEditing(r)}>Edit</button>
-            <button className={btnGhost} onClick={async () => { await api.deleteAutoreply(r.id); reload(); }}>Delete</button>
-          </div>
-        </div>
-      ))}
-    </div>
+    <>
+      <Window label="fish: ~/autoreplies" tone={data && data.length === 0 ? "gold" : "pine"}>
+        {!data ? (
+          <Pending error={error} reload={reload} />
+        ) : (
+          <>
+            {data.length === 0 && <Empty>The bot has nothing to say on its own yet. Teach it a phrase.</Empty>}
+            {data.map((r) => (
+              <SettingRow
+                key={r.id}
+                className={STACK_ON_PHONE}
+                label={
+                  <>
+                    {r.name} {!r.enabled && <Chip>disabled</Chip>}
+                  </>
+                }
+                description={
+                  <>
+                    {r.matchType}: <code>{r.trigger}</code>
+                  </>
+                }
+              >
+                <InkButton tone="muted" onClick={() => setEditing(r)}>
+                  edit
+                </InkButton>{" "}
+                <InkButton tone="love" onClick={() => remove(r)}>
+                  delete
+                </InkButton>
+              </SettingRow>
+            ))}
+            <div className="btns">
+              <InkButton tone="gold" onClick={() => setEditing(blank())}>
+                new auto-reply
+              </InkButton>
+            </div>
+          </>
+        )}
+      </Window>
+      {dialog}
+    </>
   );
 }
 
-const CLUB_STATUS_STYLE: Record<string, string> = {
-  approved: "bg-green-200",
-  pending: "bg-sun",
-  terminated: "bg-red-200",
-  draft: "bg-paper-dim",
-  rejected: "bg-red-200",
-};
+/* ------------------------------------------------------------------------------------------------ */
+/* clubs                                                                                            */
+/* ------------------------------------------------------------------------------------------------ */
 
-function Chip({ children, tone = "bg-paper-dim" }: { children: any; tone?: string }) {
-  return (
-    <span
-      className={`inline-block px-2.5 py-0.5 rounded-full border-2 border-black text-xs font-bold ${tone}`}
-    >
-      {children}
-    </span>
-  );
+/** A club's status as a chip: approved is solid with a check, every other status a dashed word. */
+function StatusChip({ status }: { status: string }) {
+  return <Chip on={status === "approved"}>{status}</Chip>;
 }
 
+/**
+ * The modal behind a club's `details` button: status, tier, activity bar, owner, members and dates.
+ *
+ * @param id - The club's id.
+ * @param onClose - Called when the dialog closes.
+ */
 function ClubDetailModal({ id, onClose }: { id: number; onClose: () => void }) {
-  const { data } = useAsync<any>(() => api.clubDetail(id), [id]);
+  const { data, error } = useAsync<any>(() => api.clubDetail(id), [id]);
   const name = useNames([data?.ownerId, ...(data?.memberIds ?? [])]);
   return (
-    <Modal title={data?.name ?? "Club"} onClose={onClose}>
+    <Modal title={data?.name ?? "club"} label={`fish: ~/clubs/${id}`} onClose={onClose}>
       {!data ? (
-        <p className="text-ink-soft font-bold">Loading…</p>
+        <Pending error={error} />
       ) : (
-        <div className="space-y-3 text-sm">
-          <div className="flex flex-wrap gap-2">
-            <Chip tone={CLUB_STATUS_STYLE[data.status] ?? "bg-paper-dim"}>{data.status}</Chip>
-            <Chip>{data.tierLabel} (tier {data.level})</Chip>
-            <Chip>{data.memberIds.length} members</Chip>
+        <>
+          <div className="flex flex-wrap items-center gap-2 px-2">
+            <StatusChip status={data.status} />
+            <Chip>
+              {data.tierLabel} (tier {data.level})
+            </Chip>
+            <Chip>{plural(data.memberIds.length, "member")}</Chip>
           </div>
 
-          {data.description && <p className="font-bold">{data.description}</p>}
+          {data.description && <p className="nar px-2 pt-3">{data.description}</p>}
 
-          <div>
-            <div className="font-bold mb-1">Activity: {data.activityScore}/100</div>
-            <div
-              className="h-5 rounded-full border-[3px] border-black overflow-hidden"
-              style={{ backgroundColor: "#e8e0cc" }}
-            >
-              <div
-                className="h-full"
-                style={{
-                  width: `${data.activityScore}%`,
-                  backgroundImage: "linear-gradient(90deg, #ffd23f, #ff6b35)",
-                }}
-              />
+          <div className="progress px-2 pt-3">
+            <div className="progress_head">
+              <span>activity</span>
+              <span className="progress_num">{data.activityScore}/100</span>
+            </div>
+            <div className="progress_track" role="img" aria-label={`activity ${data.activityScore} of 100`}>
+              <div className="progress_fill" style={{ width: `${Math.max(0, Math.min(100, data.activityScore))}%` }} />
             </div>
           </div>
 
-          <div>
-            <span className="font-bold">Owner:</span> <UserLink id={data.ownerId} />
+          <div className="fx-sheet px-2 pt-3">
+            <span className="kv_label">owner</span>
+            <span className="c6">
+              <UserLink id={data.ownerId} />
+            </span>
+            <span className="kv_label">founded</span>
+            <span>{fmtDate(data.createdAt)}</span>
+            <span className="kv_label">last active</span>
+            <span>{fmtDate(data.lastActiveAt)}</span>
           </div>
 
-          <div>
-            <div className="font-bold mb-1">Members</div>
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {data.memberIds.map((id: string) => (
-                <a
-                  key={id}
-                  href={`#/member/${id}`}
-                  className="underline decoration-2 hover:text-accent"
-                >
-                  {name(id)}
+          <Heading>members</Heading>
+          {data.memberIds.length === 0 ? (
+            <Empty>Nobody has joined yet.</Empty>
+          ) : (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 px-2 c6">
+              {data.memberIds.map((mid: string) => (
+                <a key={mid} href={`#/member/${mid}`} className="underline">
+                  {name(mid)}
                 </a>
               ))}
-              {data.memberIds.length === 0 && <span className="text-ink-soft">None.</span>}
             </div>
-          </div>
-
-          <div className="text-ink-soft font-bold border-t-2 border-black/15 pt-2">
-            Founded {new Date(data.createdAt * 1000).toLocaleDateString()} · last active{" "}
-            {new Date(data.lastActiveAt * 1000).toLocaleDateString()}
-          </div>
-        </div>
+          )}
+        </>
       )}
     </Modal>
   );
 }
 
+/**
+ * The clubs page: every club with its status and numbers, a details dialog for each, and for the president
+ * and admins the approve and terminate actions.
+ */
 export function ClubsPage() {
-  const { data, reload } = useAsync(() => api.clubs());
+  const { data, error, reload } = useAsync(() => api.clubs());
   const me = useMe();
   const [detailId, setDetailId] = useState<number | null>(null);
+  const { approve, terminate, dialog } = useClubActions(reload);
   // Regular members get a read-only club directory; oversight actions are
   // reserved for the president and admins (the API enforces this too).
   const canManage = ROLE_RANK[me?.role ?? "user"] >= ROLE_RANK.president;
-  return (
-    <div className="space-y-3">
-      {(data ?? []).map((c) => (
-        <div key={c.id} className={card + " flex flex-wrap items-center justify-between gap-2"}>
-          <div className="min-w-0">
-            <div className="font-medium">{c.name} <span className="text-ink-soft text-sm">· {c.status} · L{c.level} · {c.memberCount} members · activity {c.activityScore}/100</span></div>
-            <div className="text-ink-soft text-sm">{c.description}</div>
-          </div>
-          <div className="flex gap-2">
-            <button className={btnGhost} onClick={() => setDetailId(c.id)}>Details</button>
-            {canManage && c.status === "pending" && (
-              <button className={btn} onClick={async () => { await api.approveClub(c.id); reload(); }}>Approve</button>
-            )}
-            {canManage && c.status !== "terminated" && (
-              <button className={btnGhost} onClick={async () => { await api.terminateClub(c.id); reload(); }}>Terminate</button>
-            )}
-          </div>
-        </div>
-      ))}
-      {detailId !== null && <ClubDetailModal id={detailId} onClose={() => setDetailId(null)} />}
-    </div>
-  );
-}
+  const pending = (data ?? []).filter((c) => c.status === "pending").length;
 
-export function ElectionsPage() {
-  const { data, reload } = useAsync(() => api.elections());
-  const name = useNames((data?.candidates ?? []).map((c: any) => c.userId));
-  if (!data) return <p className="on-bg-soft">Loading…</p>;
   return (
-    <div className="space-y-4">
-      <div className={card}>
-        {data.open ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              {data.open.status === "registration" ? (
-                <>Registration open — voting begins <code>{new Date(data.open.votingStartsAt * 1000).toLocaleString()}</code></>
-              ) : (
-                <>Election open — closes <code>{new Date(data.open.endsAt * 1000).toLocaleString()}</code></>
-              )}
-            </div>
-            <button className={btnGhost} onClick={async () => { await api.closeElection(data.open.id); reload(); }}>Close & tally</button>
-          </div>
+    <>
+      <Window label="fish: ~/clubs" tone={canManage && pending ? "gold" : "pine"} foot={data ? <span className="r">{plural(data.length, "club")}</span> : undefined}>
+        {!data ? (
+          <Pending error={error} reload={reload} />
+        ) : data.length === 0 ? (
+          <Empty>No club has been founded yet. The hall is quiet.</Empty>
         ) : (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-ink-soft">No election open.</div>
-            <button className={btn} onClick={async () => { await api.startElection(); reload(); }}>Start election</button>
-          </div>
+          <>
+            {canManage && pending > 0 && <p className="nar">{pending === 1 ? "One club waits" : `${pending} clubs wait`} for a verdict.</p>}
+            {data.map((c) => (
+              <SettingRow
+                key={c.id}
+                className={STACK_ON_PHONE}
+                label={
+                  <>
+                    {c.name} <StatusChip status={c.status} />
+                  </>
+                }
+                description={
+                  <>
+                    L{c.level} · {plural(c.memberCount, "member")} · activity {c.activityScore}/100
+                    {c.description ? ` · ${c.description}` : ""}
+                  </>
+                }
+              >
+                <InkButton tone="muted" onClick={() => setDetailId(c.id)}>
+                  details
+                </InkButton>
+                {canManage && c.status === "pending" && (
+                  <>
+                    {" "}
+                    <InkButton tone="gold" onClick={() => approve(c)}>
+                      approve
+                    </InkButton>
+                  </>
+                )}
+                {canManage && c.status !== "terminated" && (
+                  <>
+                    {" "}
+                    <InkButton tone="love" onClick={() => terminate(c)}>
+                      terminate
+                    </InkButton>
+                  </>
+                )}
+              </SettingRow>
+            ))}
+          </>
         )}
-      </div>
-      {data.candidates?.length > 0 && (
-        <div className={card}>
-          <div className="font-medium mb-2">Candidates</div>
-          {data.candidates.map((c: any) => (
-            <div key={c.id} className="text-sm py-1 border-b border-black/15 last:border-0">
-              <strong>{name(c.userId)}</strong> — {c.motto} · {c.voteCount} votes
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+      </Window>
+      {detailId !== null && <ClubDetailModal id={detailId} onClose={() => setDetailId(null)} />}
+      {dialog}
+    </>
   );
 }
 
+/* ------------------------------------------------------------------------------------------------ */
+/* elections                                                                                        */
+/* ------------------------------------------------------------------------------------------------ */
+
+/** The elections page: the open election with start and close actions, and its candidates. */
+export function ElectionsPage() {
+  const { data, error, reload } = useAsync(() => api.elections());
+  const name = useNames((data?.candidates ?? []).map((c: any) => c.userId));
+  const { confirm, dialog } = useConfirm();
+  if (!data) return <Pending error={error} reload={reload} />;
+
+  const close = async () => {
+    if (!(await confirm({ label: "confirm: ~/elections/close", title: "close and tally", message: "Close the election and count the ballots? The result stands, and the vote ends now.", confirmLabel: "close and tally" })))
+      return;
+    await api.closeElection(data.open.id);
+    reload();
+  };
+
+  return (
+    <>
+      <Window label="fish: ~/election" tone={data.open ? "pine" : "gold"}>
+        {data.open ? (
+          <>
+            <p className="nar">
+              {data.open.status === "registration"
+                ? `Signup is open. Voting begins ${fmtDateTime(data.open.votingStartsAt)}.`
+                : `The ballot is open. It closes ${fmtDateTime(data.open.endsAt)}.`}
+            </p>
+            <div className="btns">
+              <InkButton tone="love" onClick={close}>
+                close and tally
+              </InkButton>
+            </div>
+          </>
+        ) : (
+          <>
+            <Empty>No election is open. The ballot box sits empty in the corner.</Empty>
+            <div className="btns">
+              <InkButton
+                tone="gold"
+                onClick={async () => {
+                  await api.startElection();
+                  reload();
+                }}
+              >
+                start election
+              </InkButton>
+            </div>
+          </>
+        )}
+      </Window>
+      {data.candidates?.length > 0 && (
+        <Window label="fish: ~/candidates" foot={<span className="r">{plural(data.candidates.length, "candidate")}</span>}>
+          <DataTable>
+            <thead>
+              <tr>
+                <th>candidate</th>
+                <th>motto</th>
+                <th className="r">votes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.candidates.map((c: any) => (
+                <tr key={c.id}>
+                  <td>{name(c.userId)}</td>
+                  <td className="whitespace-normal">{c.motto}</td>
+                  <td className="r">{c.voteCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        </Window>
+      )}
+      {dialog}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+/* president                                                                                        */
+/* ------------------------------------------------------------------------------------------------ */
+
+/** `2d 3h 10m`, or `ready now` when the cooldown is over. */
 function humanDuration(sec: number): string {
   if (sec <= 0) return "ready now";
   const d = Math.floor(sec / 86400);
@@ -490,12 +798,13 @@ function humanDuration(sec: number): string {
   return [d && `${d}d`, h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ") || "<1m";
 }
 
+/** The president's desk: who holds the office, the weekly server theme form, and a pointer to club oversight. */
 export function PresidentPage() {
-  const { data, reload } = useAsync(() => api.president());
+  const { data, error, reload } = useAsync(() => api.president());
   const [name, setName] = useState("");
   const [iconUrl, setIconUrl] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
-  if (!data) return <p className="on-bg-soft">Loading…</p>;
+  const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
+  if (!data) return <Pending error={error} reload={reload} />;
 
   const onCooldown = data.cooldownRemaining > 0;
   const preview = (data.template as string).replace("%s", name || "…");
@@ -504,77 +813,108 @@ export function PresidentPage() {
     setMsg(null);
     try {
       const res = await api.changeTheme({ name: name || undefined, iconUrl: iconUrl || undefined });
-      setMsg("Applied: " + res.applied.join(", "));
+      setMsg({ text: "applied: " + res.applied.join(", "), bad: false });
       setName("");
       setIconUrl("");
       reload();
     } catch (e: any) {
-      setMsg("Error: " + e.message);
+      setMsg({ text: e.message, bad: true });
     }
   };
 
   return (
-    <div className="space-y-4 max-w-2xl">
-      <div className={card + " text-sm space-y-1"}>
-        <div>Current president: {data.userId ? <strong><UserName id={data.userId} /></strong> : <span className="text-ink-soft">none elected</span>}</div>
-        {data.termStart && <div className="text-ink-soft">Term started {new Date(data.termStart * 1000).toLocaleDateString()}</div>}
-        <div className="text-ink-soft">Weekly theme change: <span className={onCooldown ? "text-amber-700" : "text-green-700"}>{humanDuration(data.cooldownRemaining)}</span></div>
-      </div>
-
-      <div className={card + " space-y-3"}>
-        <div className="font-medium">Server theme</div>
-        <label className="text-sm space-y-1 block">
-          <span className="text-ink-soft">Custom name (fills the <code>%s</code> slot)</span>
-          <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Spring Festival" />
-        </label>
-        <div className="text-xs text-ink-soft">Preview: <code>{preview}</code></div>
-        <label className="text-sm space-y-1 block">
-          <span className="text-ink-soft">Server icon URL</span>
-          <input className={input} value={iconUrl} onChange={(e) => setIconUrl(e.target.value)} placeholder="https://…/icon.png" />
-        </label>
-        <div className="flex items-center gap-3">
-          <button className={btn} disabled={onCooldown} onClick={submit}>
-            {onCooldown ? "On cooldown" : "Apply theme"}
-          </button>
-          {msg && <span className="text-sm text-ink">{msg}</span>}
-        </div>
-      </div>
-
-      <div className={card + " text-sm text-ink-soft"}>
-        Club oversight (approve / terminate) is on the <strong>Clubs</strong> tab.
-      </div>
-    </div>
-  );
-}
-
-export function PresidencyHistoryPage() {
-  const { data } = useAsync(() => api.presidencyHistory());
-  const name = useNames((data ?? []).map((t: any) => t.userId));
-  if (!data) return <p className="on-bg-soft">Loading…</p>;
-  return (
-    <div className={card + " overflow-x-auto"}>
-      <table className="w-full text-sm">
-        <thead className="text-ink-soft text-left">
-          <tr><th className="py-1">President</th><th>Term start</th><th>Term end</th><th>Votes</th></tr>
-        </thead>
-        <tbody>
-          {data.length === 0 && (
-            <tr><td className="py-2 text-ink-soft" colSpan={4}>No elections have concluded yet.</td></tr>
+    <>
+      <Window label="fish: ~/council">
+        <div className="fx-sheet">
+          <span className="kv_label">president</span>
+          <span className="c6">{data.userId ? <UserName id={data.userId} /> : "none elected"}</span>
+          {data.termStart && (
+            <>
+              <span className="kv_label">term</span>
+              <span>since {fmtDate(data.termStart)}</span>
+            </>
           )}
-          {data.map((t: any) => (
-            <tr key={t.electionId} className="border-t border-black/15">
-              <td className="py-1"><UserLink id={t.userId} /></td>
-              <td>{new Date(t.termStart * 1000).toLocaleDateString()}</td>
-              <td>{t.termEnd ? new Date(t.termEnd * 1000).toLocaleDateString() : "Present"}</td>
-              <td>{t.votes}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          <span className="kv_label">theme change</span>
+          <span className={onCooldown ? "c3" : "c6"}>{humanDuration(data.cooldownRemaining)}</span>
+        </div>
+        <p className="note-s pt-3">
+          Club oversight (approve and terminate) is on the{" "}
+          <span className="c6">
+            <a href="#/clubs" className="underline">
+              clubs
+            </a>
+          </span>{" "}
+          page.
+        </p>
+      </Window>
+
+      <Window label="fish: ~/theme">
+        <PromptField
+          label="custom name"
+          className={FIELD_WRAP}
+          promptWidth={28}
+          value={name}
+          onChange={setName}
+          placeholder="Spring Festival"
+          hint={
+            <>
+              Fills the <code>%s</code> slot. Preview: <span className="c6">{preview}</span>
+            </>
+          }
+        />
+        <PromptField label="server icon url" className={FIELD_WRAP} promptWidth={28} value={iconUrl} onChange={setIconUrl} placeholder="https://…/icon.png" />
+        <div className="btns items-center">
+          <InkButton tone="gold" disabled={onCooldown} onClick={submit}>
+            {onCooldown ? "on cooldown" : "apply theme"}
+          </InkButton>
+          {msg && (msg.bad ? <span className="c2" role="alert">{msg.text}</span> : <Saved>{msg.text}</Saved>)}
+        </div>
+      </Window>
+    </>
   );
 }
 
+/* ------------------------------------------------------------------------------------------------ */
+/* presidency history, moderation, leaderboard                                                      */
+/* ------------------------------------------------------------------------------------------------ */
+
+/** The presidency history: every concluded term, its dates and votes. */
+export function PresidencyHistoryPage() {
+  const { data, error, reload } = useAsync(() => api.presidencyHistory());
+  if (!data) return <Pending error={error} reload={reload} />;
+  return (
+    <Window label="fish: ~/presidents" foot={<span className="r">{plural(data.length, "term")}</span>}>
+      {data.length === 0 ? (
+        <Empty>No election has concluded yet. The corridor has no portraits.</Empty>
+      ) : (
+        <DataTable>
+          <thead>
+            <tr>
+              <th>president</th>
+              <th>term start</th>
+              <th>term end</th>
+              <th className="r">votes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((t: any) => (
+              <tr key={t.electionId}>
+                <td>
+                  <UserLink id={t.userId} />
+                </td>
+                <td>{fmtDate(t.termStart)}</td>
+                <td>{t.termEnd ? fmtDate(t.termEnd) : "present"}</td>
+                <td className="r">{t.votes}</td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      )}
+    </Window>
+  );
+}
+
+/** The moderation page: the latest warnings and the mod log, side by side. */
 export function ModerationPage() {
   const warnings = useAsync(() => api.warnings());
   const modlog = useAsync(() => api.modlog());
@@ -583,52 +923,108 @@ export function ModerationPage() {
     ...(modlog.data ?? []).map((m) => m.userId),
   ]);
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div className={card}>
-        <div className="font-medium mb-2">Recent warnings</div>
-        {(warnings.data ?? []).map((w) => (
-          <div key={w.id} className="text-sm py-1 border-b border-black/15 last:border-0">
-            <strong>{name(w.userId)}</strong> — {w.reason}
-          </div>
-        ))}
-      </div>
-      <div className={card}>
-        <div className="font-medium mb-2">Mod log</div>
-        {(modlog.data ?? []).map((m) => (
-          <div key={m.id} className="text-sm py-1 border-b border-black/15 last:border-0">
-            <span className="text-accent font-bold">{m.action}</span> <strong>{name(m.userId)}</strong> {m.reason ?? ""}
-          </div>
-        ))}
-      </div>
+    <div className="fx-grid items-start">
+      <Window label="fish: ~/warnings" foot={warnings.data ? <span className="r">latest {warnings.data.length}</span> : undefined}>
+        {!warnings.data ? (
+          <Pending error={warnings.error} reload={warnings.reload} />
+        ) : warnings.data.length === 0 ? (
+          <Empty>No warnings. The server has behaved.</Empty>
+        ) : (
+          <DataTable>
+            <thead>
+              <tr>
+                <th>member</th>
+                <th>reason</th>
+                <th>when</th>
+              </tr>
+            </thead>
+            <tbody>
+              {warnings.data.map((w) => (
+                <tr key={w.id}>
+                  <td>{name(w.userId)}</td>
+                  <td className="whitespace-normal">{w.reason}</td>
+                  <td>{w.createdAt ? fmtDate(w.createdAt) : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        )}
+      </Window>
+      <Window label="fish: ~/modlog" foot={modlog.data ? <span className="r">latest {modlog.data.length}</span> : undefined}>
+        {!modlog.data ? (
+          <Pending error={modlog.error} reload={modlog.reload} />
+        ) : modlog.data.length === 0 ? (
+          <Empty>The log is empty. Nothing needed a moderator.</Empty>
+        ) : (
+          <DataTable>
+            <thead>
+              <tr>
+                <th>action</th>
+                <th>member</th>
+                <th>reason</th>
+                <th>when</th>
+              </tr>
+            </thead>
+            <tbody>
+              {modlog.data.map((m) => (
+                <tr key={m.id}>
+                  <td className="c3">{m.action}</td>
+                  <td>{name(m.userId)}</td>
+                  <td className="whitespace-normal">{m.reason ?? ""}</td>
+                  <td>{m.createdAt ? fmtDate(m.createdAt) : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        )}
+      </Window>
     </div>
   );
 }
 
+/** The leaderboard: every tracked member ranked, with social credits, level and xp. */
 export function LeaderboardPage() {
-  const { data } = useAsync(() => api.leaderboard());
-  const name = useNames((data ?? []).map((m) => m.userId));
+  const { data, error, reload } = useAsync(() => api.leaderboard());
+  const me = useMe();
+  if (!data) return <Pending error={error} reload={reload} />;
   return (
-    <div className={card + " overflow-x-auto"}>
-      <table className="w-full text-sm">
-        <thead className="text-ink-soft text-left">
-          <tr><th className="py-1">#</th><th>User</th><th>Credits</th><th>Level</th><th>XP</th></tr>
-        </thead>
-        <tbody>
-          {(data ?? []).map((m, i) => (
-            <tr key={m.userId} className="border-t border-black/15">
-              <td className="py-1">{i + 1}</td>
-              <td><UserLink id={m.userId} /></td>
-              <td>{m.socialCredits}</td>
-              <td>{m.level}</td>
-              <td>{m.xp}</td>
+    <Window label="fish: ~/leaderboard" foot={<span className="r">{plural(data.length, "member")}</span>}>
+      {data.length === 0 ? (
+        <Empty>Nobody has spoken yet. The board is blank.</Empty>
+      ) : (
+        <DataTable>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>user</th>
+              <th className="r">credits</th>
+              <th className="r">level</th>
+              <th className="r">xp</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {data.map((m, i) => (
+              <tr key={m.userId} className={me?.userId === m.userId ? "sel" : undefined}>
+                <td>{i + 1}</td>
+                <td>
+                  <UserLink id={m.userId} />
+                </td>
+                <td className="r">{Number(m.socialCredits).toLocaleString()}</td>
+                <td className="r">{m.level}</td>
+                <td className="r">{Number(m.xp).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      )}
+    </Window>
   );
 }
 
+/**
+ * The pages of the dashboard, in nav order. `id` is the hash route (`#/<id>`), `label` the lowercase name
+ * the shell shows, `minRole` the lowest web role that sees the page.
+ */
 export const PAGES: {
   id: string;
   label: string;
@@ -636,20 +1032,20 @@ export const PAGES: {
   /** Minimum dashboard role that sees this page (default: every member). */
   minRole?: "president" | "admin";
 }[] = [
-  { id: "overview", label: "Overview", el: <Overview /> },
-  { id: "profile", label: "My Profile", el: <ProfilePage /> },
-  { id: "store", label: "Store", el: <StorePage /> },
-  { id: "leaderboard", label: "Leaderboard", el: <LeaderboardPage /> },
-  { id: "clubs", label: "Clubs", el: <ClubsPage /> },
-  { id: "events", label: "Events", el: <EventsPage /> },
-  { id: "presidency-history", label: "Presidency History", el: <PresidencyHistoryPage /> },
-  { id: "president", label: "President", el: <PresidentPage />, minRole: "president" },
-  { id: "config", label: "Config", el: <ConfigPage />, minRole: "admin" },
-  { id: "autoreplies", label: "Auto-Replies", el: <AutoRepliesPage />, minRole: "admin" },
-  { id: "elections", label: "Elections", el: <ElectionsPage />, minRole: "admin" },
-  { id: "moderation", label: "Moderation", el: <ModerationPage />, minRole: "admin" },
-  { id: "store-items", label: "Store Items", el: <StoreItemsPage />, minRole: "admin" },
-  { id: "events-editor", label: "Events Editor", el: <EventsEditorPage />, minRole: "president" },
+  { id: "overview", label: "overview", el: <Overview /> },
+  { id: "profile", label: "my profile", el: <ProfilePage /> },
+  { id: "store", label: "store", el: <StorePage /> },
+  { id: "leaderboard", label: "leaderboard", el: <LeaderboardPage /> },
+  { id: "clubs", label: "clubs", el: <ClubsPage /> },
+  { id: "events", label: "events", el: <EventsPage /> },
+  { id: "presidency-history", label: "presidency", el: <PresidencyHistoryPage /> },
+  { id: "president", label: "president", el: <PresidentPage />, minRole: "president" },
+  { id: "config", label: "config", el: <ConfigPage />, minRole: "admin" },
+  { id: "autoreplies", label: "auto-replies", el: <AutoRepliesPage />, minRole: "admin" },
+  { id: "elections", label: "elections", el: <ElectionsPage />, minRole: "admin" },
+  { id: "moderation", label: "moderation", el: <ModerationPage />, minRole: "admin" },
+  { id: "store-items", label: "store items", el: <StoreItemsPage />, minRole: "admin" },
+  { id: "events-editor", label: "events editor", el: <EventsEditorPage />, minRole: "president" },
 ];
 
 export type { Me };

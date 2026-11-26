@@ -80,51 +80,51 @@ const election: Command = {
 
     if (sub === "apply") {
       const ineligible = checkEligibility(member);
-      if (ineligible) return ack(interaction, Accent.danger, "Not eligible", [ineligible]);
+      if (ineligible) return ack(interaction, Accent.danger, "not eligible", [ineligible]);
       const motto = interaction.options.getString("motto", true);
       const vision = interaction.options.getString("vision", true);
       const error = await applyCandidate(ctx.client, member, motto, vision);
-      if (error) return ack(interaction, Accent.danger, "Couldn't apply", [error]);
-      return ack(interaction, Accent.success, "You're running!", [
-        "Your candidate profile has been posted to the election channel.",
+      if (error) return ack(interaction, Accent.danger, "couldn't apply", [error]);
+      return ack(interaction, Accent.success, "you're running", [
+        "your candidate profile is posted in the election channel.",
       ]);
     }
 
     if (sub === "status") {
       const open = getOpenElection();
-      if (!open) return ack(interaction, Accent.election, "Elections", ["No election is open."]);
+      if (!open) return ack(interaction, Accent.election, "elections", ["no election is open."]);
       const candidates = getCandidates(open.id);
       const lines = [
         open.status === "registration"
-          ? `Registration is open — voting begins <t:${open.votingStartsAt}:R>.`
-          : `Voting closes <t:${open.endsAt}:R>.`,
+          ? `registration is open. voting begins <t:${open.votingStartsAt}:R>.`
+          : `voting closes <t:${open.endsAt}:R>.`,
         "",
         candidates.length
-          ? candidates.map((c) => `• <@${c.userId}> — _${c.motto}_`).join("\n")
-          : "No candidates yet.",
+          ? candidates.map((c) => `» <@${c.userId}> — _${c.motto}_`).join("\n")
+          : "no candidates yet.",
       ];
-      return ack(interaction, Accent.election, "Current election", lines);
+      return ack(interaction, Accent.election, "current election", lines);
     }
 
     // Admin-only management subcommands.
     if (!isAdmin(member)) {
-      return ack(interaction, Accent.danger, "Forbidden", ["Admin only."]);
+      return ack(interaction, Accent.danger, "forbidden", ["admin only."]);
     }
     if (sub === "start") {
       const opened = await openElection(ctx.client);
       return ack(
         interaction,
         opened ? Accent.success : Accent.warning,
-        opened ? "Election opened" : "Not opened",
-        [opened ? "A new election is now open." : "An election is already open, or it's disabled/unconfigured."],
+        opened ? "election opened" : "not opened",
+        [opened ? "a new election is open." : "an election is already open, or it's disabled or unconfigured."],
       );
     }
     if (sub === "end") {
       const open = getOpenElection();
-      if (!open) return ack(interaction, Accent.warning, "No election", ["Nothing to close."]);
+      if (!open) return ack(interaction, Accent.warning, "no election", ["nothing to close."]);
       const winner = await closeElection(guild, open.id);
-      return ack(interaction, Accent.success, "Election closed", [
-        winner ? `Winner: <@${winner.userId}> (${winner.votes} votes).` : "No winner.",
+      return ack(interaction, Accent.success, "election closed", [
+        winner ? `winner: <@${winner.userId}> (${winner.votes} votes).` : "no winner.",
       ]);
     }
   },
@@ -145,15 +145,15 @@ const theme: Command = {
     const member = interaction.member as GuildMember;
     const cfg = getConfig();
     if (!isPresident(member, cfg) && !isAdmin(member)) {
-      return ack(interaction, Accent.danger, "Forbidden", [
-        "Only the Student Council President can change the server theme.",
+      return ack(interaction, Accent.danger, "forbidden", [
+        "only the student council president can change the server theme.",
       ]);
     }
 
     const status = getThemeStatus();
     if (status.cooldownRemaining > 0) {
-      return ack(interaction, Accent.warning, "Too soon", [
-        `You can change the theme again in **${formatDuration(status.cooldownRemaining)}**.`,
+      return ack(interaction, Accent.warning, "too soon", [
+        `you can change the theme again in **${formatDuration(status.cooldownRemaining)}**.`,
       ]);
     }
 
@@ -167,9 +167,9 @@ const theme: Command = {
       actorId: interaction.user.id,
     });
     if ("error" in result) {
-      return ack(interaction, Accent.warning, "Nothing to do", [result.error]);
+      return ack(interaction, Accent.warning, "nothing to do", [result.error]);
     }
-    return ack(interaction, Accent.success, "Theme updated", result.applied);
+    return ack(interaction, Accent.success, "theme updated", result.applied);
   },
 };
 

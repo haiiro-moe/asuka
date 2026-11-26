@@ -79,7 +79,7 @@ function ack(
  */
 function begin(interaction: ChatInputCommandInteraction) {
   return interaction.reply({
-    ...v2(card({ accent: Accent.primary, title: "Working on it…", lines: [] })),
+    ...v2(card({ accent: Accent.primary, title: "working on it…", lines: [] })),
     flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
   });
 }
@@ -216,23 +216,23 @@ const create: Command = {
 
       const ids = new Set(founders.map((u) => u.id));
       if (ids.size < MIN_FOUNDING_MEMBERS) {
-        return ack(interaction, Accent.danger, "Invalid founders", [
-          "You need 3 *distinct* founding members.",
+        return ack(interaction, Accent.danger, "invalid founders", [
+          "you need 3 *distinct* founding members.",
         ]);
       }
       // Bots are normally barred from clubs, but allowed in dev for testing.
       if (!env.DEV && founders.some((u) => u.bot)) {
-        return ack(interaction, Accent.danger, "Invalid founders", ["Bots can't join clubs."]);
+        return ack(interaction, Accent.danger, "invalid founders", ["bots can't join clubs."]);
       }
       for (const u of founders) {
         if (userClubCount(u.id) >= MAX_CLUBS_PER_USER) {
-          return ack(interaction, Accent.danger, "Member at limit", [
+          return ack(interaction, Accent.danger, "member at limit", [
             `<@${u.id}> is already in ${MAX_CLUBS_PER_USER} clubs.`,
           ]);
         }
       }
       if (findClubByName(name)) {
-        return ack(interaction, Accent.danger, "Name taken", ["A club with that name exists."]);
+        return ack(interaction, Accent.danger, "name taken", ["a club with that name exists."]);
       }
 
       const club = createDraftClub({
@@ -258,20 +258,20 @@ const create: Command = {
             ...v2(
               card({
                 accent: Accent.club,
-                title: `🤝 Join "${name}" as a founding member?`,
+                title: `join "${name}" as a founding member?`,
                 lines: [
                   `<@${interaction.user.id}> wants you as a founding member of **${name}**.`,
                   description,
-                  "All founders must accept before the club is sent for admin approval.",
+                  "all founders must accept before the club goes to the admins.",
                 ],
                 buttons: [
                   new ButtonBuilder()
                     .setCustomId(`club:fnd:yes:${club.id}`)
-                    .setLabel("Accept")
+                    .setLabel("accept")
                     .setStyle(ButtonStyle.Success),
                   new ButtonBuilder()
                     .setCustomId(`club:fnd:no:${club.id}`)
-                    .setLabel("Decline")
+                    .setLabel("decline")
                     .setStyle(ButtonStyle.Danger),
                 ],
               }),
@@ -283,8 +283,8 @@ const create: Command = {
         if (!sent) {
           // A human founder couldn't be DMed — abandon the draft.
           db.delete(schema.clubs).where(eq(schema.clubs.id, club.id)).run();
-          return ack(interaction, Accent.danger, "Couldn't reach founders", [
-            `I couldn't DM <@${userId}> (their DMs may be closed). Ask them to enable DMs and try again.`,
+          return ack(interaction, Accent.danger, "couldn't reach founders", [
+            `i couldn't dm <@${userId}>. their dms may be closed. ask them to open their dms and try again.`,
           ]);
         }
       }
@@ -292,57 +292,57 @@ const create: Command = {
       // If everyone (e.g. all-bot founders in dev) already accepted, advance now.
       if (pendingFounderIds(club.id).length === 0) {
         await submitForApproval(ctx.client, club.id);
-        return ack(interaction, Accent.success, "Sent for approval", [
-          `**${name}** has been sent to the admins for approval.`,
+        return ack(interaction, Accent.success, "sent for approval", [
+          `**${name}** is with the admins for approval.`,
         ]);
       }
 
-      return ack(interaction, Accent.success, "Invitations sent", [
-        `Waiting for your founding members to accept **${name}**.`,
-        "Once everyone accepts, it'll be sent to the admins for approval.",
+      return ack(interaction, Accent.success, "invitations sent", [
+        `waiting for your founding members to accept **${name}**.`,
+        "once everyone accepts, it goes to the admins for approval.",
       ]);
     }
 
     if (sub === "join") {
       const club = findClubByName(interaction.options.getString("club", true));
       if (!club || club.status !== "approved") {
-        return ack(interaction, Accent.danger, "Not found", ["No such approved club."]);
+        return ack(interaction, Accent.danger, "not found", ["no such approved club."]);
       }
       if (clubMemberIds(club.id).includes(interaction.user.id)) {
-        return ack(interaction, Accent.warning, "Already a member", ["You're already in this club."]);
+        return ack(interaction, Accent.warning, "already a member", ["You're already in this club."]);
       }
       if (userClubCount(interaction.user.id) >= MAX_CLUBS_PER_USER) {
-        return ack(interaction, Accent.danger, "Club limit", [
-          `You can be in at most ${MAX_CLUBS_PER_USER} clubs.`,
+        return ack(interaction, Accent.danger, "club limit", [
+          `you can be in at most ${MAX_CLUBS_PER_USER} clubs.`,
         ]);
       }
       await addClubMember(guild, club, interaction.user.id);
-      return ack(interaction, Accent.success, "Joined", [`Welcome to **${club.name}**!`]);
+      return ack(interaction, Accent.success, "joined", [`welcome to **${club.name}**.`]);
     }
 
     if (sub === "invite") {
       const club = findClubByName(interaction.options.getString("club", true));
       if (!club || club.status !== "approved") {
-        return ack(interaction, Accent.danger, "Not found", ["No such approved club."]);
+        return ack(interaction, Accent.danger, "not found", ["no such approved club."]);
       }
       const member = interaction.member as GuildMember;
       const isOwner = club.ownerId === interaction.user.id;
       if (!isOwner && !isAdmin(member) && !isPresident(member, getConfig())) {
-        return ack(interaction, Accent.danger, "Forbidden", [
-          "Only the club owner (or an admin/president) can invite members.",
+        return ack(interaction, Accent.danger, "forbidden", [
+          "only the club owner (or an admin or president) can invite members.",
         ]);
       }
       const target = interaction.options.getUser("member", true);
       if (target.bot && !env.DEV) {
-        return ack(interaction, Accent.danger, "Invalid invite", ["Bots can't join clubs."]);
+        return ack(interaction, Accent.danger, "invalid invite", ["bots can't join clubs."]);
       }
       if (clubMemberIds(club.id).includes(target.id)) {
-        return ack(interaction, Accent.warning, "Already a member", [
+        return ack(interaction, Accent.warning, "already a member", [
           `<@${target.id}> is already in **${club.name}**.`,
         ]);
       }
       if (userClubCount(target.id) >= MAX_CLUBS_PER_USER) {
-        return ack(interaction, Accent.danger, "At limit", [
+        return ack(interaction, Accent.danger, "at limit", [
           `<@${target.id}> is already in ${MAX_CLUBS_PER_USER} clubs.`,
         ]);
       }
@@ -350,7 +350,7 @@ const create: Command = {
       // In dev, bots join instantly without a DM prompt.
       if (env.DEV && target.bot) {
         await addClubMember(guild, club, target.id);
-        return ack(interaction, Accent.success, "Member added", [
+        return ack(interaction, Accent.success, "member added", [
           `<@${target.id}> joined **${club.name}**.`,
         ]);
       }
@@ -360,7 +360,7 @@ const create: Command = {
           ...v2(
             card({
               accent: Accent.club,
-              title: `📨 You're invited to ${club.name}`,
+              title: `you're invited to ${club.name}`,
               lines: [
                 `<@${interaction.user.id}> invited you to join **${club.name}**.`,
                 club.description,
@@ -368,11 +368,11 @@ const create: Command = {
               buttons: [
                 new ButtonBuilder()
                   .setCustomId(`club:inv:yes:${club.id}`)
-                  .setLabel("Accept")
+                  .setLabel("accept")
                   .setStyle(ButtonStyle.Success),
                 new ButtonBuilder()
                   .setCustomId(`club:inv:no:${club.id}`)
-                  .setLabel("Decline")
+                  .setLabel("decline")
                   .setStyle(ButtonStyle.Danger),
               ],
             }),
@@ -381,18 +381,18 @@ const create: Command = {
         })
         .catch(() => null);
       if (!sent) {
-        return ack(interaction, Accent.danger, "Couldn't reach them", [
-          `I couldn't DM <@${target.id}> — their DMs may be closed.`,
+        return ack(interaction, Accent.danger, "couldn't reach them", [
+          `i couldn't dm <@${target.id}>. their dms may be closed.`,
         ]);
       }
-      return ack(interaction, Accent.success, "Invitation sent", [
-        `Invited <@${target.id}> to **${club.name}**.`,
+      return ack(interaction, Accent.success, "invitation sent", [
+        `invited <@${target.id}> to **${club.name}**.`,
       ]);
     }
 
     if (sub === "leave") {
       const club = findClubByName(interaction.options.getString("club", true));
-      if (!club) return ack(interaction, Accent.danger, "Not found", ["No such club."]);
+      if (!club) return ack(interaction, Accent.danger, "not found", ["no such club."]);
       db.delete(schema.clubMembers)
         .where(
           and(
@@ -404,8 +404,8 @@ const create: Command = {
       const remaining = clubMemberIds(club.id);
       if (remaining.length === 0) {
         await terminateClub(guild, club.id);
-        return ack(interaction, Accent.warning, "Club disbanded", [
-          `**${club.name}** had no members left and was disbanded.`,
+        return ack(interaction, Accent.warning, "club disbanded", [
+          `**${club.name}** had no members left and is disbanded.`,
         ]);
       }
       if (club.ownerId === interaction.user.id) {
@@ -426,28 +426,28 @@ const create: Command = {
         user: `<@${interaction.user.id}>`,
         club: club.name,
       });
-      return ack(interaction, Accent.success, "Left club", [`You left **${club.name}**.`]);
+      return ack(interaction, Accent.success, "left club", [`you left **${club.name}**.`]);
     }
 
     if (sub === "kick") {
       const club = findClubByName(interaction.options.getString("club", true));
-      if (!club) return ack(interaction, Accent.danger, "Not found", ["No such club."]);
+      if (!club) return ack(interaction, Accent.danger, "not found", ["no such club."]);
       const target = interaction.options.getUser("member", true);
 
       const member = interaction.member as GuildMember;
       const isOwner = club.ownerId === interaction.user.id;
       if (!isOwner && !isAdmin(member) && !isPresident(member, getConfig())) {
-        return ack(interaction, Accent.danger, "Forbidden", [
-          "Only the club owner (or an admin/president) can kick members.",
+        return ack(interaction, Accent.danger, "forbidden", [
+          "only the club owner (or an admin or president) can kick members.",
         ]);
       }
       if (target.id === club.ownerId) {
-        return ack(interaction, Accent.warning, "Can't kick owner", [
-          "Transfer ownership or terminate the club instead.",
+        return ack(interaction, Accent.warning, "can't kick owner", [
+          "transfer ownership or terminate the club instead.",
         ]);
       }
       if (!clubMemberIds(club.id).includes(target.id)) {
-        return ack(interaction, Accent.warning, "Not a member", [
+        return ack(interaction, Accent.warning, "not a member", [
           `<@${target.id}> isn't in **${club.name}**.`,
         ]);
       }
@@ -473,44 +473,44 @@ const create: Command = {
         user: `<@${target.id}>`,
         club: club.name,
       });
-      return ack(interaction, Accent.success, "Member removed", [
+      return ack(interaction, Accent.success, "member removed", [
         `<@${target.id}> was removed from **${club.name}**.`,
       ]);
     }
 
     if (sub === "info") {
       const club = findClubByName(interaction.options.getString("club", true));
-      if (!club) return ack(interaction, Accent.danger, "Not found", ["No such club."]);
+      if (!club) return ack(interaction, Accent.danger, "not found", ["no such club."]);
       const members = clubMemberIds(club.id);
       return ack(interaction, Accent.club, club.name, [
-        club.description || "No description.",
-        `**Status:** ${club.status} · **Tier:** ${TIER_LABEL[club.level] ?? "—"}`,
-        `**Activity:** ${clubActivityScore(club.id)}/100`,
-        `**Owner:** <@${club.ownerId}>`,
-        `**Members (${members.length}):** ${members.map((id) => `<@${id}>`).join(", ")}`,
+        club.description || "no description.",
+        `**status:** ${club.status} · **tier:** ${TIER_LABEL[club.level] ?? "—"}`,
+        `**activity:** ${clubActivityScore(club.id)}/100`,
+        `**owner:** <@${club.ownerId}>`,
+        `**members (${members.length}):** ${members.map((id) => `<@${id}>`).join(", ")}`,
       ]);
     }
 
     if (sub === "edit") {
       const club = findClubByName(interaction.options.getString("club", true));
-      if (!club) return ack(interaction, Accent.danger, "Not found", ["No such club."]);
+      if (!club) return ack(interaction, Accent.danger, "not found", ["no such club."]);
       const member = interaction.member as GuildMember;
       const isOwner = club.ownerId === interaction.user.id;
       if (!isOwner && !isAdmin(member) && !isPresident(member, getConfig())) {
-        return ack(interaction, Accent.danger, "Forbidden", [
-          "Only the club owner (or an admin/president) can edit this club.",
+        return ack(interaction, Accent.danger, "forbidden", [
+          "only the club owner (or an admin or president) can edit this club.",
         ]);
       }
       const newName = interaction.options.getString("name")?.trim();
       const newDescription = interaction.options.getString("description")?.trim();
       if (!newName && newDescription === undefined) {
-        return ack(interaction, Accent.warning, "Nothing to change", [
-          "Provide a new name and/or description.",
+        return ack(interaction, Accent.warning, "nothing to change", [
+          "give a new name, a new description, or both.",
         ]);
       }
       if (newName && newName !== club.name && findClubByName(newName)) {
-        return ack(interaction, Accent.danger, "Name taken", [
-          "Another club already has that name.",
+        return ack(interaction, Accent.danger, "name taken", [
+          "another club already has that name.",
         ]);
       }
 
@@ -518,56 +518,56 @@ const create: Command = {
         name: newName,
         description: newDescription,
       });
-      return ack(interaction, Accent.success, "Club updated", [
-        `**${updated?.name ?? club.name}** has been updated.`,
+      return ack(interaction, Accent.success, "club updated", [
+        `**${updated?.name ?? club.name}** is updated.`,
       ]);
     }
 
     if (sub === "list") {
       await syncDirectory(ctx.client);
       const clubs = approvedClubs();
-      return ack(interaction, Accent.club, "Clubs", [
+      return ack(interaction, Accent.club, "clubs", [
         clubs.length
-          ? clubs.map((c) => `• **${c.name}** — ${clubMemberIds(c.id).length} members`).join("\n")
-          : "No clubs yet.",
+          ? clubs.map((c) => `» **${c.name}** — ${clubMemberIds(c.id).length} members`).join("\n")
+          : "no clubs yet.",
       ]);
     }
 
     if (sub === "announce") {
       const club = findClubByName(interaction.options.getString("club", true));
       if (!club || club.status !== "approved") {
-        return ack(interaction, Accent.danger, "Not found", ["No such approved club."]);
+        return ack(interaction, Accent.danger, "not found", ["no such approved club."]);
       }
       const member = interaction.member as GuildMember;
       const isOwner = club.ownerId === interaction.user.id;
       if (!isOwner && !isAdmin(member) && !isPresident(member, getConfig())) {
-        return ack(interaction, Accent.danger, "Forbidden", [
-          "Only the club owner (or an admin/president) can announce for this club.",
+        return ack(interaction, Accent.danger, "forbidden", [
+          "only the club owner (or an admin or president) can announce for this club.",
         ]);
       }
 
       const token = createAnnounceToken(club.id, interaction.user.id);
       const url = `${env.PUBLIC_URL}/club-announce/${token}`;
 
-      return ack(interaction, Accent.club, "📝 Announcement composer", [
-        `Compose and send an announcement for **${club.name}** here:`,
+      return ack(interaction, Accent.club, "announcement composer", [
+        `write and send an announcement for **${club.name}** here:`,
         url,
-        "This link works once and expires in **15 minutes**.",
+        "this link works once and expires in **15 minutes**.",
       ]);
     }
 
     if (sub === "terminate") {
       const member = interaction.member as GuildMember;
       if (!isAdmin(member) && !isPresident(member, getConfig())) {
-        return ack(interaction, Accent.danger, "Forbidden", [
-          "Only the president or an admin can terminate clubs.",
+        return ack(interaction, Accent.danger, "forbidden", [
+          "only the president or an admin can terminate clubs.",
         ]);
       }
       const club = findClubByName(interaction.options.getString("club", true));
-      if (!club) return ack(interaction, Accent.danger, "Not found", ["No such club."]);
+      if (!club) return ack(interaction, Accent.danger, "not found", ["no such club."]);
       await terminateClub(guild, club.id);
-      return ack(interaction, Accent.warning, "Club terminated", [
-        `**${club.name}** has been terminated.`,
+      return ack(interaction, Accent.warning, "club terminated", [
+        `**${club.name}** is terminated.`,
       ]);
     }
   },
@@ -586,7 +586,7 @@ const approval = defineListener({
       const member = interaction.member as GuildMember | null;
       if (!member || (!isAdmin(member) && !isPresident(member, getConfig()))) {
         await interaction.reply({
-          content: "Only the president or an admin can review club proposals.",
+          content: "only the president or an admin can review club proposals.",
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -604,23 +604,23 @@ const approval = defineListener({
       if (kind === "fnd") {
         const clubId = Number(parts[3]);
         const club = getClub(clubId);
-        if (!club || club.status !== "draft") return void edit(Accent.warning, "This invitation expired");
+        if (!club || club.status !== "draft") return void edit(Accent.warning, "this invitation expired");
         // Not a listed founder (e.g. removed after a cancel): the buttons are
         // already in the loading state, so resolve the message rather than
         // leaving it stuck.
         if (!clubMemberIds(clubId).includes(interaction.user.id))
-          return void edit(Accent.warning, "This invitation expired");
+          return void edit(Accent.warning, "this invitation expired");
         if (parts[2] === "no") {
-          await edit(Accent.danger, "Invitation declined");
+          await edit(Accent.danger, "invitation declined");
           await cancelDraft(ctx.client, clubId, interaction.user.id);
           return;
         }
         const allIn = acceptFounder(clubId, interaction.user.id);
         if (allIn) await submitForApproval(ctx.client, clubId);
-        await edit(Accent.success, "Invitation accepted ✓", [
+        await edit(Accent.success, "invitation accepted", [
           allIn
-            ? "All founders are in — the club is now awaiting admin approval."
-            : "Waiting on the remaining founders.",
+            ? "all founders are in. the club now waits for admin approval."
+            : "waiting on the remaining founders.",
         ]);
         return;
       }
@@ -629,15 +629,15 @@ const approval = defineListener({
       if (kind === "inv") {
         const clubId = Number(parts[3]);
         const club = getClub(clubId);
-        if (!club || club.status !== "approved") return void edit(Accent.warning, "This invitation expired");
-        if (parts[2] === "no") return void edit(Accent.danger, "Invitation declined");
+        if (!club || club.status !== "approved") return void edit(Accent.warning, "this invitation expired");
+        if (parts[2] === "no") return void edit(Accent.danger, "invitation declined");
         if (clubMemberIds(clubId).includes(interaction.user.id))
-          return void edit(Accent.warning, "You're already a member");
+          return void edit(Accent.warning, "you're already a member");
         if (userClubCount(interaction.user.id) >= MAX_CLUBS_PER_USER)
-          return void edit(Accent.danger, `You're already in ${MAX_CLUBS_PER_USER} clubs`);
+          return void edit(Accent.danger, `you're already in ${MAX_CLUBS_PER_USER} clubs`);
         const guild = await ctx.client.guilds.fetch(ctx.guildId).catch(() => null);
         if (guild) await addClubMember(guild, club, interaction.user.id);
-        await edit(Accent.success, `Welcome to ${club.name}! 🎉`, ["You've joined the club."]);
+        await edit(Accent.success, `welcome to ${club.name}`, ["you've joined the club."]);
         return;
       }
 
@@ -646,10 +646,10 @@ const approval = defineListener({
       const guild = interaction.guild as Guild;
       if (kind === "approve") {
         await approveClub(guild, clubId);
-        await edit(Accent.success, "✅ Club approved");
+        await edit(Accent.success, "club approved");
       } else if (kind === "reject") {
         await rejectClub(ctx.client, clubId);
-        await edit(Accent.danger, "❌ Club rejected");
+        await edit(Accent.danger, "club rejected");
       }
     };
 
@@ -657,7 +657,7 @@ const approval = defineListener({
       await handleAction();
     } catch (err) {
       console.error("[clubs] approval button failed:", err);
-      await edit(Accent.danger, "Something went wrong", ["Try again."]);
+      await edit(Accent.danger, "something went wrong", ["try again."]);
     }
   },
 });
@@ -706,10 +706,10 @@ const threadGuard = defineListener({
           v2(
             card({
               accent: Accent.club,
-              title: `Removed from ${club.name}'s thread`,
+              title: `removed from ${club.name}'s thread`,
               lines: [
-                "You were probably mistakenly pinged there, mentions auto-add people to threads.",
-                "Since you're not a member of that club, you've been removed again.",
+                "you were probably pinged there by mistake. mentions add people to threads.",
+                "you're not a member of that club, so you were removed again.",
               ],
             }),
           ),
@@ -726,10 +726,10 @@ const threadGuard = defineListener({
           v2(
             card({
               accent: Accent.club,
-              title: `You're still a member of ${club.name}`,
+              title: `you're still a member of ${club.name}`,
               lines: [
-                "You were re-added to the club thread.",
-                "To actually leave, use the **`/club leave`** command.",
+                "you were added back to the club thread.",
+                "to leave for real, use **`/club leave`**.",
               ],
             }),
           ),

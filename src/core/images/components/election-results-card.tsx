@@ -1,84 +1,131 @@
-import { ComicBackground, Panel } from "./comic-bg.tsx";
-import { CardHeader } from "./card-header.tsx";
-import { OutlinedText, sanitizeText } from "./outlined-text.tsx";
+import {
+  CardFrame,
+  ImageFrame,
+  ProgressBar,
+  Rule,
+  StillBackdrop,
+  Text,
+  Title,
+  cleanText,
+} from "./haiiro/index.ts";
+import { CARD_GEOMETRY, PROFILE_WIDTH, framedCardHeight } from "./profile-card.tsx";
+import { RankRow, RANK_ROW_HEIGHT } from "./leaderboard-card.tsx";
 
-export const ELECTION_RESULTS_WIDTH = 900;
+/** Width in px of the election results card. */
+export const ELECTION_RESULTS_WIDTH = PROFILE_WIDTH;
 
+/** One candidate's tally. */
 export interface ElectionResultsRow {
+  /** Candidate display name. */
   name: string;
+  /** Votes received. */
   votes: number;
 }
 
+/** Props for {@link ElectionResultsCard}. */
 export interface ElectionResultsCardProps {
   /** Null when no candidates stood. */
   winner: { name: string; avatarDataUri: string | null; votes: number } | null;
   /** All candidates, sorted by votes descending (winner included). */
   rows: ElectionResultsRow[];
+  /** Votes cast in total. */
   totalVotes: number;
 }
 
-export function electionResultsCardHeight(props: ElectionResultsCardProps): number {
-  if (!props.winner) return 320;
-  return 360 + props.rows.length * 92;
+/** Height of a tally row: the 32px rank row plus a 6px bar and a 2px gap. */
+const TALLY_ROW = RANK_ROW_HEIGHT + 8;
+
+/** Plural-aware vote count: `1 vote`, `3 votes`. */
+function voteWord(n: number): string {
+  return `${n} vote${n === 1 ? "" : "s"}`;
 }
 
-const MEDAL_COLORS: Record<number, string> = { 1: "#ffac33", 2: "#c0c8d0", 3: "#cd7f32" };
+/**
+ * Pixel height of the results card: with a winner, title, winner header, rule, one tally
+ * row per candidate and the total line; without one, title and a message.
+ *
+ * @param props - The card's props.
+ * @returns The PNG height in px.
+ */
+export function electionResultsCardHeight(props: ElectionResultsCardProps): number {
+  const { gap, line } = CARD_GEOMETRY;
+  if (!props.winner) return framedCardHeight(48 + line + gap);
+  const sections = [48, 96, 1, props.rows.length * TALLY_ROW, line];
+  return framedCardHeight(sections.reduce((a, b) => a + b, 0) + (sections.length - 1) * gap);
+}
 
-/** Full election results: winner spotlight plus the complete vote tally. */
+/**
+ * Full election results in haiiro, labelled `results: ~/election`: Jacquard title, the
+ * winner's avatar, name and `new president` line, then every candidate as a ranked row
+ * (gold, foam, iris, then muted) with their votes and a bar scaled to the leader, and a
+ * total at the foot.
+ *
+ * @param props - {@link ElectionResultsCardProps}
+ */
 export function ElectionResultsCard(props: ElectionResultsCardProps) {
+  const winner = props.winner;
+  const top = Math.max(1, ...props.rows.map((r) => r.votes));
+  const winnerName = winner ? cleanText(winner.name) || "?" : "";
   return (
-    <ComicBackground>
-      <OutlinedText size={52} color="#ffd23f" align="center">
-        ELECTION RESULTS
-      </OutlinedText>
+    <StillBackdrop
+      width={ELECTION_RESULTS_WIDTH}
+      height={electionResultsCardHeight(props)}
+      padding={CARD_GEOMETRY.backdropPad}
+      seed={57}
+    >
+      <CardFrame label="results: ~/election" grow>
+        <Title>election results</Title>
 
-      {!props.winner && (
-        <Panel grow>
-          <span style={{ fontFamily: "Comic", fontWeight: 700, fontSize: 30, color: "#000" }}>
-            No candidates stood. No president was elected.
-          </span>
-        </Panel>
-      )}
+        {!winner && <Text tone="subtle">no candidates stood. no president was elected.</Text>}
 
-      {props.winner && (
-        <CardHeader
-          displayName={props.winner.name}
-          avatarDataUri={props.winner.avatarDataUri}
-          subtitle={`NEW PRESIDENT  ·  ${props.winner.votes} VOTE${props.winner.votes === 1 ? "" : "S"}`}
-        />
-      )}
-
-      {props.winner &&
-        props.rows.map((row, i) => (
-          <Panel key={i}>
-            <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-              <span
-                style={{
-                  display: "flex",
-                  justifyContent: "center",
-                  width: 64,
-                  fontFamily: "Bangers",
-                  fontSize: 36,
-                  color: MEDAL_COLORS[i + 1] ?? "#000",
-                }}
-              >
-                {`#${i + 1}`}
-              </span>
-              <span style={{ fontFamily: "Bangers", fontSize: 32, color: "#000", flexGrow: 1 }}>
-                {sanitizeText(row.name) || "?"}
-              </span>
-              <span style={{ fontFamily: "Bangers", fontSize: 28, color: "#b3261e" }}>
-                {`${row.votes} VOTE${row.votes === 1 ? "" : "S"}`}
-              </span>
+        {winner && (
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <ImageFrame src={winner.avatarDataUri} size={96} initial={winnerName} />
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                flexGrow: 1,
+                flexShrink: 1,
+                flexBasis: 0,
+                minWidth: 0,
+              }}
+            >
+              <Text size="large" tone="pine" truncate>
+                {winnerName}
+              </Text>
+              <Text tone="rose">{`new president, ${voteWord(winner.votes)}`}</Text>
             </div>
-          </Panel>
-        ))}
+          </div>
+        )}
 
-      {props.winner && (
-        <OutlinedText size={26} color="#fff" stroke={4} align="center">
-          {`TOTAL VOTES: ${props.totalVotes}`}
-        </OutlinedText>
-      )}
-    </ComicBackground>
+        {winner && <Rule gap={0} />}
+
+        {winner && (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {props.rows.map((row, i) => (
+              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2, }}>
+                <RankRow rank={i + 1} name={row.name}>
+                  <Text tone="foam">{voteWord(row.votes)}</Text>
+                </RankRow>
+                <div style={{ display: "flex", paddingLeft: 6, paddingRight: 6 }}>
+                  <ProgressBar value={row.votes} max={top} height={6} tone={i === 0 ? "gold" : "iris"} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {winner && (
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <Text tone="muted" upper>
+              total votes
+            </Text>
+            <Text tone="text">{String(props.totalVotes)}</Text>
+          </div>
+        )}
+      </CardFrame>
+    </StillBackdrop>
   );
 }

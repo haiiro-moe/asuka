@@ -47,7 +47,7 @@ function parseItem(body: Record<string, any>):
   const price = Number(body.price);
   if (!Number.isInteger(price) || price < 0) return { error: "price must be a non-negative integer" };
   const iconType = body.iconType === "image" ? "image" : "emoji";
-  const icon = typeof body.icon === "string" && body.icon.trim() ? body.icon.trim() : "🎁";
+  const icon = typeof body.icon === "string" && body.icon.trim() ? body.icon.trim() : "★";
 
   const values: Omit<typeof schema.storeItems.$inferInsert, "id" | "createdAt"> = {
     name,
@@ -346,7 +346,7 @@ const submitPanel: ApiRoute = {
     const peek = getPanelPurchase(token);
     if (!peek) return Response.json({ error: "not found" }, { status: 404 });
     if (peek.panel === "theme") {
-      if (!body.name && !body.iconUrl) return badRequest("Provide a name and/or an icon URL.");
+      if (!body.name && !body.iconUrl) return badRequest("give a name, an icon url, or both.");
     } else if (peek.panel === "autoreply") {
       if (!body.name || !body.trigger) return badRequest("name and trigger required");
       if (!isValidComponentsPayload(body.responseComponents)) {
@@ -392,7 +392,7 @@ const submitPanel: ApiRoute = {
 
     if (purchase.panel === "botmessage") {
       setMessageOverride(purchase.messageKey!, body.components);
-      return Response.json({ ok: true, applied: [`Bot message updated`] });
+      return Response.json({ ok: true, applied: [`bot message updated`] });
     }
 
     // autoreply
