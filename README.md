@@ -26,6 +26,7 @@ are no automated tests; `typecheck` is the gate. The entry point is `src/index.t
 - [docs/web-ui.md](docs/web-ui.md): dashboard design rules, shell, primitives, adding a page
 - [docs/cards.md](docs/cards.md): PNG cards, fonts, crispness, adding a card
 - [docs/voice.md](docs/voice.md): Discord wording, accent palette, message templates
+- [docs/auto-update.md](docs/auto-update.md): systemd timer that updates a git install from GitHub
 
 ## Nix / NixOS
 
