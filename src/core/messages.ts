@@ -48,6 +48,23 @@ function cardPayload(accent: number, title: string, lines: string[]): unknown[] 
 const user = { name: "user", description: "Mention of the affected member" };
 const reason = { name: "reason", description: "Moderator-supplied reason (may be empty)" };
 
+/** A {@link cardPayload} with one action row of raw buttons appended inside the container (Wrapped). */
+function cardWithButtons(
+  accent: number,
+  title: string,
+  lines: string[],
+  buttons: Record<string, unknown>[],
+): unknown[] {
+  const payload = cardPayload(accent, title, lines) as { components: unknown[] }[];
+  payload[0]!.components.push({ type: 1, components: buttons });
+  return payload;
+}
+
+const wrappedYear = { name: "year", description: "The Wrapped year, e.g. 2026" };
+const wrappedUrl = { name: "url", description: "The member's personal Wrapped link (the button opens it)" };
+/** The link button of the Wrapped DM and of /wrapped me (style 5 = link). */
+const wrappedLinkButton = { type: 2, style: 5, label: "open wrapped", url: "{url}" };
+
 export const MESSAGE_CATALOG: BotMessageDef[] = [
   {
     key: "xp.levelup",
@@ -324,6 +341,140 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     params: [{ name: "latency", description: "Gateway latency in ms" }],
     defaultComponents: cardPayload(Accent.primary, "pong", [
       "gateway latency: **{latency}ms**",
+    ]),
+  },
+  {
+    key: "wrapped.signup",
+    label: "Wrapped sign-up",
+    description:
+      "Posted in the announcement channel by an admin. The title banner image is added above it in code. Keep the button ids wrapped:optin and wrapped:optout.",
+    category: "Wrapped",
+    params: [wrappedYear],
+    defaultComponents: cardWithButtons(
+      Accent.primary,
+      "wrapped is coming",
+      [
+        "you can ask for an envelope. it holds your year: what you said, when, and who you said it to.",
+        "nobody is written to unless they ask.",
+        "» you can always open your own with /wrapped me.",
+      ],
+      [
+        { type: 2, style: 1, label: "opt in", custom_id: "wrapped:optin" },
+        { type: 2, style: 2, label: "opt out", custom_id: "wrapped:optout" },
+      ],
+    ),
+  },
+  {
+    key: "wrapped.optin",
+    label: "Wrapped opt-in",
+    description: "Ephemeral reply to the opt in button or /wrapped optin.",
+    category: "Wrapped",
+    params: [],
+    defaultComponents: cardPayload(Accent.success, "on the list", [
+      "you will get a dm when the envelopes go out.",
+      "» /wrapped optout undoes it.",
+    ]),
+  },
+  {
+    key: "wrapped.already",
+    label: "Wrapped already opted in",
+    description: "Ephemeral reply to opting in when already opted in.",
+    category: "Wrapped",
+    params: [],
+    defaultComponents: cardPayload(Accent.primary, "already on the list", ["nothing to change."]),
+  },
+  {
+    key: "wrapped.optout",
+    label: "Wrapped opt-out",
+    description: "Ephemeral reply to the opt out button or /wrapped optout.",
+    category: "Wrapped",
+    params: [],
+    defaultComponents: cardPayload(Accent.primary, "off the list", [
+      "no dm will come.",
+      "» your envelope is safe at the post office: /wrapped me.",
+    ]),
+  },
+  {
+    key: "wrapped.dm",
+    label: "Wrapped DM",
+    description:
+      "DM with the member's personal link, sent only to opted-in members. The title banner image is added above it in code.",
+    category: "Wrapped",
+    params: [wrappedYear, wrappedUrl],
+    defaultComponents: cardWithButtons(
+      Accent.success,
+      "your {year} is ready",
+      [
+        "an envelope has been left at your door. it is addressed to you, and only you.",
+        "open it as often as you like.",
+        "this link is yours. keep it between us.",
+      ],
+      [wrappedLinkButton],
+    ),
+  },
+  {
+    key: "wrapped.me-ready",
+    label: "Wrapped link (/wrapped me)",
+    description: "Ephemeral reply to /wrapped me with the member's own link.",
+    category: "Wrapped",
+    params: [wrappedYear, wrappedUrl],
+    defaultComponents: cardWithButtons(
+      Accent.success,
+      "your envelope",
+      ["your {year} is waiting.", "this link is yours. keep it between us."],
+      [wrappedLinkButton],
+    ),
+  },
+  {
+    key: "wrapped.me-not-ready",
+    label: "Wrapped not ready (/wrapped me)",
+    description: "Ephemeral reply to /wrapped me before any run has made the member's link.",
+    category: "Wrapped",
+    params: [],
+    defaultComponents: cardPayload(Accent.warning, "not yet", [
+      "nothing has been posted. an admin sends the envelopes when they are ready.",
+    ]),
+  },
+  {
+    key: "wrapped.me-empty",
+    label: "Wrapped empty (/wrapped me)",
+    description: "Ephemeral reply to /wrapped me for a member with no activity that year.",
+    category: "Wrapped",
+    params: [wrappedYear],
+    defaultComponents: cardPayload(Accent.primary, "an empty envelope", [
+      "you were not around in {year}. there is nothing to show yet.",
+    ]),
+  },
+  {
+    key: "wrapped.run-finished",
+    label: "Wrapped run finished (mod log)",
+    description: "Posted in the mod-log channel when a Wrapped run ends. Skipped when no mod-log channel is set.",
+    category: "Wrapped",
+    params: [
+      wrappedYear,
+      { name: "admin", description: "Mention of the admin who started the run" },
+      { name: "sent", description: "DMs delivered" },
+      { name: "failed", description: "DMs that could not be delivered" },
+      { name: "skipped", description: "Members with a link who had not opted in" },
+    ],
+    defaultComponents: cardPayload(Accent.success, "wrapped run finished", [
+      "» {year}, started by {admin}",
+      "» {sent} sent, {failed} failed, {skipped} not opted in",
+      "» failed dms are listed on the dashboard.",
+    ]),
+  },
+  {
+    key: "wrapped.run-failed",
+    label: "Wrapped run failed (mod log)",
+    description: "Posted in the mod-log channel when a Wrapped run stops on an error. Skipped when no mod-log channel is set.",
+    category: "Wrapped",
+    params: [
+      { name: "processed", description: "Members processed before it stopped" },
+      { name: "total", description: "Members the run covers" },
+    ],
+    defaultComponents: cardPayload(Accent.danger, "wrapped run failed", [
+      "stopped at {processed} of {total}.",
+      "the dashboard has the details.",
     ]),
   },
 ];
