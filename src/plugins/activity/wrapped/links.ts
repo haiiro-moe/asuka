@@ -14,7 +14,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { env } from "../../../config/env.ts";
 import { nowSec } from "../../../core/util.ts";
 import { db, schema } from "../../../db/index.ts";
-import type { WrappedData } from "../types/wrapped.ts";
+import type { WrappedData, WrappedFailedList } from "../types/wrapped.ts";
 import { buildWrapped } from "./data.ts";
 
 /** Length of a token: 32 bytes in base64url without padding. */
@@ -151,4 +151,34 @@ export function ensureWrappedLink(userId: string, year: number): string | null {
   const data = buildWrapped(userId, year);
   if (!data) return null;
   return upsertWrappedLink(userId, year, data);
+}
+
+/** Most items {@link listFailedDms} returns. */
+export const FAILED_DM_LIMIT = 200;
+
+/**
+ * The members of a year whose Wrapped DM failed and who are still opted in,
+ * for the admin's resend list. One SQL query (links joined with opt-ins); no
+ * Discord call.
+ *
+ * @param year - The year.
+ * @param limit - Most items to return (default {@link FAILED_DM_LIMIT}).
+ * @returns The items ordered by user id, and `truncated` when more exist.
+ */
+export function listFailedDms(year: number, limit: number = FAILED_DM_LIMIT): WrappedFailedList {
+  const l = schema.activityWrappedLinks;
+  const o = schema.activityWrappedOptins;
+  const rows = db
+    .select({ userId: l.userId })
+    .from(l)
+    .innerJoin(o, eq(o.userId, l.userId))
+    .where(and(eq(l.year, year), eq(l.dmStatus, "failed")))
+    .orderBy(l.userId)
+    .limit(limit + 1)
+    .all();
+  return {
+    year,
+    items: rows.slice(0, limit).map((r) => ({ userId: r.userId, state: "failed" as const })),
+    truncated: rows.length > limit,
+  };
 }

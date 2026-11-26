@@ -48,7 +48,7 @@ src/plugins/activity/
     server.ts           buildServerWrapped, serverWrappedDeps, getOrCreateServerToken,
                         storeServerWrapped, getServerWrappedByToken, serverWrappedUrl
     links.ts            newToken, linkUrl, getLinkByToken, peekLinkByToken, upsertWrappedLink,
-                        ensureWrappedLink, getWrappedLink
+                        ensureWrappedLink, getWrappedLink, listFailedDms
     run.ts              startWrappedRun, startWrappedSend, postAnnouncement, resumeWrappedRun,
                         getWrappedStatus, latestRunPhase, resendWrappedDm, waitForWrappedRun,
                         wrappedRunTiming
@@ -315,6 +315,7 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 | `POST /api/activity/wrapped/signup/close` | admin | close sign-ups; the `WrappedSignupState` |
 | `POST /api/activity/wrapped/signup/reopen` | admin | reopen sign-ups; the `WrappedSignupState` |
 | `GET /api/activity/wrapped/optins` | admin | `{ count }` |
+| `GET /api/activity/wrapped/failed?year=` | admin | `WrappedFailedList`: `{ year, items: { userId, state: "failed" }[], truncated }`, the failed DMs of members still opted in (never skipped, pending or sent), by user id, at most 200 (`truncated` when more exist); one SQL query (`listFailedDms`), no Discord call. Year defaults to the latest run's, else the current UTC year; 400 for a bad year |
 | `GET /api/activity/wrapped/link/:userId?year=` | admin | `{ url }`, making the snapshot first if needed; 404 without activity |
 | `GET /api/activity/wrapped/server-link?year=` | admin | `{ url }` of the server story, building its snapshot first if needed; 404 when nothing happened |
 | `GET /api/activity/wrapped/t/:token` | public | `WrappedLinkResponse` (snapshot plus `displayName`, `soulmateName`, `mostRepliedToName`, `topChannelName` and `topChannelParentName` resolved now); counts an open; 404 otherwise |

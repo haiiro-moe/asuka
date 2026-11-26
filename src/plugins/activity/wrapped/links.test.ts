@@ -3,8 +3,9 @@ import { and, eq } from "drizzle-orm";
 import { db, initDb, schema } from "../../../db/index.ts";
 import { env } from "../../../config/env.ts";
 import { recordMessage } from "../record.ts";
-import type { WrappedData } from "../types/wrapped.ts";
-import { ensureWrappedLink, getLinkByToken, linkUrl, newToken, upsertWrappedLink } from "./links.ts";
+import type { WrappedData, WrappedFailedList } from "../types/wrapped.ts";
+import { setOptIn } from "./optin.ts";
+import { FAILED_DM_LIMIT, ensureWrappedLink, getLinkByToken, linkUrl, listFailedDms, newToken, upsertWrappedLink } from "./links.ts";
 import { at, msg, resetWrappedTables } from "./testing.ts";
 
 beforeAll(() => {
@@ -151,4 +152,81 @@ test("the card route returns a PNG for a known token without counting an open", 
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type")).toBe("image/png");
   expect(linkRow("ua")!.opens).toBe(0);
+});
+
+/** Set a link's DM status. */
+function setDm(userId: string, year: number, dmStatus: "pending" | "sent" | "failed" | "skipped") {
+  db.update(schema.activityWrappedLinks)
+    .set({ dmStatus })
+    .where(and(eq(schema.activityWrappedLinks.userId, userId), eq(schema.activityWrappedLinks.year, year)))
+    .run();
+}
+
+/** Call `GET /api/activity/wrapped/failed` with an optional query string. */
+async function failedRoute(query = "") {
+  const res = await callRoute("GET", "/api/activity/wrapped/failed", {}, `http://x/api/activity/wrapped/failed${query}`);
+  return { status: res.status, body: (await res.json()) as WrappedFailedList };
+}
+
+test("the failed DM list has only failed links of opted-in members, by user id", async () => {
+  for (const [u, s] of [["uc", "failed"], ["ua", "failed"], ["ub", "sent"], ["ud", "skipped"], ["ue", "pending"], ["uf", "failed"]] as const) {
+    upsertWrappedLink(u, 2026, snapshot(1));
+    setDm(u, 2026, s);
+    setOptIn(u, true);
+  }
+  // uf failed, then opted out: not listed.
+  setOptIn("uf", false);
+  // Another year's failure is not listed for 2026.
+  upsertWrappedLink("ua", 2025, snapshot(1));
+  setDm("ua", 2025, "failed");
+  upsertWrappedLink("ug", 2025, snapshot(1));
+  setDm("ug", 2025, "failed");
+  setOptIn("ug", true);
+
+  expect(listFailedDms(2026)).toEqual({
+    year: 2026,
+    items: [
+      { userId: "ua", state: "failed" },
+      { userId: "uc", state: "failed" },
+    ],
+    truncated: false,
+  });
+  expect(listFailedDms(2025).items.map((i) => i.userId)).toEqual(["ua", "ug"]);
+
+  const { status, body } = await failedRoute("?year=2025");
+  expect(status).toBe(200);
+  expect(body.items.map((i) => i.userId)).toEqual(["ua", "ug"]);
+  expect((await failedRoute("?year=2026")).body.items.map((i) => i.userId)).toEqual(["ua", "uc"]);
+  expect((await failedRoute("?year=nope")).status).toBe(400);
+});
+
+test("the failed DM list is capped, says when it was cut, and can be empty", async () => {
+  expect(listFailedDms(2026)).toEqual({ year: 2026, items: [], truncated: false });
+  // With no run, the route defaults to the current UTC year.
+  const empty = await failedRoute();
+  expect(empty.body).toEqual({ year: new Date().getUTCFullYear(), items: [], truncated: false });
+
+  for (let i = 0; i < 3; i++) {
+    const u = `u${i}`;
+    upsertWrappedLink(u, 2026, snapshot(1));
+    setDm(u, 2026, "failed");
+    setOptIn(u, true);
+  }
+  expect(listFailedDms(2026, 2)).toEqual({
+    year: 2026,
+    items: [
+      { userId: "u0", state: "failed" },
+      { userId: "u1", state: "failed" },
+    ],
+    truncated: true,
+  });
+  expect(listFailedDms(2026, 3).truncated).toBe(false);
+  expect(FAILED_DM_LIMIT).toBe(200);
+});
+
+test("the failed DM route is admin only", async () => {
+  const { wrappedRoutes } = await import("../api/wrapped.ts");
+  const route = wrappedRoutes.find((r) => r.method === "GET" && r.path === "/api/activity/wrapped/failed")!;
+  // The web server refuses a public call (401) and a non-admin session (403) for an admin route.
+  expect(route.access).toBe("admin");
 });
