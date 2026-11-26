@@ -350,7 +350,10 @@ src/plugins/activity/
   emoji.ts              parseEmoji: the emoji in a message and their keys
   time.ts               Period, weekdayHour, lastDays, termPeriod, parsePeriodParam, QUIET_DAYS
   privacy.ts            MIN_GROUP, hideSmall, mergeSmallGroups
-  exclusion.ts          excludedChannelIds, isExcluded, notExcluded
+  exclusion.ts          excludedChannelIds, isExcluded, notExcluded, isPrivateThread
+  queries/voice-overlap.ts  VoiceSpan, sharedVoiceSeconds, voicePairs, voiceSpansIn,
+                        memberVoiceOverlaps: the one voice co-presence sweep used by the admin
+                        relations, the president member web and both Wrapped snapshots
   voice-ready.ts        VOICE_MIN_WHOLE_MONTHS, voiceReadyAtFor, voiceReadiness, voiceReady
   facts.ts              RawMessage, MessageFacts, toRawMessage, extractMessageFacts
   record.ts             the write API: recordMessage, reactions, voice segments, membership,

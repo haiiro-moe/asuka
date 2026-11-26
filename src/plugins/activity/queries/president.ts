@@ -36,6 +36,8 @@ import { MIN_GROUP, hideSmall, mergeSmallGroups } from "../privacy.ts";
 import { QUIET_DAYS, lastDays, termPeriod } from "../time.ts";
 import type { Period } from "../time.ts";
 import { voiceReadiness } from "../voice-ready.ts";
+import { sharedVoiceSeconds } from "./voice-overlap.ts";
+import type { VoiceSpan } from "./voice-overlap.ts";
 import type {
   PresidentClubEventHealth,
   PresidentConnection,
@@ -205,18 +207,6 @@ function messageCounts(p: Period): MessageCount[] {
     .all();
 }
 
-/** The part of a voice segment that lies inside a period. */
-interface VoiceSpan {
-  /** The member. */
-  userId: string;
-  /** The voice channel. */
-  channelId: string;
-  /** First second inside the period. */
-  start: number;
-  /** End, exclusive, and never after the period's end. */
-  end: number;
-}
-
 /**
  * The voice segments of a period, each cut down to the part inside it.
  *
@@ -352,45 +342,6 @@ function quietShown(scope: PresidentScope): number | null {
   if (quiet === null || scope.shorter === null) return quiet;
   const shorter = hideSmall(quietCount(scope.shorter.to, scope.voiceReady));
   return shorter !== null && givesAway(quiet, shorter) ? null : quiet;
-}
-
-/**
- * How long each pair of members shared a voice channel.
- *
- * @param spans - Voice spans of one period, from {@link voiceSpans}.
- * @returns For each member, the members with a larger id they shared a channel
- *   with, and for how many seconds in total.
- */
-function sharedVoiceSeconds(spans: VoiceSpan[]): Map<string, Map<string, number>> {
-  const byChannel = new Map<string, VoiceSpan[]>();
-  for (const span of spans) {
-    const list = byChannel.get(span.channelId);
-    if (list) list.push(span);
-    else byChannel.set(span.channelId, [span]);
-  }
-
-  const shared = new Map<string, Map<string, number>>();
-  for (const list of byChannel.values()) {
-    list.sort((x, y) => x.start - y.start || x.end - y.end);
-    // The spans that are still running when the next one starts.
-    let open: VoiceSpan[] = [];
-    for (const span of list) {
-      open = open.filter((other) => other.end > span.start);
-      for (const other of open) {
-        if (other.userId === span.userId) continue;
-        const seconds = Math.min(other.end, span.end) - span.start;
-        const [lo, hi] = other.userId < span.userId ? [other.userId, span.userId] : [span.userId, other.userId];
-        let row = shared.get(lo);
-        if (!row) {
-          row = new Map();
-          shared.set(lo, row);
-        }
-        row.set(hi, (row.get(hi) ?? 0) + seconds);
-      }
-      open.push(span);
-    }
-  }
-  return shared;
 }
 
 /**

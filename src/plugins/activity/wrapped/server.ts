@@ -11,13 +11,13 @@
  *
  * @packageDocumentation
  */
-import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
+import { and, count, desc, eq, gte, isNotNull, lt, ne, sql } from "drizzle-orm";
 import { env } from "../../../config/env.ts";
 import type { BotContext } from "../../../core/plugin.ts";
 import { nowSec } from "../../../core/util.ts";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
+import { voicePairs, voiceSpansIn } from "../queries/voice-overlap.ts";
 import { voiceReadiness } from "../voice-ready.ts";
 import type { ServerWrapped } from "../types/wrapped.ts";
 import {
@@ -194,41 +194,68 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
 }
 
 /**
- * The pair with the highest weight that year, in one SQL query: replies
- * between them (either way) plus, once voice is ready, voice overlap in the
- * same channel.
+ * The pair with the highest weight that year: replies between them (either
+ * way, one point each) plus, once voice is ready, voice overlap in the same
+ * channel (one point per {@link VOICE_OVERLAP_SECONDS_PER_POINT} seconds). The
+ * replies are one grouped SQL query; the voice overlap is the shared sweep
+ * (`queries/voice-overlap.ts`). Ties go to the smaller ids.
+ *
+ * @internal Exported for the voice-overlap characterisation tests.
+ * @param from - Start of the year, inclusive.
+ * @param to - End of the year, exclusive.
+ * @param voiceReady - Whether voice counts.
+ * @returns The pair (`aId` the smaller id) with its replies and shared seconds,
+ *   or null when no pair has any weight.
  */
-function bestPairOf(from: number, to: number, voiceReady: boolean): { aId: string; bId: string; replies: number; seconds: number } | null {
+export function bestPairOf(from: number, to: number, voiceReady: boolean): { aId: string; bId: string; replies: number; seconds: number } | null {
   const m = schema.activityMessages;
-  const v1 = alias(schema.activityVoice, "v1");
-  const v2 = alias(schema.activityVoice, "v2");
-  const e1 = sql`coalesce(${v1.endedAt}, ${v1.lastSeenAt})`;
-  const e2 = sql`coalesce(${v2.endedAt}, ${v2.lastSeenAt})`;
-  const [row] = db.all<{ a: string; b: string; replies: number; seconds: number }>(sql`
-    select a, b, sum(replies) as replies, sum(seconds) as seconds from (
-      select min(${m.userId}, ${m.replyToUserId}) as a, max(${m.userId}, ${m.replyToUserId}) as b,
-             count(*) as replies, 0 as seconds
-      from ${m}
-      where ${m.ts} >= ${from} and ${m.ts} < ${to}
-        and ${m.replyToUserId} is not null and ${m.replyToUserId} != ${m.userId}
-        and ${notExcluded(m.channelId, m.parentChannelId)}
-      group by a, b
-      ${voiceReady ? sql`union all
-      select ${v1.userId} as a, ${v2.userId} as b, 0 as replies,
-             sum(max(0, min(${e1}, ${e2}, ${to}) - max(${v1.startedAt}, ${v2.startedAt}, ${from}))) as seconds
-      from ${schema.activityVoice} as "v1" join ${schema.activityVoice} as "v2"
-        on ${v2.channelId} = ${v1.channelId} and ${v1.userId} < ${v2.userId}
-        and ${v2.startedAt} < ${e1} and ${e2} > ${v1.startedAt}
-      where ${v1.startedAt} < ${to} and ${e1} > ${from} and ${notExcluded(v1.channelId)}
-      group by a, b` : sql``}
+  const a = sql<string>`min(${m.userId}, ${m.replyToUserId})`;
+  const b = sql<string>`max(${m.userId}, ${m.replyToUserId})`;
+  const replies = db
+    .select({ a, b, n: count() })
+    .from(m)
+    .where(
+      and(
+        gte(m.ts, from),
+        lt(m.ts, to),
+        isNotNull(m.replyToUserId),
+        ne(m.replyToUserId, m.userId),
+        notExcluded(m.channelId, m.parentChannelId),
+      ),
     )
-    group by a, b
-    having sum(replies) + sum(seconds) > 0
-    order by sum(replies) + sum(seconds) * 1.0 / ${VOICE_OVERLAP_SECONDS_PER_POINT} desc, a, b
-    limit 1
-  `);
-  if (!row) return null;
-  return { aId: row.a, bId: row.b, replies: Number(row.replies), seconds: Number(row.seconds) };
+    .groupBy(a, b)
+    .all();
+
+  const pairs = new Map<string, { aId: string; bId: string; replies: number; seconds: number }>();
+  const entry = (aId: string, bId: string) => {
+    const key = `${aId}\u0000${bId}`;
+    let e = pairs.get(key);
+    if (!e) {
+      e = { aId, bId, replies: 0, seconds: 0 };
+      pairs.set(key, e);
+    }
+    return e;
+  };
+  for (const row of replies) entry(row.a, row.b).replies += row.n;
+  if (voiceReady) {
+    for (const pair of voicePairs(voiceSpansIn({ from, to }))) entry(pair.a, pair.b).seconds += pair.seconds;
+  }
+
+  let best: { aId: string; bId: string; replies: number; seconds: number } | null = null;
+  let bestScore = 0;
+  for (const e of pairs.values()) {
+    if (e.replies + e.seconds <= 0) continue;
+    const score = e.replies + (e.seconds * 1.0) / VOICE_OVERLAP_SECONDS_PER_POINT;
+    const wins =
+      best === null ||
+      score > bestScore ||
+      (score === bestScore && (e.aId < best.aId || (e.aId === best.aId && e.bId < best.bId)));
+    if (wins) {
+      best = e;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 /**

@@ -13,7 +13,6 @@
  * @packageDocumentation
  */
 import { and, asc, count, desc, eq, gt, gte, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import type { Period } from "../time.ts";
@@ -23,6 +22,7 @@ import type { ClubYearStats, TermInYear } from "./extras.ts";
 import { titleAwards, titlesFor } from "./titles.ts";
 import type { TitleAward } from "./titles.ts";
 import { voiceReadiness } from "../voice-ready.ts";
+import { memberVoiceOverlaps } from "../queries/voice-overlap.ts";
 
 /** How many emoji a snapshot lists. */
 const TOP_EMOJI = 3;
@@ -230,7 +230,7 @@ export function buildWrapped(userId: string, year: number, shared?: WrappedShare
   for (const row of replies) bump(row.toUserId!, row.n);
   for (const row of mentionCounts(userId, from, to)) bump(row.toUserId, row.n);
   if (voiceReady) {
-    for (const row of voiceOverlaps(userId, from, to)) bump(row.userId, row.seconds / VOICE_OVERLAP_SECONDS_PER_POINT);
+    for (const row of memberVoiceOverlaps(userId, { from, to })) bump(row.userId, row.seconds / VOICE_OVERLAP_SECONDS_PER_POINT);
   }
   const soulmateId = pickTop(weights);
 
@@ -322,31 +322,6 @@ function mentionCounts(userId: string, from: number, to: number): { toUserId: st
     )
     .groupBy(mt.toUserId)
     .all();
-}
-
-/**
- * Seconds the member spent in the same voice channel as each other member,
- * clipped to `[from, to)`, outside excluded channels.
- */
-function voiceOverlaps(userId: string, from: number, to: number): { userId: string; seconds: number }[] {
-  const v = schema.activityVoice;
-  const o = alias(schema.activityVoice, "other_voice");
-  const vEnd = sql`coalesce(${v.endedAt}, ${v.lastSeenAt})`;
-  const oEnd = sql`coalesce(${o.endedAt}, ${o.lastSeenAt})`;
-  const rows = db
-    .select({
-      userId: o.userId,
-      seconds: sql<number>`sum(max(0, min(${vEnd}, ${oEnd}, ${to}) - max(${v.startedAt}, ${o.startedAt}, ${from})))`,
-    })
-    .from(v)
-    .innerJoin(
-      o,
-      and(eq(o.channelId, v.channelId), ne(o.userId, v.userId), sql`${o.startedAt} < ${vEnd}`, sql`${oEnd} > ${v.startedAt}`),
-    )
-    .where(and(eq(v.userId, userId), lt(v.startedAt, to), gt(vEnd, from), notExcluded(v.channelId)))
-    .groupBy(o.userId)
-    .all();
-  return rows.map((row) => ({ userId: row.userId, seconds: Number(row.seconds) }));
 }
 
 /** The member's top emoji in `[from, to)`: text use and reactions merged, at most {@link TOP_EMOJI}. */
