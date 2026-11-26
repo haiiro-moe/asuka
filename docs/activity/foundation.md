@@ -189,7 +189,9 @@ if (facts) recordMessage(facts);
 - `toRawMessage(message)` copies what matters out of a discord.js `Message` into a plain
   `RawMessage`. Only a message of type `Reply` counts as a reply: a forward, a crosspost and a
   thread's starter message carry a reference too, but answer nobody. `parentChannelId` is the
-  parent of a thread, read from the cached channel, and null otherwise.
+  parent of a thread, read from the cached channel, and null otherwise. **Bots are left out as
+  targets too**: a mentioned bot is not in `mentionedUserIds`, and a reply to a bot's message
+  keeps `replyToMessageId` but has a null `repliedUserId`.
 - `extractMessageFacts(raw, source)` returns `MessageFacts`, or **null when the message is not
   recorded**: the author is a bot, a webhook sent it, it is a system message, it is a DM (no
   guild), or its channel or its thread's parent channel is excluded.
@@ -199,7 +201,7 @@ if (facts) recordMessage(facts);
 | Field | Rule |
 |---|---|
 | `ts` | `createdTimestamp` (milliseconds) in whole unix seconds. |
-| `replyToUserId`, `replyToMessageId` | The reply target. `replyToUserId` is null when Discord did not send the replied-to message (it was deleted). A reply to yourself is kept. |
+| `replyToUserId`, `replyToMessageId` | The reply target. `replyToUserId` is null when Discord did not send the replied-to message (it was deleted) and when its author is a bot (a member answering one of the bot's cards); `replyToMessageId` is kept in both cases. A reply to yourself is kept. |
 | `mentionedUserIds` | The users Discord lists as mentioned, each once, without the author. **The ping of a reply is not a mention**: a reply pings its target by default and Discord then lists the target as mentioned, so the target is taken out again unless the text names them with `<@id>` (or `<@!id>`). The reply itself stays in `replyToUserId`. Another user mentioned in a reply is kept. |
 | `attachmentKinds` | One of `image`, `video`, `audio` per attachment, by the first part of its MIME type; `other` for anything else and for an unknown type. |
 | `linkDomains` | The hostname of every `http://` or `https://` link: lowercase, no port, each once, in order of first appearance. Punctuation after a link (`.,;:!?*_~\|`, as in `https://example.com,` or `**https://example.com**`) is trimmed first, and a hostname with anything but letters, digits, dots and hyphens is dropped, so a domain is never stored with punctuation in it. An international domain is stored as punycode (`xn--...`). `www.` is kept, so `www.youtube.com` and `youtube.com` are two domains. |
@@ -243,6 +245,12 @@ Details that matter to a caller:
   text use and reaction use of one emoji will not add up.
 - **Re-adding a reaction keeps the first `addedAt`.** Only `removedAt` is cleared. A message author
   or a parent channel that was unknown (null) is filled in by a later add that knows it.
+- **No bot id is ever stored**, as an author or as a target. No table records which ids are
+  bots, so one that got in could not be filtered out later. `extractMessageFacts` drops a bot's
+  message and `toRawMessage` drops bots from the mentions and the reply target. The `record*`
+  functions take plain ids and cannot check, so **capture must do the same for reactions**: skip a
+  reaction a bot added, and pass `messageAuthorId: null` to `recordReactionAdd` when the author of
+  the reacted-to message is a bot.
 - **Excluded channels.** `recordMessage` and `recordReactionAdd` check the channel and the
   thread's parent (`isExcluded(channelId, parentChannelId)`) and write nothing when either is
   excluded. `openVoiceSegment` checks its voice channel.

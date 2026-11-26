@@ -342,6 +342,73 @@ test("toRawMessage survives a channel that is not cached", () => {
   expect(toRawMessage(fakeMessage({ channel: null })).parentChannelId).toBeNull();
 });
 
+test("toRawMessage leaves bots out of the mentioned users", () => {
+  const message = fakeMessage({
+    type: MessageType.Default,
+    reference: null,
+    content: "<@b1> <@u3> <@b2> <@u4>",
+    mentions: {
+      repliedUser: null,
+      users: new Map([
+        ["b1", { id: "b1", bot: true }],
+        ["u3", { id: "u3", bot: false }],
+        ["b2", { id: "b2", bot: true }],
+        ["u4", { id: "u4", bot: false }],
+      ]),
+    },
+  });
+  expect(toRawMessage(message).mentionedUserIds).toEqual(["u3", "u4"]);
+});
+
+test("toRawMessage keeps the replied-to message but not a bot as its author", () => {
+  // A member answering one of the bot's own cards, with the default ping.
+  const message = fakeMessage({
+    content: "nice card",
+    mentions: {
+      repliedUser: { id: "b1", bot: true },
+      users: new Map([["b1", { id: "b1", bot: true }]]),
+    },
+  });
+  expect(toRawMessage(message)).toMatchObject({
+    replyToMessageId: "m0",
+    repliedUserId: null,
+    mentionedUserIds: [],
+  });
+});
+
+test("a reply to a member is unchanged by the bot filter", () => {
+  const message = fakeMessage({
+    mentions: {
+      repliedUser: { id: "u2", bot: false },
+      users: new Map([
+        ["u2", { id: "u2", bot: false }],
+        ["b1", { id: "b1", bot: true }],
+      ]),
+    },
+  });
+  expect(toRawMessage(message)).toMatchObject({
+    replyToMessageId: "m0",
+    repliedUserId: "u2",
+    mentionedUserIds: ["u2"],
+  });
+});
+
+test("a reply to a bot that names the bot records no bot id at all", () => {
+  const message = fakeMessage({
+    content: "<@b1> thanks, and <@u3> look",
+    mentions: {
+      repliedUser: { id: "b1", bot: true },
+      users: new Map([
+        ["b1", { id: "b1", bot: true }],
+        ["u3", { id: "u3", bot: false }],
+      ]),
+    },
+  });
+  const facts = extractMessageFacts(toRawMessage(message), "live");
+  expect(facts).toMatchObject({ replyToUserId: null, replyToMessageId: "m0", mentionedUserIds: ["u3"] });
+  expect(JSON.stringify(facts)).not.toContain("b1");
+});
+
 test("a raw discord message goes straight through extractMessageFacts", () => {
   const facts = extractMessageFacts(toRawMessage(fakeMessage()), "live");
   expect(facts).toMatchObject({

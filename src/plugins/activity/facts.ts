@@ -44,11 +44,15 @@ export interface RawMessage {
   content: string;
   /** The message this one replies to; null when it is not a reply. */
   replyToMessageId: string | null;
-  /** Author of the message replied to; null when it is not a reply or the author is unknown. */
+  /**
+   * Author of the message replied to; null when it is not a reply, the author
+   * is unknown, or the author is a bot.
+   */
   repliedUserId: string | null;
   /**
-   * Ids of the users mentioned, as Discord reports them. A reply that pings
-   * lists its target here too; `extractMessageFacts` takes that one out again.
+   * Ids of the users mentioned, as Discord reports them, without bots. A reply
+   * that pings lists its target here too; `extractMessageFacts` takes that one
+   * out again.
    */
   mentionedUserIds: string[];
   /** MIME type of each attachment; null where Discord gave none. */
@@ -75,9 +79,12 @@ export interface MessageFacts {
   parentChannelId: string | null;
   /** When the message was sent, in unix seconds. */
   ts: number;
-  /** Author of the message replied to; null when it is not a reply or the author is unknown. */
+  /**
+   * Author of the message replied to; null when it is not a reply, the author
+   * is unknown, or the author is a bot.
+   */
   replyToUserId: string | null;
-  /** The message replied to; null when it is not a reply. */
+  /** The message replied to; null when it is not a reply. Kept for a reply to a bot. */
   replyToMessageId: string | null;
   /**
    * The users mentioned: each id once, the author's own id left out. The reply
@@ -236,6 +243,11 @@ export function extractMessageFacts(m: RawMessage, source: "live" | "backfill"):
  * Only a message of type `Reply` counts as a reply. A forward, a crosspost and
  * a thread's starter message also carry a reference, but they answer nobody.
  *
+ * Bots are left out as targets, the same way they are left out as authors: a
+ * mentioned bot is not in `mentionedUserIds`, and a reply to a bot's message
+ * keeps `replyToMessageId` but has a null `repliedUserId`. No table records
+ * which ids are bots, so a bot id written here could not be filtered out later.
+ *
  * The parent channel is read from the cached channel. If the channel is not in
  * the cache, `parentChannelId` is null, as for a message outside a thread.
  *
@@ -246,6 +258,12 @@ export function toRawMessage(m: Message): RawMessage {
   // Typed as always present, but resolved from the cache and null when it is not there.
   const channel = m.channel as Message["channel"] | null;
   const isReply = m.type === MessageType.Reply;
+  const repliedUser = isReply ? m.mentions.repliedUser : null;
+
+  const mentionedUserIds: string[] = [];
+  for (const [id, user] of m.mentions.users) {
+    if (!user.bot) mentionedUserIds.push(id);
+  }
 
   return {
     id: m.id,
@@ -258,8 +276,8 @@ export function toRawMessage(m: Message): RawMessage {
     createdTimestamp: m.createdTimestamp,
     content: m.content ?? "",
     replyToMessageId: isReply ? (m.reference?.messageId ?? null) : null,
-    repliedUserId: isReply ? (m.mentions.repliedUser?.id ?? null) : null,
-    mentionedUserIds: [...m.mentions.users.keys()],
+    repliedUserId: repliedUser && !repliedUser.bot ? repliedUser.id : null,
+    mentionedUserIds,
     attachmentTypes: [...m.attachments.values()].map((attachment) => attachment.contentType ?? null),
     stickerCount: m.stickers.size,
   };

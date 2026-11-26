@@ -126,7 +126,8 @@ export function recordMessage(f: MessageFacts): boolean {
  * @param r.channelId - The channel, or the thread, the message is in.
  * @param r.parentChannelId - The parent channel when `channelId` is a thread;
  *   null or left out otherwise.
- * @param r.messageAuthorId - Author of the message reacted to; null when unknown.
+ * @param r.messageAuthorId - Author of the message reacted to; null when
+ *   unknown, and null when the author is a bot (the caller checks that).
  * @param r.ts - When the reaction was added, in unix seconds.
  */
 export function recordReactionAdd(r: {
