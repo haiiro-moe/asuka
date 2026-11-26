@@ -52,7 +52,11 @@ export interface NewcomerRow {
 export interface DriftRow {
   /** The member. */
   userId: string;
-  /** Their last message or voice activity, in unix seconds. */
+  /**
+   * Their last message or voice activity, in unix seconds. Voice counts only
+   * once the voice log is ready (two whole months, `GET /api/activity/user/voice-status`);
+   * until then this is their last message.
+   */
   lastActiveAt: number;
 }
 
@@ -158,7 +162,11 @@ export interface CommandUsageRow {
   failures: number;
 }
 
-/** Which interactions a relationship weight counts. */
+/**
+ * Which interactions a relationship weight counts. `voice` stays an empty list
+ * until the voice log holds two whole months (the unlock date is in
+ * `GET /api/activity/user/voice-status`); `replies` and `mentions` do not wait.
+ */
 export type RelationKind = "replies" | "mentions" | "voice";
 
 /**

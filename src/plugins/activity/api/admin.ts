@@ -13,6 +13,7 @@ import {
   repeatOffenders,
 } from "../queries/admin.ts";
 import { parsePeriodParam } from "../time.ts";
+import { voiceReady } from "../voice-ready.ts";
 import type { Period } from "../time.ts";
 import type { ChannelHealthRow, NamedChannelHealthRow, RelationKind } from "../types/admin.ts";
 
@@ -102,7 +103,7 @@ export const adminRoutes: ApiRoute[] = [
   adminView("moderation", (p) => moderationSeries(p)),
   adminView("offenders", (p) => repeatOffenders(p)),
   adminView("newcomers", (p) => newcomers(p)),
-  adminView("drift", (p) => drift(p)),
+  adminView("drift", (p) => drift(p, voiceReady())),
   adminView("channels", (p, _url, ctx) => withChannelNames(channelHealth(p), cachedChannelNames(ctx))),
   adminView("economy", (p) => economy(p)),
   adminView("clubs-events", (p) => clubsAndEvents(p)),
@@ -110,7 +111,7 @@ export const adminRoutes: ApiRoute[] = [
   adminView("relations", (p, url) => {
     const kind = url.searchParams.get("kind") ?? "replies";
     if (!(RELATION_KINDS as readonly string[]).includes(kind)) return badRequest(`unknown kind: ${kind}`);
-    return relations(p, kind as RelationKind);
+    return relations(p, kind as RelationKind, kind === "voice" ? voiceReady() : undefined);
   }),
   adminView("inspect/:userId", (p, _url, ctx) => {
     const userId = ctx.params.userId ?? "";

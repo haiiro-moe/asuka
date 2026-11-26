@@ -33,6 +33,17 @@ route layer, so the query stays free of discord.js (see "Channel health" below).
   with `notExcluded(channelId, parentChannelId)` (messages, mentions) or `notExcluded(channelId)`
   (voice, which has no parent). A channel excluded today drops out of the next request, threads
   under it included, although its rows stay in the log.
+- **Voice waits for two whole months of data.** Anything derived from voice is withheld until
+  `voiceReadiness()` (`voice-ready.ts`) says the voice log holds two whole UTC months. Until then
+  it is empty, never zero-filled. Only two admin views read voice: `relations(p, "voice")`
+  returns `[]`, and `drift` judges members on messages alone, so nobody looks quiet or active
+  because of voice that was not reliably recorded. `memberInspect`, `channelHealth`, `newcomers`
+  and `clubsAndEvents` count messages only and are not affected (a club's voice-channel id counts
+  the text chat in that channel, not voice segments). Once ready, nothing changes. The routes
+  compute readiness once per request and pass it to `drift(p, voice)` and
+  `relations(p, kind, voice)`; called without it, the queries use `voiceReady(p.to)`. The page
+  reads the unlock date from `GET /api/activity/user/voice-status` (user tier), so the admin
+  tier adds no route for it.
 - **Periods are `from` inclusive, `to` exclusive**, in unix seconds; all buckets are UTC.
 - **Weekly series** (`moderationSeries().weekly`, `economy().weekly`) are 7-day UTC buckets. Each
   series comes with `start` (unix seconds, the start of its first bucket) so the page can label
@@ -88,6 +99,10 @@ the previous period: active then, silent since. So with `30d`, someone last seen
 listed and someone last seen 29 days ago is not; someone last seen 70 days ago was not active in
 the previous period (60 to 30 days ago) and is not listed either. Members whose latest membership
 change is a `leave` are left out: they are gone, not drifting. Most recently active first.
+
+Voice segments count only once voice is ready (two whole months of voice data). Before that,
+drift uses messages alone: a member whose last message is 40 days old is listed even if they were
+in voice last week, and a member with voice but no messages is not listed.
 
 ### Channel health (`channelHealth`)
 
@@ -154,6 +169,9 @@ A reply's own ping is not a mention (enforced when the row is written), so the t
 count the same thing. Pairs are symmetric: A to B and B to A are summed into one pair with `a` the
 smaller id. Self replies and self mentions are left out; bots never appear, since they are never
 recorded. The 50 heaviest pairs come back (`RELATIONS_LIMIT`).
+
+`voice` returns `[]` until voice is ready (two whole months of voice data, see the rules above),
+including when nothing has been recorded yet. `replies` and `mentions` do not wait.
 
 ### Member inspect (`memberInspect`)
 

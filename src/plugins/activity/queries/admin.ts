@@ -13,6 +13,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import { QUIET_DAYS } from "../time.ts";
+import { voiceReady } from "../voice-ready.ts";
 import type { Period } from "../time.ts";
 import type {
   ActionCount,
@@ -268,10 +269,16 @@ export function newcomers(p: Period): NewcomerRow[] {
  * were active then and silent since. Members whose latest membership change is
  * a leave are left out: they are gone, not drifting.
  *
+ * Voice counts only once the voice log is ready (`voiceReady`, two whole
+ * months of data). Until then drift is judged on messages alone, so nobody
+ * looks quiet or active because of voice that was not reliably recorded.
+ *
  * @param p - The period; its length sets how far back "previously active" reaches.
+ * @param voice - Whether voice is ready. Compute it once per request and pass
+ *   it in; left out, it is `voiceReady(p.to)`.
  * @returns Drifting members, most recently active first.
  */
-export function drift(p: Period): DriftRow[] {
+export function drift(p: Period, voice: boolean = voiceReady(p.to)): DriftRow[] {
   const quietStart = p.to - QUIET_DAYS * DAY;
   const prevFrom = quietStart - (p.to - p.from);
 
@@ -289,14 +296,16 @@ export function drift(p: Period): DriftRow[] {
     .all())
     keep(r.userId, r.ts);
 
-  const voiceEnd = sql<number>`coalesce(${activityVoice.endedAt}, ${activityVoice.lastSeenAt})`;
-  for (const r of db
-    .select({ userId: activityVoice.userId, ts: sql<number | null>`max(min(${voiceEnd}, ${p.to}))` })
-    .from(activityVoice)
-    .where(and(lt(activityVoice.startedAt, p.to), notExcluded(activityVoice.channelId)))
-    .groupBy(activityVoice.userId)
-    .all())
-    keep(r.userId, r.ts);
+  if (voice) {
+    const voiceEnd = sql<number>`coalesce(${activityVoice.endedAt}, ${activityVoice.lastSeenAt})`;
+    for (const r of db
+      .select({ userId: activityVoice.userId, ts: sql<number | null>`max(min(${voiceEnd}, ${p.to}))` })
+      .from(activityVoice)
+      .where(and(lt(activityVoice.startedAt, p.to), notExcluded(activityVoice.channelId)))
+      .groupBy(activityVoice.userId)
+      .all())
+      keep(r.userId, r.ts);
+  }
 
   const latestMembership = new Map<string, string>();
   for (const r of db
@@ -629,11 +638,18 @@ function voiceEdges(p: Period): Edge[] {
  * the smaller id. Self replies and self mentions are left out, and so are
  * excluded channels. Bots are never targets, since they are never recorded.
  *
+ * `voice` is withheld until the voice log is ready (`voiceReady`, two whole
+ * months of data): before that it is an empty list, never zero weights.
+ * `replies` and `mentions` do not wait.
+ *
  * @param p - The period.
  * @param kind - Which interactions to count.
+ * @param voice - Whether voice is ready; only read for `kind = "voice"`.
+ *   Compute it once per request and pass it in; left out, it is `voiceReady(p.to)`.
  * @returns At most {@link RELATIONS_LIMIT} pairs, heaviest first, ties by ids.
  */
-export function relations(p: Period, kind: RelationKind): RelationPair[] {
+export function relations(p: Period, kind: RelationKind, voice?: boolean): RelationPair[] {
+  if (kind === "voice" && !(voice ?? voiceReady(p.to))) return [];
   const edges = kind === "replies" ? replyEdges(p) : kind === "mentions" ? mentionEdges(p) : voiceEdges(p);
   const pairs = new Map<string, RelationPair>();
   for (const e of edges) {
@@ -653,8 +669,9 @@ export function relations(p: Period, kind: RelationKind): RelationPair[] {
  * to, when they are most active, and their closest ties.
  *
  * Ties and closeness count replies and mentions in both directions (voice is in
- * {@link relations}, in seconds, and is not mixed in). Excluded channels are
- * left out. An unknown member gets zeros, a null hour and no ties.
+ * {@link relations}, in seconds, and is not mixed in). It never reads voice, so
+ * it needs no voice-readiness check. Excluded channels are left out. An
+ * unknown member gets zeros, a null hour and no ties.
  *
  * @param userId - The member.
  * @param p - The period.

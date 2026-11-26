@@ -86,6 +86,14 @@ function voice(userId: string, channelId: string, start: number, end: number) {
   closeVoiceSegment(userId, end);
 }
 
+/**
+ * Make the voice log `daysAgo` days old at NOW with one short segment by a
+ * member nobody else shares a channel with. 90 days (3 months) is ready, 45 is not.
+ */
+function voiceSince(daysAgo: number) {
+  voice("998", "v-old", NOW - daysAgo * DAY, NOW - daysAgo * DAY + 10);
+}
+
 beforeAll(() => {
   initDb();
 });
@@ -107,10 +115,27 @@ describe("drift", () => {
     expect(drift(P)).toEqual([{ userId: "10", lastActiveAt: NOW - 31 * DAY }]);
   });
 
-  test("voice counts as activity", () => {
+  test("voice counts as activity once voice is ready (log 3 months old)", () => {
+    voiceSince(90);
     msg({ userId: "10", ts: NOW - 40 * DAY });
     voice("10", "v1", NOW - 5 * DAY, NOW - 5 * DAY + 600);
     expect(drift(P)).toEqual([]);
+  });
+
+  test("messages only while voice is not ready (log under 2 whole months)", () => {
+    voiceSince(45);
+    msg({ userId: "10", ts: NOW - 40 * DAY });
+    voice("10", "v1", NOW - 5 * DAY, NOW - 5 * DAY + 600);
+    voice("12", "v1", NOW - 40 * DAY, NOW - 40 * DAY + 600); // voice only: not judged on it
+    expect(drift(P)).toEqual([{ userId: "10", lastActiveAt: NOW - 40 * DAY }]);
+  });
+
+  test("an explicit readiness flag wins over the default", () => {
+    voiceSince(90);
+    msg({ userId: "10", ts: NOW - 40 * DAY });
+    voice("10", "v1", NOW - 5 * DAY, NOW - 5 * DAY + 600);
+    expect(drift(P, false)).toEqual([{ userId: "10", lastActiveAt: NOW - 40 * DAY }]);
+    expect(drift(P, true)).toEqual([]);
   });
 
   test("needs activity in the previous period", () => {
@@ -329,7 +354,8 @@ describe("relations", () => {
     ]);
   });
 
-  test("voice: overlapping seconds in the same channel", () => {
+  test("voice: overlapping seconds in the same channel, once voice is ready", () => {
+    voiceSince(90);
     const t = NOW - 2 * DAY;
     voice("7", "v1", t, t + 1000);
     voice("8", "v1", t + 400, t + 2000);
@@ -337,7 +363,29 @@ describe("relations", () => {
     expect(relations(P, "voice")).toEqual([{ a: "7", b: "8", weight: 600 }]);
   });
 
+  test("voice: empty while voice is not ready", () => {
+    const t = NOW - 2 * DAY;
+    voice("7", "v1", t, t + 1000);
+    voice("8", "v1", t + 400, t + 2000);
+    expect(relations(P, "voice")).toEqual([]); // earliest segment 2 days old
+    voiceSince(45);
+    expect(relations(P, "voice")).toEqual([]); // under 2 whole months
+    expect(relations(P, "voice", false)).toEqual([]);
+    expect(relations(P, "voice", true)).toEqual([{ a: "7", b: "8", weight: 600 }]);
+  });
+
+  test("voice: no voice rows at all gives an empty list", () => {
+    expect(relations(P, "voice")).toEqual([]);
+  });
+
+  test("replies and mentions do not wait for voice", () => {
+    msg({ userId: "1", replyToUserId: "2", replyToMessageId: "x", mentionedUserIds: ["3"] });
+    expect(relations(P, "replies", false)).toEqual([{ a: "1", b: "2", weight: 1 }]);
+    expect(relations(P, "mentions", false)).toEqual([{ a: "1", b: "3", weight: 1 }]);
+  });
+
   test("a thread under a channel excluded later disappears", () => {
+    voiceSince(90);
     msg({ userId: "1", channelId: "t1", parentChannelId: "c9", replyToUserId: "2", replyToMessageId: "x" });
     msg({ userId: "1", channelId: "t1", parentChannelId: "c9", mentionedUserIds: ["3"] });
     const t = NOW - 2 * DAY;
