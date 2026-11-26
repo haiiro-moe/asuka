@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { Events, MessageType } from "discord.js";
+import { ChannelType, Events, MessageType } from "discord.js";
 import type { GuildMember, Message, MessageReaction, User, VoiceState } from "discord.js";
 import { eq } from "drizzle-orm";
 import type { BotContext } from "../../../core/plugin.ts";
@@ -162,6 +162,18 @@ describe("messages", () => {
     expect(messages()).toHaveLength(0);
   });
 
+  test("a private thread message writes nothing", async () => {
+    const thread = { ...channel("c1"), type: ChannelType.PrivateThread };
+    await onMessageCreate(ctx, message({ channelId: "t1", channel: thread }));
+    expect(messages()).toHaveLength(0);
+  });
+
+  test("a public thread message is recorded", async () => {
+    const thread = { ...channel("c1"), type: ChannelType.PublicThread };
+    await onMessageCreate(ctx, message({ channelId: "t1", channel: thread }));
+    expect(messages()).toHaveLength(1);
+  });
+
   test("a thread message keeps its parent channel", async () => {
     await onMessageCreate(ctx, message({ channelId: "t1", channel: channel("c1") }));
     expect(messages()[0]).toMatchObject({ channelId: "t1", parentChannelId: "c1" });
@@ -217,6 +229,12 @@ describe("reactions", () => {
   test("a reaction in a thread under an excluded channel writes nothing", async () => {
     setConfig(true, "c1");
     await onReactionAdd(ctx, reaction(message({ channelId: "t1", channel: channel("c1") })), user("u2"));
+    expect(reactions()).toHaveLength(0);
+  });
+
+  test("a reaction in a private thread writes nothing", async () => {
+    const thread = { ...channel("c1"), type: ChannelType.PrivateThread };
+    await onReactionAdd(ctx, reaction(message({ channelId: "t1", channel: thread })), user("u2"));
     expect(reactions()).toHaveLength(0);
   });
 

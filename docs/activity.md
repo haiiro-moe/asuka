@@ -11,7 +11,7 @@ their `access` field, and the web pages with `minRole`.
 
 | Tier | Who | What it sees |
 |---|---|---|
-| everyone | every signed-in member | their own and the server's stats, with names ([queries-user.md](activity/queries-user.md)) |
+| everyone | every signed-in member | server-wide stats, with names; the personal numbers are in the Wrapped and `/profile` ([queries-user.md](activity/queries-user.md)) |
 | president | the elected president (admins too) | numbers only: never a name, an id or a list of people, and no count of one or two members ([queries-president.md](activity/queries-president.md)) |
 | admin | admins | every view with names, the relationship web, drift, moderation and the controls for the backfill and the Wrapped ([queries-admin.md](activity/queries-admin.md)) |
 
@@ -37,7 +37,22 @@ Raw event tables, one row per event (tables and columns in [foundation.md](activ
 
 **No message content is stored.** The text is read to take its length, its emoji and the domains it
 links to, then dropped. Bots are never recorded as actors. Events from other guilds, and DMs, are
-ignored. Capture is gated on `guild_config.activityEnabled`; see [capture.md](activity/capture.md).
+ignored, and so are private threads. Capture is gated on `guild_config.activityEnabled`, which is **off
+by default** (and was turned off on existing installs by migration 0023); see
+[capture.md](activity/capture.md).
+
+## First run
+
+Recording starts off, so nothing is captured before an admin has decided what to leave out:
+
+1. **Set the excluded channels first** (settings tab): staff channels and any private channels the
+   members would not expect to be counted. Private threads are always skipped.
+2. **Then turn recording on** (`activityEnabled`, same tab). Live capture starts from that moment.
+3. **Then run the backfill** (data tab) to read the history from before that moment.
+
+The backfill is **not** gated on `activityEnabled`: an admin can start it while recording is off,
+and it still applies the exclusion list and skips private threads. Run it after step 1 so excluded
+channels are never read.
 
 ## Channel exclusion
 

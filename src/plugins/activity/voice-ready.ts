@@ -69,3 +69,21 @@ export function voiceReadiness(now: number = nowSec()): VoiceReadiness {
 export function voiceReady(now: number = nowSec()): boolean {
   return voiceReadiness(now).ready;
 }
+
+/**
+ * Voice readiness for a Wrapped year: judged at the year's last second, or at
+ * `now` while the year is still running, whichever is earlier.
+ *
+ * Processing a year after it ended must not show voice that only became
+ * ready later: a log that started in mid-November 2026 is ready on
+ * 1 Feb 2027, but the 2026 Wrapped holds just six weeks of it and stays
+ * without voice.
+ *
+ * @param year - The UTC calendar year.
+ * @param now - Current time in unix seconds. Defaults to the current time.
+ * @returns {@link voiceReadiness} at `min(now, last second of the year)`.
+ */
+export function voiceReadinessForYear(year: number, now: number = nowSec()): VoiceReadiness {
+  const lastSecond = Date.UTC(year + 1, 0, 1) / 1000 - 1;
+  return voiceReadiness(Math.min(now, lastSecond));
+}

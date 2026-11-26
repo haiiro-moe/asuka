@@ -80,8 +80,8 @@ export const guildConfig = sqliteTable("guild_config", {
     .default(sql`'["youtube"]'`),
 
   // Activity analytics (see docs/activity/foundation.md)
-  /** 1 = record activity facts, 0 = record nothing. */
-  activityEnabled: integer("activity_enabled").notNull().default(1),
+  /** 1 = record activity facts, 0 = record nothing (the default: off until an admin turns it on). */
+  activityEnabled: integer("activity_enabled").notNull().default(0),
   /** Comma-separated channel ids that are never recorded, backfilled or queried. */
   activityExcludedChannelIds: text("activity_excluded_channel_ids").notNull().default(""),
 
@@ -615,6 +615,8 @@ export const activityMentions = sqliteTable(
   (t) => [
     uniqueIndex("activity_mentions_message_to_uq").on(t.messageId, t.toUserId),
     index("activity_mentions_ts_idx").on(t.ts),
+    // A member's own mentions (the user-tier sharing and awards views).
+    index("activity_mentions_from_ts_idx").on(t.fromUserId, t.ts),
   ],
 );
 
@@ -650,6 +652,8 @@ export const activityEmoji = sqliteTable(
   (t) => [
     uniqueIndex("activity_emoji_message_emoji_uq").on(t.messageId, t.emoji),
     index("activity_emoji_emoji_ts_idx").on(t.emoji, t.ts),
+    // A member's own emoji use (the user-tier emoji views and Wrapped).
+    index("activity_emoji_user_ts_idx").on(t.userId, t.ts),
   ],
 );
 
@@ -690,6 +694,8 @@ export const activityReactions = sqliteTable(
       t.emoji,
     ),
     index("activity_reactions_added_idx").on(t.addedAt),
+    // A member's own reactions (the user-tier reacted view, `/wrapped me`).
+    index("activity_reactions_user_added_idx").on(t.userId, t.addedAt),
   ],
 );
 
@@ -717,6 +723,8 @@ export const activityVoice = sqliteTable(
   (t) => [
     index("activity_voice_user_started_idx").on(t.userId, t.startedAt),
     index("activity_voice_channel_started_idx").on(t.channelId, t.startedAt),
+    // The open segments: at most one per member, looked up on every voice event.
+    index("activity_voice_open_user_idx").on(t.userId).where(sql`${t.endedAt} IS NULL`),
   ],
 );
 
@@ -789,6 +797,13 @@ export const activityWrappedRuns = sqliteTable("activity_wrapped_runs", {
   sent: integer("sent").notNull().default(0),
   /** DMs that could not be delivered. */
   failed: integer("failed").notNull().default(0),
+  /** Members whose snapshot could not be built; processing carried on without them. */
+  buildFailed: integer("build_failed").notNull().default(0),
+  /**
+   * What went wrong, for the dashboard: the first member whose snapshot failed,
+   * a member-list fallback, or why a step stopped. Null when nothing did.
+   */
+  error: text("error"),
   /** User id of the admin who started the run. */
   startedBy: text("started_by").notNull(),
   /**

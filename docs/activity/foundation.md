@@ -56,10 +56,10 @@ All are defined in `src/db/schema.ts` and created by migration `0016`. Migration
 | Table | Unique | Indexes |
 |---|---|---|
 | `activity_messages` | `message_id` | `ts`; (`user_id`, `ts`); `channel_id` |
-| `activity_mentions` | (`message_id`, `to_user_id`) | `ts` |
-| `activity_emoji` | (`message_id`, `emoji`) | (`emoji`, `ts`) |
-| `activity_reactions` | (`message_id`, `user_id`, `emoji`) | `added_at` |
-| `activity_voice` | | (`user_id`, `started_at`); (`channel_id`, `started_at`) |
+| `activity_mentions` | (`message_id`, `to_user_id`) | `ts`; (`from_user_id`, `ts`) |
+| `activity_emoji` | (`message_id`, `emoji`) | (`emoji`, `ts`); (`user_id`, `ts`) |
+| `activity_reactions` | (`message_id`, `user_id`, `emoji`) | `added_at`; (`user_id`, `added_at`) |
+| `activity_voice` | | (`user_id`, `started_at`); (`channel_id`, `started_at`); `user_id` where `ended_at IS NULL` (partial, the open segments) |
 | `activity_backfill` | `channel_id` (primary key) | |
 | `activity_wrapped_links` | (`user_id`, `year`, `owner_user_id`) (primary key); `token` | |
 | `activity_wrapped_optins` | `user_id` (primary key) | |
@@ -105,7 +105,7 @@ Two columns on the singleton `guild_config` row, both editable from the dashboar
 
 | Column | Type | Default | Meaning |
 |---|---|---|---|
-| `activityEnabled` | integer, 1 or 0 | `1` | Whether activity is recorded at all. |
+| `activityEnabled` | integer, 1 or 0 | `0` | Whether activity is recorded at all. Off until an admin turns it on; migration 0023 also set existing installs to 0. |
 | `activityExcludedChannelIds` | text | `""` | Comma-separated channel ids that are excluded. |
 
 Read them with `getConfig()` inside a handler, never at module top level: plugin modules are
@@ -350,7 +350,10 @@ src/plugins/activity/
   emoji.ts              parseEmoji: the emoji in a message and their keys
   time.ts               Period, weekdayHour, lastDays, termPeriod, parsePeriodParam, QUIET_DAYS
   privacy.ts            MIN_GROUP, hideSmall, mergeSmallGroups
-  exclusion.ts          excludedChannelIds, isExcluded, notExcluded
+  exclusion.ts          excludedChannelIds, isExcluded, notExcluded, isPrivateThread
+  queries/voice-overlap.ts  VoiceSpan, sharedVoiceSeconds, voicePairs, voiceSpansIn,
+                        memberVoiceOverlaps: the one voice co-presence sweep used by the admin
+                        relations, the president member web and both Wrapped snapshots
   voice-ready.ts        VOICE_MIN_WHOLE_MONTHS, voiceReadyAtFor, voiceReadiness, voiceReady
   facts.ts              RawMessage, MessageFacts, toRawMessage, extractMessageFacts
   record.ts             the write API: recordMessage, reactions, voice segments, membership,

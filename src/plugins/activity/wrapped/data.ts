@@ -13,7 +13,6 @@
  * @packageDocumentation
  */
 import { and, asc, count, desc, eq, gt, gte, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import type { Period } from "../time.ts";
@@ -22,7 +21,8 @@ import { clubFor, clubYearStats, presidencyFor, presidencyTermsIn, yearPeriod } 
 import type { ClubYearStats, TermInYear } from "./extras.ts";
 import { titleAwards, titlesFor } from "./titles.ts";
 import type { TitleAward } from "./titles.ts";
-import { voiceReadiness } from "../voice-ready.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
+import { memberVoiceOverlaps } from "../queries/voice-overlap.ts";
 
 /** How many emoji a snapshot lists. */
 const TOP_EMOJI = 3;
@@ -59,7 +59,7 @@ export interface WrappedShared {
   /** {@link titleAwards} for the year. */
   awards: TitleAward[];
   /**
-   * Whether voice figures may be shown (`voiceReadiness().ready`, checked once
+   * Whether voice figures may be shown (`voiceReadinessForYear(year).ready`, checked once
    * per run). When false every voice-derived figure is left out.
    */
   voiceReady: boolean;
@@ -70,12 +70,77 @@ export interface WrappedShared {
  *
  * @param year - The UTC calendar year.
  * @param voiceReady - Whether voice figures may be shown; a run checks
- *   `voiceReadiness()` once and passes it. Left out, it is checked here.
+ *   `voiceReadinessForYear(year)` once and passes it. Left out, it is checked
+ *   here, at the year's last second when the year is over.
  */
-export function wrappedShared(year: number, voiceReady: boolean = voiceReadiness().ready): WrappedShared {
+export function wrappedShared(year: number, voiceReady: boolean = voiceReadinessForYear(year).ready): WrappedShared {
   const clubs = clubYearStats(year, voiceReady);
   const terms = presidencyTermsIn(year);
   return { clubs, terms, awards: titleAwards(year, { clubs, terms, voiceReady }), voiceReady };
+}
+
+/** How long a memoised {@link WrappedShared} is reused, in milliseconds (10 minutes). */
+export const WRAPPED_SHARED_TTL_MS = 10 * 60 * 1000;
+
+/** The memo behind {@link sharedFor}, keyed by `year:voiceReady`. */
+const sharedMemo = new Map<string, { at: number; value: WrappedShared }>();
+
+/**
+ * The year aggregates, memoised: built at most once per year and voice
+ * readiness until a run starts ({@link clearWrappedSharedMemo}) or
+ * {@link WRAPPED_SHARED_TTL_MS} passes. A run stores the aggregates it built
+ * ({@link rememberWrappedShared}), so the on-demand paths (`/wrapped me`, the
+ * admin's open link) reuse them instead of spending seconds per member.
+ *
+ * @param year - The UTC calendar year.
+ * @param voiceReady - Whether voice figures may be shown.
+ * @returns The aggregates; the same object while the memo holds.
+ */
+export function sharedFor(year: number, voiceReady: boolean): WrappedShared {
+  const key = `${year}:${voiceReady}`;
+  const hit = sharedMemo.get(key);
+  if (hit && Date.now() - hit.at < WRAPPED_SHARED_TTL_MS) return hit.value;
+  return rememberWrappedShared(year, wrappedShared(year, voiceReady));
+}
+
+/**
+ * Store aggregates a run or preview has just built, for {@link sharedFor}.
+ *
+ * @param year - The year they are for.
+ * @param shared - The aggregates.
+ * @returns `shared`.
+ */
+export function rememberWrappedShared(year: number, shared: WrappedShared): WrappedShared {
+  sharedMemo.set(`${year}:${shared.voiceReady}`, { at: Date.now(), value: shared });
+  return shared;
+}
+
+/** Drop every memoised {@link WrappedShared}. Called when a run starts or resumes. */
+export function clearWrappedSharedMemo(): void {
+  sharedMemo.clear();
+}
+
+/**
+ * Whether a member has anything to show for a year: a message or a live
+ * reaction outside the excluded channels, or (once voice is ready) voice time.
+ * Cheap: two indexed counts and at most one voice sum, and no year aggregate.
+ *
+ * @param userId - The member.
+ * @param year - The UTC calendar year.
+ * @param voiceReady - Whether voice time counts.
+ * @returns True when {@link buildWrapped} would return a snapshot.
+ */
+export function memberHasActivity(userId: string, year: number, voiceReady: boolean): boolean {
+  const { from, to } = yearBounds(year);
+  const m = schema.activityMessages;
+  const messages =
+    db
+      .select({ n: count() })
+      .from(m)
+      .where(and(eq(m.userId, userId), gte(m.ts, from), lt(m.ts, to), notExcluded(m.channelId, m.parentChannelId)))
+      .get()?.n ?? 0;
+  if (messages > 0 || reactionCount(userId, from, to) > 0) return true;
+  return voiceReady && voiceSecondsOf(userId, from, to) > 0;
 }
 
 /**
@@ -168,13 +233,14 @@ export function leftMemberIds(): Set<string> {
  * left out; `voiceReady` records which applied.
  *
  * @param shared - The year aggregates, when the caller already has them (a run).
- *   Left out, they are computed here (which checks voice readiness once).
+ *   Left out, the memoised ones are used ({@link sharedFor}, which checks voice
+ *   readiness for the year once and builds them only when the memo is empty).
  * @returns The snapshot, or null when the member has no message, reaction or
  *   (counted) voice time that year.
  */
 export function buildWrapped(userId: string, year: number, shared?: WrappedShared): WrappedData | null {
   const { from, to } = yearBounds(year);
-  const agg = shared ?? wrappedShared(year);
+  const agg = shared ?? sharedFor(year, voiceReadinessForYear(year).ready);
   const voiceReady = agg.voiceReady;
   const m = schema.activityMessages;
 
@@ -230,7 +296,7 @@ export function buildWrapped(userId: string, year: number, shared?: WrappedShare
   for (const row of replies) bump(row.toUserId!, row.n);
   for (const row of mentionCounts(userId, from, to)) bump(row.toUserId, row.n);
   if (voiceReady) {
-    for (const row of voiceOverlaps(userId, from, to)) bump(row.userId, row.seconds / VOICE_OVERLAP_SECONDS_PER_POINT);
+    for (const row of memberVoiceOverlaps(userId, { from, to })) bump(row.userId, row.seconds / VOICE_OVERLAP_SECONDS_PER_POINT);
   }
   const soulmateId = pickTop(weights);
 
@@ -322,31 +388,6 @@ function mentionCounts(userId: string, from: number, to: number): { toUserId: st
     )
     .groupBy(mt.toUserId)
     .all();
-}
-
-/**
- * Seconds the member spent in the same voice channel as each other member,
- * clipped to `[from, to)`, outside excluded channels.
- */
-function voiceOverlaps(userId: string, from: number, to: number): { userId: string; seconds: number }[] {
-  const v = schema.activityVoice;
-  const o = alias(schema.activityVoice, "other_voice");
-  const vEnd = sql`coalesce(${v.endedAt}, ${v.lastSeenAt})`;
-  const oEnd = sql`coalesce(${o.endedAt}, ${o.lastSeenAt})`;
-  const rows = db
-    .select({
-      userId: o.userId,
-      seconds: sql<number>`sum(max(0, min(${vEnd}, ${oEnd}, ${to}) - max(${v.startedAt}, ${o.startedAt}, ${from})))`,
-    })
-    .from(v)
-    .innerJoin(
-      o,
-      and(eq(o.channelId, v.channelId), ne(o.userId, v.userId), sql`${o.startedAt} < ${vEnd}`, sql`${oEnd} > ${v.startedAt}`),
-    )
-    .where(and(eq(v.userId, userId), lt(v.startedAt, to), gt(vEnd, from), notExcluded(v.channelId)))
-    .groupBy(o.userId)
-    .all();
-  return rows.map((row) => ({ userId: row.userId, seconds: Number(row.seconds) }));
 }
 
 /** The member's top emoji in `[from, to)`: text use and reactions merged, at most {@link TOP_EMOJI}. */

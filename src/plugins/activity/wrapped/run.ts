@@ -22,7 +22,9 @@
  *    send step calls it when `announce` is on; an admin can also call it alone.
  *
  * Voice readiness (`voice-ready.ts`) is checked once when processing starts
- * (or resumes) and passed down, so every snapshot of a run agrees on it.
+ * (or resumes), at the year's last second when the year is over
+ * (`voiceReadinessForYear`), and passed down, so every snapshot of a run
+ * agrees on it.
  *
  * Counters are persisted after every member so the dashboard can poll them. A
  * processing or sending run not updated for 120 seconds (the bot restarted,
@@ -39,12 +41,12 @@ import { renderBotMessage } from "../../../core/messages.ts";
 import type { BotContext } from "../../../core/plugin.ts";
 import { nowSec } from "../../../core/util.ts";
 import { db, getConfig, schema } from "../../../db/index.ts";
-import type { WrappedRunStatus } from "../types/wrapped.ts";
+import type { WrappedResendResult, WrappedRunStatus } from "../types/wrapped.ts";
 import { withWrappedBanner } from "./banner.ts";
-import { voiceReadiness } from "../voice-ready.ts";
-import { activeMemberIds, buildWrapped, leftMemberIds, wrappedShared } from "./data.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
+import { activeMemberIds, buildWrapped, clearWrappedSharedMemo, leftMemberIds, rememberWrappedShared, wrappedShared } from "./data.ts";
 import type { WrappedShared } from "./data.ts";
-import { sendWrappedDm } from "./dm.ts";
+import { sendWrappedDmDetailed } from "./dm.ts";
 import { getWrappedLink, linkUrl, upsertWrappedLink } from "./links.ts";
 import { isOptedIn, optedInCount } from "./optin.ts";
 import {
@@ -134,6 +136,8 @@ export function getWrappedStatus(): WrappedRunStatus {
       finishedAt: null,
       announce: false,
       announcedAt: null,
+      buildFailed: 0,
+      error: null,
     };
   }
   return {
@@ -150,6 +154,8 @@ export function getWrappedStatus(): WrappedRunStatus {
     finishedAt: row.finishedAt,
     announce: row.announce === 1,
     announcedAt: getServerRow(row.year)?.announcedAt ?? null,
+    buildFailed: row.buildFailed,
+    error: row.error,
   };
 }
 
@@ -198,8 +204,9 @@ export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy
       .run();
   }
 
+  clearWrappedSharedMemo();
   // Voice readiness is checked once per processing step and passed down.
-  const voiceReady = voiceReadiness().ready;
+  const voiceReady = voiceReadinessForYear(opts.year).ready;
   const members = activeMemberIds(opts.year, voiceReady);
   const now = nowSec();
   const id = db
@@ -215,7 +222,7 @@ export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy
     })
     .returning({ id: schema.activityWrappedRuns.id })
     .get().id;
-  launch({ id, work: () => processWork(ctx, { id, year: opts.year, startedBy: opts.startedBy, members, voiceReady }) });
+  launch({ id, work: () => processWork(ctx, { id, year: opts.year, startedBy: opts.startedBy, members, voiceReady, fresh: true }) });
   return "started";
 }
 
@@ -252,6 +259,7 @@ export function startWrappedSend(
     announce: announce ? 1 : 0,
     sent: linkCount(row.year, "sent"),
     failed: 0,
+    error: null,
     finishedAt: null,
   });
   launch({ id: row.id, work: () => sendWork(ctx, { id: row.id, year: row.year, startedBy: opts.startedBy, announce }) });
@@ -277,9 +285,10 @@ export function resumeWrappedRun(ctx: BotContext): "resumed" | "nothing-to-resum
 
   updateRun(row.id, {});
   if (row.status === "processing") {
-    const voiceReady = voiceReadiness().ready;
+    clearWrappedSharedMemo();
+    const voiceReady = voiceReadinessForYear(row.year).ready;
     const members = activeMemberIds(row.year, voiceReady);
-    launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members, voiceReady }) });
+    launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members, voiceReady, fresh: false }) });
   } else {
     const announce = row.announce === 1;
     launch({ id: row.id, work: () => sendWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, announce }) });
@@ -354,20 +363,59 @@ export async function postAnnouncement(
   }
 }
 
+/** Links whose DM is being sent right now, as `userId:year`: by a send step or a resend. */
+const inFlight = new Set<string>();
+
+/** The {@link inFlight} key of a link. */
+function flightKey(userId: string, year: number): string {
+  return `${userId}:${year}`;
+}
+
+/** True while a real send step for `year` is running and not stale. */
+function sendRunning(year: number): boolean {
+  const r = schema.activityWrappedRuns;
+  const row = db.select().from(r).where(and(eq(r.year, year), eq(r.kind, "real"))).orderBy(desc(r.id)).limit(1).get();
+  return !!row && row.status === "sending" && !isStale(row);
+}
+
 /**
- * DM one member their link again, whether or not they opted in: an admin
- * asked for this member. The link's DM status and the latest run of that
- * year's counters are updated.
+ * DM one member their link again, because an admin asked for that member
+ * (the resend control on the failed-DM list).
+ *
+ * Only a link that has not been delivered may be resent: `failed`, or
+ * `pending`/`skipped` while no DM to it is in flight. A member's own
+ * `/wrapped me` is the way back to a link that was already delivered, and the
+ * admin's `open link` still shows any link.
+ *
+ * On success the run's `sent` counter is set to the number of sent links of
+ * the year (so a link is never counted twice) and `failed` drops by one when
+ * the link had failed.
  *
  * @param ctx - Bot context.
  * @param userId - The member.
  * @param year - The year of the link.
- * @returns `sent`, `failed`, or `no-link` when the member has no link that year.
+ * @returns `sent` or `failed` after an attempt; without one: `no-link` when the
+ *   member has no link that year, `left` when they have left the guild,
+ *   `not-opted-in` when they have not opted in to the DM, `already-sent` when
+ *   the link was delivered, `sending` while a send step runs for the year or
+ *   this link's DM is in flight.
  */
-export async function resendWrappedDm(ctx: BotContext, userId: string, year: number): Promise<"sent" | "failed" | "no-link"> {
+export async function resendWrappedDm(ctx: BotContext, userId: string, year: number): Promise<WrappedResendResult> {
   const link = getWrappedLink(userId, year);
   if (!link) return "no-link";
-  const result = await sendWrappedDm(ctx.client, userId, linkUrl(link.token), year);
+  if (leftMemberIds().has(userId)) return "left";
+  if (!isOptedIn(userId)) return "not-opted-in";
+  if (link.dmStatus === "sent") return "already-sent";
+  const key = flightKey(userId, year);
+  if (inFlight.has(key) || sendRunning(year)) return "sending";
+
+  inFlight.add(key);
+  let result: "sent" | "failed";
+  try {
+    result = (await deliverDm(ctx, userId, link.token, year)).status;
+  } finally {
+    inFlight.delete(key);
+  }
   setDmStatus(userId, year, result);
 
   const run = db
@@ -382,7 +430,7 @@ export async function resendWrappedDm(ctx: BotContext, userId: string, year: num
     const wasFailed = link.dmStatus === "failed";
     const set =
       result === "sent"
-        ? { sent: sql`${r.sent} + 1`, failed: wasFailed ? sql`max(0, ${r.failed} - 1)` : sql`${r.failed}` }
+        ? { sent: linkCount(year, "sent"), failed: wasFailed ? sql`max(0, ${r.failed} - 1)` : sql`${r.failed}` }
         : { failed: wasFailed ? sql`${r.failed}` : sql`${r.failed} + 1` };
     db.update(r).set(set).where(eq(r.id, run.id)).run();
   }
@@ -403,7 +451,7 @@ function launch(job: { id: number; work: () => Promise<void> }): void {
 /** Mark a run failed and report it to the mod-log channel. Never throws. */
 async function failRun(ctx: BotContext, id: number, err: unknown): Promise<void> {
   console.error(`[wrapped] run ${id} failed:`, err);
-  updateRun(id, { status: "failed", finishedAt: nowSec() });
+  updateRun(id, { status: "failed", finishedAt: nowSec(), error: errorText(err) });
   const row = runRow(id);
   await postModLog(ctx, "wrapped.run-failed", { processed: row?.processed ?? 0, total: row?.total ?? 0 });
 }
@@ -411,10 +459,19 @@ async function failRun(ctx: BotContext, id: number, err: unknown): Promise<void>
 /** The processing step: members, server snapshot, `processed`, the starter's DM. Never throws. */
 async function processWork(
   ctx: BotContext,
-  job: { id: number; year: number; startedBy: string; members: string[]; voiceReady: boolean },
+  job: { id: number; year: number; startedBy: string; members: string[]; voiceReady: boolean; fresh: boolean },
 ): Promise<void> {
   try {
-    const shared = await processMembers(job);
+    const live = await liveMemberIds(ctx);
+    let members = job.members;
+    if (live) {
+      members = members.filter((userId) => live.has(userId));
+      // A fresh run's total is the members still in the guild; a resumed one never shrinks.
+      if (job.fresh) updateRun(job.id, { total: members.length });
+    } else {
+      noteError(job.id, MEMBER_FETCH_FALLBACK);
+    }
+    const shared = await processMembers({ ...job, members });
     await storeServerSnapshot(ctx, job.year, shared);
     updateRun(job.id, { status: "processed", finishedAt: nowSec() });
   } catch (err) {
@@ -471,17 +528,35 @@ function processedByRun(id: number, year: number): Set<string> {
  * progress after each. `processed` counts the links this run has processed;
  * `total` is that plus the members still to do, and never shrinks.
  *
+ * A link whose DM was already `sent` keeps its snapshot (a delivered story
+ * never changes) and is only stamped. A member whose snapshot throws is
+ * counted in `buildFailed`, the first such error is kept in `error`, and
+ * processing carries on with the next member.
+ *
  * @returns The year aggregates, computed once for every member.
  */
 async function processMembers(job: { id: number; year: number; members: string[]; voiceReady: boolean }): Promise<WrappedShared> {
-  const shared = wrappedShared(job.year, job.voiceReady);
+  const shared = rememberWrappedShared(job.year, wrappedShared(job.year, job.voiceReady));
   const done = processedByRun(job.id, job.year);
   const todo = job.members.filter((userId) => !done.has(userId));
   let processed = done.size;
   updateRun(job.id, { processed, total: Math.max(runRow(job.id)?.total ?? 0, processed + todo.length) });
   for (const userId of todo) {
-    const data = buildWrapped(userId, job.year, shared);
-    if (data) upsertWrappedLink(userId, job.year, data, job.id);
+    const existing = getWrappedLink(userId, job.year);
+    if (existing?.dmStatus === "sent") {
+      // A delivered story never changes: only mark it as processed by this run.
+      markProcessed(userId, job.year, job.id);
+    } else {
+      try {
+        const data = buildWrapped(userId, job.year, shared);
+        if (data) upsertWrappedLink(userId, job.year, data, job.id);
+      } catch (err) {
+        console.error(`[wrapped] snapshot of ${userId} failed:`, err);
+        const r = schema.activityWrappedRuns;
+        updateRun(job.id, { buildFailed: sql`${r.buildFailed} + 1` });
+        noteError(job.id, `a snapshot failed (${userId}): ${errorText(err)}`);
+      }
+    }
     processed += 1;
     updateRun(job.id, { processed });
     // Let the event loop breathe (gateway, web requests) between members.
@@ -492,9 +567,12 @@ async function processMembers(job: { id: number; year: number; members: string[]
 
 /**
  * Build and store the server Wrapped once per processing step, with names from
- * the guild cache. The year's token is kept.
+ * the guild cache. The year's token is kept. A year already announced keeps
+ * the snapshot it was announced with.
  */
 async function storeServerSnapshot(ctx: BotContext, year: number, shared: WrappedShared): Promise<void> {
+  // Once announced, the public story never changes.
+  if (getServerRow(year)?.announcedAt != null) return;
   const deps = await serverWrappedDeps(ctx);
   const data = buildServerWrapped(year, { ...deps, clubs: shared.clubs, terms: shared.terms, voiceReady: shared.voiceReady });
   if (data) storeServerWrapped(year, data);
@@ -545,9 +623,31 @@ function resetForSending(year: number): void {
     .run();
 }
 
+/** A link's current DM status, read fresh. */
+function dmStatusOf(userId: string, year: number): RunLinkStatus | null {
+  const l = schema.activityWrappedLinks;
+  return (
+    db
+      .select({ dmStatus: l.dmStatus })
+      .from(l)
+      .where(and(eq(l.userId, userId), eq(l.year, year), eq(l.private, 0)))
+      .get()?.dmStatus ?? null
+  );
+}
+
 /**
  * DM every pending link of an opted-in member, one per `sendDelayMs`; mark the
  * pending links of the others skipped. Members who left are passed over.
+ *
+ * Circuit breaker: after {@link SEND_BREAKER_LIMIT} failures in a row that are
+ * not a refusal of one member (closed DMs and the like, `PER_MEMBER_DM_CODES`)
+ * the step throws, so the run ends `failed` with that error and every link
+ * not yet tried stays `pending` for the next send.
+ *
+ * Each link is read again right before its DM: one that is no longer
+ * `pending` (a resend delivered it meanwhile) or whose DM is in flight
+ * elsewhere is skipped. After each DM the run's `sent` counter is set to the
+ * number of sent links of the year, so no link is ever counted twice.
  */
 async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Promise<void> {
   const left = leftMemberIds();
@@ -565,8 +665,11 @@ async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Pr
     .all();
 
   let first = true;
+  let streak = 0;
   for (const link of pending) {
     if (left.has(link.userId)) continue;
+    const key = flightKey(link.userId, job.year);
+    if (inFlight.has(key) || dmStatusOf(link.userId, job.year) !== "pending") continue;
     if (!isOptedIn(link.userId)) {
       setDmStatus(link.userId, job.year, "skipped");
       updateRun(job.id, {});
@@ -574,15 +677,86 @@ async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Pr
     }
     if (!first) await sleep(wrappedRunTiming.sendDelayMs);
     first = false;
-    const result = await sendWrappedDm(ctx.client, link.userId, linkUrl(link.token), job.year);
-    setDmStatus(link.userId, job.year, result);
+    // The pause may have let a resend in: read the link once more.
+    if (inFlight.has(key) || dmStatusOf(link.userId, job.year) !== "pending") continue;
+    inFlight.add(key);
+    let outcome: DmOutcome;
+    try {
+      outcome = await deliverDm(ctx, link.userId, link.token, job.year);
+    } finally {
+      inFlight.delete(key);
+    }
+    setDmStatus(link.userId, job.year, outcome.status);
     const r = schema.activityWrappedRuns;
-    updateRun(job.id, result === "sent" ? { sent: sql`${r.sent} + 1` } : { failed: sql`${r.failed} + 1` });
+    updateRun(job.id, outcome.status === "sent" ? { sent: linkCount(job.year, "sent") } : { failed: sql`${r.failed} + 1` });
+    streak = outcome.status === "failed" && !outcome.perMember ? streak + 1 : 0;
+    if (outcome.status === "failed" && streak >= SEND_BREAKER_LIMIT) {
+      throw new Error(
+        `stopped after ${SEND_BREAKER_LIMIT} dms in a row failed with a discord or network error (last: ${outcome.message}); ` +
+          "the remaining links are still pending, send again to continue",
+      );
+    }
   }
 }
 
+/** Failures in a row (not per-member refusals) after which a send step stops. */
+export const SEND_BREAKER_LIMIT = 5;
+
+/** The run error when the live member list could not be fetched. */
+const MEMBER_FETCH_FALLBACK =
+  "the guild member list could not be fetched; members who left were taken from the membership table only";
+
+/**
+ * The ids of the locked guild's current members, fetched from Discord, so a
+ * member who left before capture started (and so has no `leave` row) gets no
+ * link and does not count. Never throws.
+ *
+ * @returns The ids, or null when the guild or its members cannot be fetched.
+ */
+async function liveMemberIds(ctx: BotContext): Promise<Set<string> | null> {
+  try {
+    const guild = ctx.client.guilds.cache.get(ctx.guildId) ?? (await ctx.client.guilds.fetch(ctx.guildId));
+    const members = await guild.members.fetch();
+    return new Set(members.keys());
+  } catch (err) {
+    console.error("[wrapped] member list fetch failed:", err);
+    return null;
+  }
+}
+
+/** Keep `message` as the run's error unless one is already stored. */
+function noteError(id: number, message: string): void {
+  const r = schema.activityWrappedRuns;
+  db.update(r).set({ error: message, updatedAt: nowSec() }).where(and(eq(r.id, id), isNull(r.error))).run();
+}
+
+/** An error's message, for the run status. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Stamp a link as processed by run `id` without touching its snapshot. */
+function markProcessed(userId: string, year: number, id: number): void {
+  const l = schema.activityWrappedLinks;
+  db.update(l)
+    .set({ processedRunId: id })
+    .where(and(eq(l.userId, userId), eq(l.year, year), eq(l.private, 0)))
+    .run();
+}
+
+/** A link's DM status. */
+type RunLinkStatus = "pending" | "sent" | "failed" | "skipped";
+
+/** What one DM attempt came to. */
+type DmOutcome = Awaited<ReturnType<typeof sendWrappedDmDetailed>>;
+
+/** DM a member their link, with the failure kind (see `sendWrappedDmDetailed`). */
+function deliverDm(ctx: BotContext, userId: string, token: string, year: number): Promise<DmOutcome> {
+  return sendWrappedDmDetailed(ctx.client, userId, linkUrl(token), year);
+}
+
 /** Set a link's DM status. */
-function setDmStatus(userId: string, year: number, dmStatus: "pending" | "sent" | "failed" | "skipped"): void {
+function setDmStatus(userId: string, year: number, dmStatus: RunLinkStatus): void {
   db.update(schema.activityWrappedLinks)
     .set({ dmStatus })
     .where(

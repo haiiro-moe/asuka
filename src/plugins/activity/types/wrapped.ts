@@ -231,6 +231,18 @@ export interface WrappedRunStatus {
   announce: boolean;
   /** When the server Wrapped of the run's year was announced, unix seconds; null when it has not been. */
   announcedAt: number | null;
+  /**
+   * Members whose snapshot could not be built; processing carried on without
+   * them and still ended `processed`. 0 when none (and when no run exists).
+   */
+  buildFailed?: number;
+  /**
+   * What went wrong in the latest step, for the dashboard: the first member
+   * whose snapshot failed, that the live member list could not be fetched (the
+   * membership table was used instead), or why a step stopped (the send's
+   * circuit breaker, say). Null when nothing did. A send step clears it.
+   */
+  error?: string | null;
 }
 
 /** `POST /api/activity/wrapped/run` (processing only). 202 when started, 409 otherwise. */
@@ -249,6 +261,19 @@ export interface WrappedSendResponse {
 export interface WrappedResumeResponse {
   result: "resumed" | "nothing-to-resume";
   status: WrappedRunStatus;
+}
+
+/**
+ * What `POST /api/activity/wrapped/resend/:userId` did. `sent` and `failed`
+ * (200) are the outcome of a DM attempt; the others (404 for `no-link`, 409
+ * otherwise) refused without sending: the member has no link, has left, has not
+ * opted in, was already sent the link, or a send is running for the year.
+ */
+export type WrappedResendResult = "sent" | "failed" | "no-link" | "left" | "not-opted-in" | "already-sent" | "sending";
+
+/** `POST /api/activity/wrapped/resend/:userId`. */
+export interface WrappedResendResponse {
+  result: WrappedResendResult;
 }
 
 /** `POST /api/activity/wrapped/announce`. 200 when posted, 409 otherwise. */

@@ -170,6 +170,12 @@ count the same thing. Pairs are symmetric: A to B and B to A are summed into one
 smaller id. Self replies and self mentions are left out; bots never appear, since they are never
 recorded. The 50 heaviest pairs come back (`RELATIONS_LIMIT`).
 
+The voice weights come from one sweep over the period's segments (`queries/voice-overlap.ts`,
+shared with the president member web and the Wrapped), not a self-join of `activity_voice`: each
+channel's spans are sorted by start and only the spans still running are compared, so 20k
+segments take well under the 2 s the performance test allows. An open segment runs to its
+`lastSeenAt`.
+
 `voice` returns `[]` until voice is ready (two whole months of voice data, see the rules above),
 including when nothing has been recorded yet. `replies` and `mentions` do not wait.
 

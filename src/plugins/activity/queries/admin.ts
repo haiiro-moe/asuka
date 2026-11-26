@@ -14,6 +14,7 @@ import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import { QUIET_DAYS } from "../time.ts";
 import { voiceReady } from "../voice-ready.ts";
+import { voicePairs, voiceSpansIn } from "./voice-overlap.ts";
 import type { Period } from "../time.ts";
 import type {
   ActionCount,
@@ -599,32 +600,10 @@ function mentionEdges(p: Period, userId?: string): Edge[] {
  * Voice co-presence in the period: for each pair, the seconds their segments
  * in the same channel overlapped, clipped to the period. An open segment runs
  * to its `lastSeenAt`. Each pair comes back once, with `from` the smaller id.
+ * One sweep over the period's segments (`voice-overlap.ts`), not a self-join.
  */
 function voiceEdges(p: Period): Edge[] {
-  const a = alias(activityVoice, "a");
-  const b = alias(activityVoice, "b");
-  const aEnd = sql`coalesce(${a.endedAt}, ${a.lastSeenAt})`;
-  const bEnd = sql`coalesce(${b.endedAt}, ${b.lastSeenAt})`;
-  const overlap = sql<number>`sum(min(${aEnd}, ${bEnd}, ${p.to}) - max(${a.startedAt}, ${b.startedAt}, ${p.from}))`;
-  return db
-    .select({ from: a.userId, to: b.userId, weight: overlap })
-    .from(a)
-    .innerJoin(
-      b,
-      and(eq(a.channelId, b.channelId), lt(a.userId, b.userId), lt(a.startedAt, bEnd), lt(b.startedAt, aEnd)),
-    )
-    .where(
-      and(
-        lt(a.startedAt, p.to),
-        gt(aEnd, p.from),
-        lt(b.startedAt, p.to),
-        gt(bEnd, p.from),
-        notExcluded(a.channelId),
-      ),
-    )
-    .groupBy(a.userId, b.userId)
-    .all()
-    .map((e) => ({ ...e, weight: Number(e.weight) }));
+  return voicePairs(voiceSpansIn(p)).map((pair) => ({ from: pair.a, to: pair.b, weight: pair.seconds }));
 }
 
 /**

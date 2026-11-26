@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, getConfig, initDb, schema } from "../../db/index.ts";
 import { plugins } from "../index.ts";
 
@@ -347,12 +347,27 @@ test("activityMessages.messageId is unique", () => {
   expect(rows[0]).toMatchObject({ userId: "u1", source: "backfill" });
 });
 
-test('guild_config exposes activityEnabled=1 and activityExcludedChannelIds=""', () => {
+test('guild_config exposes activityEnabled=0 (off until configured) and activityExcludedChannelIds=""', () => {
   const config = getConfig();
-  expect(config.activityEnabled).toBe(1);
+  expect(config.activityEnabled).toBe(0);
   expect(config.activityExcludedChannelIds).toBe("");
 });
 
 test("the activity plugin is registered", () => {
   expect(plugins.some((p) => p.name === "activity")).toBe(true);
+});
+
+test("the per-member lookup indexes exist, the open-voice one partial", () => {
+  const rows = db.all<{ name: string; sql: string }>(
+    sql`SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE 'activity_%'`,
+  );
+  const byName = new Map(rows.map((r) => [r.name, r.sql]));
+  expect(byName.get("activity_emoji_user_ts_idx")).toContain("(`user_id`,`ts`)");
+  expect(byName.get("activity_reactions_user_added_idx")).toContain("(`user_id`,`added_at`)");
+  expect(byName.get("activity_mentions_from_ts_idx")).toContain("(`from_user_id`,`ts`)");
+  expect(byName.get("activity_voice_open_user_idx")).toContain("IS NULL");
+  const plan = db.all<{ detail: string }>(
+    sql`EXPLAIN QUERY PLAN SELECT id FROM activity_voice WHERE user_id = 'u1' AND ended_at IS NULL`,
+  );
+  expect(plan.map((p) => p.detail).join(" ")).toContain("activity_voice_open_user_idx");
 });

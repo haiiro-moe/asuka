@@ -8,6 +8,7 @@ import type {
   WrappedRunStartResponse,
   WrappedSendResponse,
   WrappedFailedList,
+  WrappedResendResponse,
   PreviewDiscardResponse,
   PreviewStartResponse,
   ServerWrappedResponse,
@@ -67,6 +68,30 @@ async function jsonBody(req: Request): Promise<Record<string, unknown> | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * The `cache-control` of a public Wrapped response.
+ *
+ * - A private preview is never stored anywhere (`no-store`): it expires and
+ *   is deleted.
+ * - A real story's JSON may be kept by the viewer's browser but is checked
+ *   again each time (`private, no-cache`), since names are resolved on open.
+ * - A real card may be reused by the viewer's browser for five minutes
+ *   (`private, max-age=300`). Shared caches never keep any of them.
+ *
+ * @param preview - True for a private preview link or server story.
+ * @param kind - The JSON story or the PNG card.
+ * @returns The header value.
+ */
+export function wrappedCacheControl(preview: boolean, kind: "json" | "card"): string {
+  if (preview) return "no-store";
+  return kind === "card" ? "private, max-age=300" : "private, no-cache";
+}
+
+/** A JSON response with the public Wrapped cache header. */
+function publicJson(body: unknown, preview: boolean): Response {
+  return Response.json(body, { headers: { "cache-control": wrappedCacheControl(preview, "json") } });
 }
 
 /** A member's display name and PNG avatar URL, from the guild or the user cache; nulls when unknown. */
@@ -200,9 +225,10 @@ const resumeRun: ApiRoute = {
 
 /**
  * `POST /api/activity/wrapped/resend/:userId?year=` (admin): DM one member their
- * link, even if they have not opted in, because an admin asked for that member.
- * Year defaults to the latest run's. Responds `{ result: "sent" | "failed" }`,
- * or 404 `{ result: "no-link" }`.
+ * link again (a failed or not yet sent link of an opted-in member who is still
+ * here). Year defaults to the latest run's. Responds a
+ * {@link WrappedResendResponse}: 200 `sent` or `failed`, 404 `no-link`, 409
+ * `left`, `not-opted-in`, `already-sent` or `sending`.
  */
 const resend: ApiRoute = {
   method: "POST",
@@ -212,7 +238,9 @@ const resend: ApiRoute = {
     const year = yearParam(req);
     if (year === null) return error(400, "bad year");
     const result = await resendWrappedDm(ctx, ctx.params.userId!, year);
-    return Response.json({ result }, { status: result === "no-link" ? 404 : 200 });
+    const out: WrappedResendResponse = { result };
+    const status = result === "sent" || result === "failed" ? 200 : result === "no-link" ? 404 : 409;
+    return Response.json(out, { status });
   },
 };
 
@@ -325,7 +353,7 @@ const getByToken: ApiRoute = {
   async handle(_req, ctx) {
     const link = getLinkByToken(ctx.params.token ?? "");
     if (!link) return error(404, "not found");
-    return Response.json(await linkResponse(ctx, link.userId, link.data, link.preview));
+    return publicJson(await linkResponse(ctx, link.userId, link.data, link.preview), link.preview);
   },
 };
 
@@ -343,9 +371,9 @@ const getCard: ApiRoute = {
     if (!link) return error(404, "not found");
     const self = await memberInfo(ctx, link.userId);
     const png = await renderWrappedCardPng(link.data, self.name ?? "you", self.avatarUrl);
-    if (!png) return Response.json(await linkResponse(ctx, link.userId, link.data, link.preview));
+    if (!png) return publicJson(await linkResponse(ctx, link.userId, link.data, link.preview), link.preview);
     return new Response(new Uint8Array(png), {
-      headers: { "content-type": "image/png", "cache-control": "private, max-age=300" },
+      headers: { "content-type": "image/png", "cache-control": wrappedCacheControl(link.preview, "card") },
     });
   },
 };
@@ -384,7 +412,7 @@ const getServerByToken: ApiRoute = {
     const found = getServerWrappedByToken(ctx.params.token ?? "");
     if (!found) return error(404, "not found");
     const out: ServerWrappedResponse = { data: found.data, preview: found.preview, voiceReady: found.data.voiceReady === true };
-    return Response.json(out);
+    return publicJson(out, found.preview);
   },
 };
 
@@ -402,14 +430,11 @@ const getServerCard: ApiRoute = {
     if (!found) return error(404, "not found");
     const png = await renderWrappedServerCardPng(found.data);
     if (!png) {
-      return Response.json({
-        data: found.data,
-        preview: found.preview,
-        voiceReady: found.data.voiceReady === true,
-      } satisfies ServerWrappedResponse);
+      const out: ServerWrappedResponse = { data: found.data, preview: found.preview, voiceReady: found.data.voiceReady === true };
+      return publicJson(out, found.preview);
     }
     return new Response(new Uint8Array(png), {
-      headers: { "content-type": "image/png", "cache-control": "public, max-age=300" },
+      headers: { "content-type": "image/png", "cache-control": wrappedCacheControl(found.preview, "card") },
     });
   },
 };

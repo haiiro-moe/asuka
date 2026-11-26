@@ -18,8 +18,8 @@ The tables (`activity_wrapped_runs`, `activity_wrapped_links`, `activity_wrapped
   admin who started it. DMs go out only in the send step, the announcement only in the send step
   (when asked) or the announce step.
 - **DMs go only to members who opted in** (`/wrapped optin` or the sign-up button). Processing makes
-  a link for every member with activity, but the send step writes only to opted-in members. The one
-  exception is an admin resending to one named member (`POST .../resend/:userId`).
+  a link for every member with activity, but the send step writes only to opted-in members, and so
+  does an admin's resend (`POST .../resend/:userId`), which refuses a member who is not opted in.
 - **A link shows only its holder's snapshot.** It is reusable: opening it counts the open and
   never deletes it. An unknown, truncated or other member's token gets a 404 and no data.
 - **Naming on the server story**: only the best pair (only when both opted in), the best club's
@@ -70,11 +70,17 @@ src/core/images/components/wrapped-server-card.tsx   the server card (renderWrap
 
 ## Voice readiness
 
-`voiceReadiness()` (`voice-ready.ts`) says whether the voice log is old enough. Processing checks it
+`voiceReadiness(now)` (`voice-ready.ts`) says whether the voice log is old enough. Processing checks it
 **once** when it starts (or resumes) and passes the answer down through `wrappedShared(year,
 voiceReady)` and `buildServerWrapped(year, { voiceReady })`; the on-demand paths (`ensureWrappedLink`,
 the server-link route) check it once per request. Both snapshots store the answer as `voiceReady`,
 so a story never changes after it is sent, and the public responses repeat it at the top level.
+
+The Wrapped paths (processing, the private preview, `wrappedShared`, `buildServerWrapped`, the
+titles and club stats) ask `voiceReadinessForYear(year)`, which judges readiness at
+`min(now, the year's last second)`. Processing 2026 after 1 Feb 2027 therefore does not show
+voice when the log only became ready in 2027: a log that started on 15 Nov 2026 holds six weeks
+of 2026, not two whole months.
 
 While voice is **not** ready:
 
@@ -203,9 +209,16 @@ Statuses: `processing` -> `processed` -> `sending` -> `done`, plus `failed` and 
 1. **Process**, `startWrappedRun(ctx, { year, startedBy })`: returns `started` or `already-running`
    at once and works in the background. The member list is every member with activity that year
    whose latest membership change is not a leave (`activeMemberIds`, sorted; `total` is set before
-   returning). Each member's snapshot is built and their link upserted and stamped with the run id
-   (`processedRunId`); `processed` is saved after every member. Then the server snapshot is built
-   and stored. The run ends `processed` ("ready to send") and the starting admin gets the
+   returning). When the work starts, that list is intersected with the guild's live member list
+   (`guild.members.fetch()`), so a member who left before capture started (no `leave` row) gets no
+   link and does not count in `total` or the titles; when the fetch fails the run goes on with the
+   membership table alone and says so in `error`. Each member's snapshot is built and their link
+   upserted and stamped with the run id (`processedRunId`); `processed` is saved after every
+   member. A link whose DM was already `sent` keeps its snapshot (a delivered story never changes)
+   and is only stamped; unsent links are rebuilt. A member whose snapshot throws is counted in
+   `buildFailed` (the first error goes to `error`) and processing carries on, still ending
+   `processed`. Then the server snapshot is built and stored, unless the year was already
+   announced: an announced server story is never rebuilt. The run ends `processed` ("ready to send") and the starting admin gets the
    `wrapped.processed` DM with a button to `${PUBLIC_URL}/#/activity-admin`; when that DM fails the
    same card goes to the mod-log channel, and when that is unset too, nothing. That notice never
    fails the run. No member is written to and nothing is announced.
@@ -218,6 +231,10 @@ Statuses: `processing` -> `processed` -> `sending` -> `done`, plus `failed` and 
    (`wrappedRunTiming.sendDelayMs`), and becomes `sent` or `failed`; a pending link of a member who
    has not opted in becomes `skipped`; links already sent are never sent again; members who left
    are passed over. `sent` counts every sent link of the year, `failed` the failures of this send.
+   **Circuit breaker:** five failures in a row that are not a refusal of one member (closed DMs
+   50007, unknown user 10013, opening DMs too fast 40003: `PER_MEMBER_DM_CODES` in `dm.ts`) stop
+   the send; the run ends `failed` with the reason in `error`, and every link not yet tried stays
+   `pending`, so the next send continues. A send clears `error` when it starts.
    The run ends `done`; then, when `announce` is on, `postAnnouncement` runs; then
    `wrapped.run-finished` goes to the mod-log channel. `announce` is stored on the run for a resume.
 3. **Announce**, `postAnnouncement(ctx, year)`: posts `wrapped.announce` (banner and a link button to
@@ -228,7 +245,8 @@ Statuses: `processing` -> `processed` -> `sending` -> `done`, plus `failed` and 
    `done`, or there is no server snapshot; an admin preview alone does not count), `no-channel` (no
    announcement channel is set) or `failed` (the channel could not be reached or the post failed).
 
-`getWrappedStatus()` returns the newest run as a `WrappedRunStatus`, or `idle`. `skipped` and
+`getWrappedStatus()` returns the newest run as a `WrappedRunStatus` (with `buildFailed` and
+`error`), or `idle`. `skipped` and
 `optedIn` come from the links and opt-in tables, `announcedAt` from the year's server row. A
 `processing` or `sending` run not updated for more than 120 seconds, and not running in this
 process, reports `interrupted`.
@@ -241,8 +259,16 @@ stored `announce`; the announcement stays once per year. Starting a new processi
 latest is interrupted marks the old one `failed` first. A failure in either step ends the run
 `failed` and posts `wrapped.run-failed` to the mod-log channel.
 
-`resendWrappedDm(ctx, userId, year)` DMs one member again (opted in or not), updates the link and
-the latest run of that year's counters, and returns `sent`, `failed` or `no-link`.
+`resendWrappedDm(ctx, userId, year)` DMs one member again, for the resend control on the failed
+list. It refuses without sending: `no-link` (no link that year), `left` (the member left),
+`not-opted-in`, `already-sent` (the link was delivered; the member's own `/wrapped me` is the way
+back to it, and the admin's `open link` still works) and `sending` (a send step runs for the year,
+or this link's DM is in flight). So only a `failed` link, or one not yet sent, is resent. On
+success the run's `sent` counter becomes the number of sent links of the year, so a link is never
+counted twice.
+
+The send step reads each link again right before its DM and skips one that is no longer `pending`
+or whose DM is in flight elsewhere (an in-process set shared with the resend).
 
 ## Sign-ups
 
@@ -305,6 +331,13 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 `send`, `announce`, `signups`, `resume`, `preview`, `preview-discard`) defer first (ephemeral) and answer through `editReply`, so the
 3-second interaction deadline is never missed; `status` replies directly.
 
+`me` for a member without a link counts their own messages and reactions first (indexed, no year
+aggregate) and answers `me-empty` at once when there are none. Otherwise it defers, then builds
+the snapshot. The year aggregates (`WrappedShared`: clubs, terms, titles) come from a memo,
+`sharedFor(year, voiceReady)` in `data.ts`: a run stores the ones it built, the memo is dropped
+when a run starts or resumes, and an entry lives at most 10 minutes. So building a member on demand
+costs their own queries, not the five seconds of the aggregates.
+
 ## Routes
 
 | Route | Access | Response |
@@ -314,7 +347,7 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 | `POST /api/activity/wrapped/send` | admin | body `{ announce? }` (default true); 202 or 409 `WrappedSendResponse` |
 | `POST /api/activity/wrapped/announce` | admin | `WrappedAnnounceResponse` for the latest run's year: 200 posted, 502 failed (retry), 409 otherwise |
 | `POST /api/activity/wrapped/run/resume` | admin | 202 or 409 `WrappedResumeResponse` |
-| `POST /api/activity/wrapped/resend/:userId?year=` | admin | `{ result: "sent" \| "failed" }`, 404 `{ result: "no-link" }`; year defaults to the latest run's |
+| `POST /api/activity/wrapped/resend/:userId?year=` | admin | `WrappedResendResponse`: 200 `sent` or `failed`, 404 `no-link`, 409 `left`, `not-opted-in`, `already-sent` or `sending`; year defaults to the latest run's |
 | `GET /api/activity/wrapped/signup` | admin | `WrappedSignupState` (`year`, `posted`, `buttons`, `closed`, `optedIn`) |
 | `POST /api/activity/wrapped/signup-message` | admin | body `{ year?, buttons? }` (defaults: current UTC year, true); the new `WrappedSignupState`; 400 when no announcement channel is set or reachable |
 | `POST /api/activity/wrapped/signup/close` | admin | close sign-ups; the `WrappedSignupState` |
@@ -329,6 +362,10 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 | `GET /api/activity/wrapped/s/:token/card.png` | public | the server card PNG; 404 JSON for an unknown token; the JSON when rendering fails |
 
 The public routes need no session: the token is the authorisation.
+
+Their `cache-control` (`wrappedCacheControl` in `api/wrapped.ts`): a private preview response,
+JSON or card, is `no-store`; a real story's JSON is `private, no-cache` (names are resolved on
+open); a real member or server card is `private, max-age=300`. No shared cache keeps any of them.
 
 ## The cards
 

@@ -7,6 +7,7 @@
 import { ChannelType } from "discord.js";
 import type { AnyThreadChannel, Collection, Message, TextChannel, NewsChannel, ForumChannel } from "discord.js";
 import type { BotContext } from "../../../core/plugin.ts";
+import { isPrivateThread } from "../exclusion.ts";
 import { toRawMessage } from "../facts.ts";
 import type { BackfillChannel, ChannelListing, FetchPage } from "./channel.ts";
 import type { FetchReactionPage, ReactionMessage } from "./types.ts";
@@ -162,7 +163,7 @@ export async function listBackfillChannels(ctx: BotContext): Promise<ChannelList
 
   const active = await guild.channels.fetchActiveThreads();
   for (const thread of active.threads.values()) {
-    if (thread.type !== ChannelType.PrivateThread) add(thread);
+    if (!isPrivateThread(thread)) add(thread);
   }
   for (const parent of parents) {
     if (!parent.viewable) {
