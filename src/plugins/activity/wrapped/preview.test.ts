@@ -490,3 +490,13 @@ test("cache headers: preview responses are no-store, real JSON private no-cache,
   expect(await call(S_JSON, realServer)).toBe("private, no-cache");
   expect(await call(S_CARD, realServer)).toBe("private, max-age=300");
 });
+
+test("the preview server story names the best pair with nobody opted in", async () => {
+  for (let i = 0; i < 3; i++) recordMessage(msg("102", T + 100 + i, { replyToUserId: "101", replyToMessageId: `p${i}` }));
+  seed();
+  const status = await preview(fakeClient());
+  expect(status.wouldSkip).toBe(status.sampled.length);
+  const found = getServerWrappedByToken(status.serverToken!);
+  expect(found?.preview).toBe(true);
+  expect(found?.data.bestPair).toMatchObject({ aId: "101", bId: "102" });
+});

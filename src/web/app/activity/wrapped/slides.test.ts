@@ -134,3 +134,15 @@ test("the 9:19.5 shape applies only on wide screens at least 800px tall", () => 
   expect(classes).toContain("desk:[@media(max-height:799.98px)]:h-[calc(100dvh-48px)]");
   expect(classes).not.toContain("desk:w-auto");
 });
+
+test("the pair slide names the pair and no longer claims they opted in", () => {
+  const withPair: ServerWrapped = {
+    ...server,
+    bestPair: { aId: "1", aName: "mika", bId: "2", bName: "rin", replies: 5, voiceHours: 2 },
+  };
+  const html = renderToStaticMarkup(createElement(ServerSlideView, { slide: "pair", data: withPair, preview: false, cardUrl: "/card.png" }));
+  expect(html).toContain("mika");
+  expect(html).toContain("rin");
+  expect(html).not.toContain("opted in");
+  expect(html).not.toContain("named here");
+});

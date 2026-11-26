@@ -925,8 +925,7 @@ export function ServerSlideView({ slide, data: d, preview = false, cardUrl }: Se
           </Big>
           <Nar>
             {a} and {b} replied to each other {plural(p.replies, "time", "times")}
-            {p.voiceHours !== null ? ` and spent ${hours(p.voiceHours)} hours in calls together` : ""}. Both opted in to be
-            named here.
+            {p.voiceHours !== null ? ` and spent ${hours(p.voiceHours)} hours in calls together` : ""}.
           </Nar>
           <Stats
             items={[
