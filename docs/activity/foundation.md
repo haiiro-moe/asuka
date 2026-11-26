@@ -65,8 +65,9 @@ same message, so they insert with `onConflictDoNothing()` and a message is never
   session). They are the time the thing happened, which for a backfilled row is not now.
   Bookkeeping timestamps (`updatedAt`, `createdAt`, `optedInAt`, a run's `startedAt`) default to
   the current time. `updatedAt` is not maintained by SQLite: set it on every update.
-- **`emoji` identifies the emoji**: the unicode emoji itself, or a custom emoji's id. `name` is
-  the custom emoji's name and is null for unicode emoji.
+- **`emoji` identifies the emoji**: the unicode emoji itself, or `custom:<id>` for a custom emoji.
+  It is `ParsedEmoji.emoji` stored verbatim (see "Emoji keys" below). `name` is the custom emoji's
+  name and is null for unicode emoji.
 - **`attachmentKinds` and `linkDomains` are comma lists** stored as text (`image,video`,
   `example.com,youtu.be`), empty when there are none. `attachmentKinds` uses `image`, `video`,
   `audio` and `other`.
@@ -93,6 +94,81 @@ Two columns on the singleton `guild_config` row, both editable from the dashboar
 Read them with `getConfig()` inside a handler, never at module top level: plugin modules are
 loaded before `initDb()` has run.
 
+## Shared helpers
+
+Four small modules that capture, the backfill, every query tier and Wrapped import. They hold the
+rules that must be the same everywhere, so use them instead of writing the rule again.
+
+### Emoji keys (`emoji.ts`)
+
+`parseEmoji(text)` returns one `ParsedEmoji { emoji, name, count }` per distinct emoji in a
+message, in order of first appearance. `emoji` is the key written to the `emoji` columns as is:
+
+| Emoji | `emoji` | `name` |
+|---|---|---|
+| Custom, `<:pog:123>` or animated `<a:pog:123>` | `custom:123` | `pog` |
+| Unicode | the emoji itself, with U+FE0F removed | null |
+
+- Fenced code blocks and inline code are skipped.
+- A sequence joined by U+200D (a family, the rainbow flag) is one emoji. A skin tone stays part of
+  its emoji, so a thumbs up with a skin tone and one without are two keys. A flag and a keycap are
+  one emoji each.
+- U+FE0F is removed so the same emoji typed with and without it shares a key.
+- Unicode emoji are found by the `Extended_Pictographic` property, so a few symbols that are
+  usually drawn as text (`©`, `®`, `™`) count as emoji.
+
+### Periods (`time.ts`)
+
+A `Period` is `{ from, to }` in unix seconds, `from` inclusive and `to` exclusive. All buckets are
+UTC: `weekdayHour(ts)` gives the UTC weekday (0 is Monday, 6 is Sunday) and hour.
+
+`parsePeriodParam(value, now?)` turns a `?period=` query value into a `Period` ending at `now`:
+
+| Value | Period |
+|---|---|
+| absent (null) | the last 30 days |
+| `7d` or `week` | the last 7 days |
+| `30d` | the last 30 days |
+| `term` | `termPeriod()`: from `president.termStart`, or the last 90 days when there is none |
+| `year` | the last 365 days (rolling, not the calendar year) |
+| `all` | from 0 |
+
+Anything else, the empty string included, throws `RangeError`. A route catches it and answers 400.
+
+`QUIET_DAYS` is 30: a member has gone quiet after 30 days with no message and no voice.
+
+### Excluded channels (`exclusion.ts`)
+
+- `excludedChannelIds()` parses `guild_config.activityExcludedChannelIds` into a set.
+- `isExcluded(channelId, parentChannelId?)` is for writers (capture and the backfill). Pass the
+  parent channel for a thread: a thread under an excluded channel is excluded too.
+- `notExcluded(channelColumn, parentColumn?)` is the Drizzle filter for queries. Combine it with
+  the other conditions through `and(...)`, and pass the parent-channel column on tables that have
+  one (`activityMessages.parentChannelId`), or threads under an excluded channel stay visible. It
+  is true for every row when the list is empty, and a null column never counts as excluded.
+
+All three read the config when called, so a channel excluded today drops out of the next query
+even though its rows are still in the log. Call them inside the query or handler, never at module
+top level.
+
+### Privacy rules (`privacy.ts`)
+
+The president tier gets numbers, never names or ids. A small number can still point at one person
+("1 member went quiet"), so two rules apply to everything that tier returns:
+
+- **No count of 1 or 2.** `MIN_GROUP` is 3. Every count goes through `hideSmall(n)`, which returns
+  null for 1 and 2 and the number otherwise. 0 is returned as 0, because it identifies nobody. The
+  dashboard draws null as "off", never as 0.
+- **Groups under 3 are merged.** `mergeSmallGroups(sizes)` returns the sizes of 3 or more as
+  `shown` and adds the rest up into `other`. `other` also goes through `hideSmall`, so it is null
+  when the merged total is itself 1 or 2: `[14, 9, 2, 1, 5]` gives `{ shown: [14, 9, 5], other: 3 }`
+  and `[14, 2]` gives `{ shown: [14], other: null }`.
+- **Fixed periods only.** President routes accept `week` and `term` and answer 400 for anything
+  else. With free ranges, two requests a day apart could be subtracted to recover the small count
+  the threshold hides.
+
+The user tier names people only in leaderboards and awards. Admins see names.
+
 ## Plugin layout
 
 ```
@@ -111,7 +187,12 @@ src/plugins/activity/
     listeners.ts        wrappedListeners  opt-in and opt-out buttons
   types/                response types shared with the web app, one file per tier
     user.ts  president.ts  admin.ts  wrapped.ts
-  schema.test.ts        the tables, config defaults and plugin registration
+  emoji.ts              parseEmoji: the emoji in a message and their keys
+  time.ts               Period, weekdayHour, lastDays, termPeriod, parsePeriodParam, QUIET_DAYS
+  privacy.ts            MIN_GROUP, hideSmall, mergeSmallGroups
+  exclusion.ts          excludedChannelIds, isExcluded, notExcluded
+  *.test.ts             one per module above, plus schema.test.ts (tables, config defaults,
+                        plugin registration)
 ```
 
 The lists start empty and each has one owner, so work on capture, a tier's routes or Wrapped adds
@@ -140,3 +221,8 @@ real file is never touched. `bunfig.toml` preloads `src/test-setup.ts`, which se
 values for `DISCORD_TOKEN`, `CLIENT_ID`, `CLIENT_SECRET` and `GUILD_ID`. Without them
 `src/config/env.ts` throws on import and any test that touches the database fails before it runs.
 A test that needs the tables calls `initDb()` once in `beforeAll`.
+
+All test files run in one process and share that database. A file empties the tables it writes to
+in `beforeEach`, and a file that changes a singleton row (`guild_config.activityExcludedChannelIds`,
+`president.termStart`) puts it back in `beforeEach` and again in `afterAll`, so the next file
+starts from the seeded defaults.
