@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { db, initDb, schema } from "../../db/index.ts";
+import { extractMessageFacts } from "./facts.ts";
 import type { MessageFacts } from "./facts.ts";
 import {
   closeDanglingVoiceSegments,
@@ -163,6 +164,34 @@ test("mentions u2 and u3 give two activity_mentions rows", () => {
     { messageId: "m1", ts: 1_800_000_000, fromUserId: "u1", toUserId: "u3", channelId: "t1" },
   ]);
   expect(messages()[0]?.mentionCount).toBe(2);
+});
+
+test("a pinging reply writes no mention row for its target", () => {
+  const pingingReply = extractMessageFacts(
+    {
+      id: "m1",
+      author: { id: "u1", bot: false },
+      webhookId: null,
+      system: false,
+      guildId: "g1",
+      channelId: "c2",
+      parentChannelId: null,
+      createdTimestamp: 1_800_000_000_000,
+      content: "<@u3> see above",
+      replyToMessageId: "m0",
+      repliedUserId: "u2",
+      // Discord lists the reply target as mentioned because the reply pings.
+      mentionedUserIds: ["u2", "u3"],
+      attachmentTypes: [],
+      stickerCount: 0,
+    },
+    "live",
+  );
+  expect(recordMessage(pingingReply!)).toBe(true);
+
+  expect(messages()[0]).toMatchObject({ replyToUserId: "u2", replyToMessageId: "m0", mentionCount: 1 });
+  expect(mentions().filter((row) => row.toUserId === "u2")).toHaveLength(0);
+  expect(mentions()).toMatchObject([{ fromUserId: "u1", toUserId: "u3" }]);
 });
 
 test("a user listed twice is one mention", () => {

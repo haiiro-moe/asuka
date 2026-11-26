@@ -591,8 +591,10 @@ export const activityMessages = sqliteTable(
 );
 
 /**
- * One row per user mentioned or replied to in a message: the edges of the
- * reply/mention web. Unique per (`messageId`, `toUserId`).
+ * One row per user mentioned in a message: the mention edges of the
+ * reply/mention web. Unique per (`messageId`, `toUserId`). The reply edges are
+ * {@link activityMessages}.`replyToUserId`: the ping a reply sends by itself
+ * writes no row here, only a reply whose text names its target does.
  */
 export const activityMentions = sqliteTable(
   "activity_mentions",

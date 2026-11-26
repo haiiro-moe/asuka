@@ -46,7 +46,10 @@ export interface RawMessage {
   replyToMessageId: string | null;
   /** Author of the message replied to; null when it is not a reply or the author is unknown. */
   repliedUserId: string | null;
-  /** Ids of the users mentioned, as Discord reports them. A reply that pings lists its target here too. */
+  /**
+   * Ids of the users mentioned, as Discord reports them. A reply that pings
+   * lists its target here too; `extractMessageFacts` takes that one out again.
+   */
   mentionedUserIds: string[];
   /** MIME type of each attachment; null where Discord gave none. */
   attachmentTypes: (string | null)[];
@@ -76,7 +79,11 @@ export interface MessageFacts {
   replyToUserId: string | null;
   /** The message replied to; null when it is not a reply. */
   replyToMessageId: string | null;
-  /** The users mentioned: each id once, the author's own id left out. */
+  /**
+   * The users mentioned: each id once, the author's own id left out. The reply
+   * target is listed only when the text names them (`<@id>`); the ping a reply
+   * sends by itself is not a mention, `replyToUserId` carries the reply.
+   */
   mentionedUserIds: string[];
   /** One entry per attachment, in order. */
   attachmentKinds: AttachmentKind[];
@@ -140,7 +147,25 @@ function attachmentKind(contentType: string | null): AttachmentKind {
 }
 
 /**
+ * Whether a text holds a mention token for a user.
+ *
+ * @param text - The raw message content.
+ * @param userId - The user to look for.
+ * @returns True when the text contains `<@id>` or its older nickname form `<@!id>`.
+ */
+function namesUser(text: string, userId: string): boolean {
+  return text.includes(`<@${userId}>`) || text.includes(`<@!${userId}>`);
+}
+
+/**
  * Derive the recordable facts from a message.
+ *
+ * A reply pings its target unless the author turns that off, and Discord then
+ * lists the target among the mentioned users. That ping is not counted as a
+ * mention: the target stays in `replyToUserId` and is left out of
+ * `mentionedUserIds`, unless the text itself names them with `<@id>`. Otherwise
+ * nearly every reply would also be a mention, and the two could not be told
+ * apart.
  *
  * The excluded-channel list is read from the guild config on each call, so call
  * this only after `initDb()` has run (inside a handler, never at module top
@@ -165,6 +190,10 @@ export function extractMessageFacts(m: RawMessage, source: "live" | "backfill"):
   const mentioned = new Set(m.mentionedUserIds);
   // Mentioning yourself is not an edge to anyone.
   mentioned.delete(m.author.id);
+  // The ping of a reply is the reply itself, not a mention.
+  if (m.repliedUserId !== null && !namesUser(m.content, m.repliedUserId)) {
+    mentioned.delete(m.repliedUserId);
+  }
 
   return {
     messageId: m.id,

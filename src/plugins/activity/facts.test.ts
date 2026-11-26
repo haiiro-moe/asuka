@@ -102,7 +102,8 @@ test("a normal message returns its facts", () => {
     ts: 1_800_000_000,
     replyToUserId: "u2",
     replyToMessageId: "m0",
-    mentionedUserIds: ["u2", "u3"],
+    // u2 is the reply target and is not named in the text, so it is no mention.
+    mentionedUserIds: ["u3"],
     attachmentKinds: ["image"],
     linkDomains: ["example.com"],
     stickerCount: 1,
@@ -177,6 +178,44 @@ test("a message without links, attachments or emoji has empty lists", () => {
 test("mentioned users are de-duplicated and never include the author", () => {
   const facts = extractMessageFacts(raw({ mentionedUserIds: ["u2", "u1", "u2", "u3"] }), "live");
   expect(facts?.mentionedUserIds).toEqual(["u2", "u3"]);
+});
+
+/** A reply by `u1` to message `m0` written by `u2`. Discord lists `u2` as mentioned when the reply pings. */
+function reply(over: Partial<RawMessage> = {}): RawMessage {
+  return raw({ replyToMessageId: "m0", repliedUserId: "u2", mentionedUserIds: ["u2"], content: "ok", ...over });
+}
+
+test("a reply that pings its target is a reply, not a mention", () => {
+  const facts = extractMessageFacts(reply(), "live");
+  expect(facts).toMatchObject({ replyToUserId: "u2", replyToMessageId: "m0", mentionedUserIds: [] });
+});
+
+test("a reply that names its target in the text keeps the mention", () => {
+  expect(extractMessageFacts(reply({ content: "thanks <@u2>" }), "live")).toMatchObject({
+    replyToUserId: "u2",
+    mentionedUserIds: ["u2"],
+  });
+  // The older nickname form of the same token.
+  expect(extractMessageFacts(reply({ content: "<@!u2> thanks" }), "live")?.mentionedUserIds).toEqual(["u2"]);
+});
+
+test("a reply that mentions someone else keeps that mention", () => {
+  const facts = extractMessageFacts(reply({ content: "<@u3> look", mentionedUserIds: ["u2", "u3"] }), "live");
+  expect(facts).toMatchObject({ replyToUserId: "u2", mentionedUserIds: ["u3"] });
+});
+
+test("a mention token for another user does not keep the reply target", () => {
+  // `<@u22>` and a role mention `<@&u2>` are not `<@u2>`.
+  const facts = extractMessageFacts(
+    reply({ content: "<@u22> and <@&u2>", mentionedUserIds: ["u2", "u22"] }),
+    "live",
+  );
+  expect(facts?.mentionedUserIds).toEqual(["u22"]);
+});
+
+test("a mention in a message that is not a reply is kept without a token check", () => {
+  const facts = extractMessageFacts(raw({ content: "no token here", mentionedUserIds: ["u2"] }), "live");
+  expect(facts?.mentionedUserIds).toEqual(["u2"]);
 });
 
 /** A stand-in for a discord.js message: only the fields `toRawMessage` reads. */
@@ -268,7 +307,7 @@ test("a raw discord message goes straight through extractMessageFacts", () => {
     parentChannelId: "c1",
     replyToUserId: "u2",
     replyToMessageId: "m0",
-    mentionedUserIds: ["u2", "u3"],
+    mentionedUserIds: ["u3"],
     attachmentKinds: ["image", "other"],
     stickerCount: 1,
   });

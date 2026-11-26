@@ -24,7 +24,7 @@ All are defined in `src/db/schema.ts` and created by migration `0016`.
 | Export | SQL table | One row per | Purpose |
 |---|---|---|---|
 | `activityMessages` | `activity_messages` | message | Who wrote where and when, reply target, mention count, attachment kinds, link domains, sticker count, text length, and whether the row came from live capture or the backfill. |
-| `activityMentions` | `activity_mentions` | mentioned user per message | The edges of the reply/mention web (`fromUserId` to `toUserId`). |
+| `activityMentions` | `activity_mentions` | mentioned user per message | The mention edges of the reply/mention web (`fromUserId` to `toUserId`). The reply edges are `activityMessages.replyToUserId`; a reply's own ping writes no row here. |
 | `activityEmoji` | `activity_emoji` | distinct emoji per message | Emoji used in message text, with how often it appears in that message. |
 | `activityReactions` | `activity_reactions` | member, emoji and message | Reactions. A removal sets `removedAt` and keeps the row, so the net count is the rows where `removedAt` is null. |
 | `activityVoice` | `activity_voice` | voice session | Connected time per member and channel, with muted, deafened, streaming and video flags. |
@@ -193,7 +193,7 @@ if (facts) recordMessage(facts);
 |---|---|
 | `ts` | `createdTimestamp` (milliseconds) in whole unix seconds. |
 | `replyToUserId`, `replyToMessageId` | The reply target. `replyToUserId` is null when Discord did not send the replied-to message (it was deleted). A reply to yourself is kept. |
-| `mentionedUserIds` | The users Discord lists as mentioned, each once, without the author. **A reply that pings its target lists the target here as well**, so that user is both the reply target and a mention. |
+| `mentionedUserIds` | The users Discord lists as mentioned, each once, without the author. **The ping of a reply is not a mention**: a reply pings its target by default and Discord then lists the target as mentioned, so the target is taken out again unless the text names them with `<@id>` (or `<@!id>`). The reply itself stays in `replyToUserId`. Another user mentioned in a reply is kept. |
 | `attachmentKinds` | One of `image`, `video`, `audio` per attachment, by the first part of its MIME type; `other` for anything else and for an unknown type. |
 | `linkDomains` | The hostname of every `http://` or `https://` link: lowercase, no port, each once, in order of first appearance. `www.` is kept, so `www.youtube.com` and `youtube.com` are two domains. |
 | `length` | Characters (code points) of the text, so an emoji counts once. |
