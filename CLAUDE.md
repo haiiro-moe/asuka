@@ -97,7 +97,8 @@ back-to-back terms per user, president role + weekly theme powers) ·
 one-time panel magic links (`/panel/:token`, open freely, burned on submit), role grants,
 buyer-customized roles (one active per member, anchor-positioned below a configured role,
 editable from the My Profile inventory), per-election sabotage items (disable voting /
-cut votes / silence with a SABOTAGED card stamp); failed fulfilment refunds the purchase).
+cut votes / silence with a SABOTAGED card stamp); failed fulfilment refunds the purchase) ·
+`activity` (raw event capture, tiered queries, web dashboard, yearly Wrapped with private preview; see [docs/activity.md](docs/activity.md))
 
 ### Gotchas
 - Plugin modules are imported (evaluated) **before** `initDb()` runs, so never call `getConfig()`

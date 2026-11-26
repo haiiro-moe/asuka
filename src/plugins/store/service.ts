@@ -4,6 +4,7 @@ import { db, schema } from "../../db/index.ts";
 import { env } from "../../config/env.ts";
 import { ensureMember, addCredits } from "../../core/members.ts";
 import { getMessageDef } from "../../core/messages.ts";
+import { captureCredit } from "../activity/capture/hooks.ts";
 import { nowSec } from "../../core/util.ts";
 import {
   getOpenElection,
@@ -21,7 +22,7 @@ export function memberBalance(userId: string): number {
 
 /** Atomically deduct `amount` SC. False when the balance is insufficient. */
 export function trySpend(userId: string, amount: number): boolean {
-  ensureMember(userId);
+  const before = ensureMember(userId).socialCredits;
   const row = db
     .update(schema.members)
     .set({ socialCredits: sql`${schema.members.socialCredits} - ${amount}` })
@@ -30,6 +31,8 @@ export function trySpend(userId: string, amount: number): boolean {
     )
     .returning()
     .get();
+  // Activity ledger: the actual change. Never throws.
+  if (row) captureCredit(userId, row.socialCredits - before, row.socialCredits);
   return !!row;
 }
 

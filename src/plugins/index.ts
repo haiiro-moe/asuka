@@ -13,6 +13,7 @@ import events from "./events/index.ts";
 import tatsuMigrate from "./tatsu-migrate/index.ts";
 import anilist from "./anilist/index.ts";
 import linkfixer from "./linkfixer/index.ts";
+import activity from "./activity/index.ts";
 
 /**
  * The ordered list of active plugins. Add new feature plugins here as they are
@@ -34,4 +35,5 @@ export const plugins: Plugin[] = [
   tatsuMigrate,
   anilist,
   linkfixer,
+  activity,
 ];

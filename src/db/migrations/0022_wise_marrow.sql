@@ -1,0 +1,50 @@
+PRAGMA foreign_keys=OFF;--> statement-breakpoint
+CREATE TABLE `__new_guild_config` (
+	`id` integer PRIMARY KEY DEFAULT 1 NOT NULL,
+	`starboard_channel_id` text,
+	`club_listing_channel_id` text,
+	`club_category_id` text,
+	`club_directory_message_id` text,
+	`election_channel_id` text,
+	`mod_log_channel_id` text,
+	`level_up_channel_id` text,
+	`announcement_channel_id` text,
+	`approval_channel_id` text,
+	`president_role_id` text,
+	`club_create_min_role_id` text,
+	`president_apply_min_role_id` text,
+	`club_admin_role_id` text,
+	`starboard_emoji` text DEFAULT '⭐' NOT NULL,
+	`starboard_threshold` integer DEFAULT 3 NOT NULL,
+	`starboard_credit_min` integer DEFAULT 5 NOT NULL,
+	`starboard_credit_max` integer DEFAULT 20 NOT NULL,
+	`xp_message_min` integer DEFAULT 15 NOT NULL,
+	`xp_message_max` integer DEFAULT 25 NOT NULL,
+	`xp_message_cooldown_sec` integer DEFAULT 60 NOT NULL,
+	`xp_voice_per_minute` integer DEFAULT 10 NOT NULL,
+	`credit_reward_min` integer DEFAULT 1 NOT NULL,
+	`credit_reward_max` integer DEFAULT 15 NOT NULL,
+	`credit_window_min` integer DEFAULT 200 NOT NULL,
+	`credit_window_max` integer DEFAULT 1000 NOT NULL,
+	`events_channel_id` text,
+	`election_interval_cron` text DEFAULT '0 12 1 */3 *' NOT NULL,
+	`server_name_template` text DEFAULT 'Asuka Academy — %s' NOT NULL,
+	`moderation_enabled` integer DEFAULT 1 NOT NULL,
+	`autoreply_enabled` integer DEFAULT 1 NOT NULL,
+	`starboard_enabled` integer DEFAULT 1 NOT NULL,
+	`xp_enabled` integer DEFAULT 1 NOT NULL,
+	`economy_enabled` integer DEFAULT 1 NOT NULL,
+	`clubs_enabled` integer DEFAULT 1 NOT NULL,
+	`elections_enabled` integer DEFAULT 1 NOT NULL,
+	`events_enabled` integer DEFAULT 1 NOT NULL,
+	`link_fixer_enabled` integer DEFAULT 1 NOT NULL,
+	`link_fixer_disabled_platforms` text DEFAULT '["youtube"]' NOT NULL,
+	`activity_enabled` integer DEFAULT 0 NOT NULL,
+	`activity_excluded_channel_ids` text DEFAULT '' NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+INSERT INTO `__new_guild_config`("id", "starboard_channel_id", "club_listing_channel_id", "club_category_id", "club_directory_message_id", "election_channel_id", "mod_log_channel_id", "level_up_channel_id", "announcement_channel_id", "approval_channel_id", "president_role_id", "club_create_min_role_id", "president_apply_min_role_id", "club_admin_role_id", "starboard_emoji", "starboard_threshold", "starboard_credit_min", "starboard_credit_max", "xp_message_min", "xp_message_max", "xp_message_cooldown_sec", "xp_voice_per_minute", "credit_reward_min", "credit_reward_max", "credit_window_min", "credit_window_max", "events_channel_id", "election_interval_cron", "server_name_template", "moderation_enabled", "autoreply_enabled", "starboard_enabled", "xp_enabled", "economy_enabled", "clubs_enabled", "elections_enabled", "events_enabled", "link_fixer_enabled", "link_fixer_disabled_platforms", "activity_enabled", "activity_excluded_channel_ids", "updated_at") SELECT "id", "starboard_channel_id", "club_listing_channel_id", "club_category_id", "club_directory_message_id", "election_channel_id", "mod_log_channel_id", "level_up_channel_id", "announcement_channel_id", "approval_channel_id", "president_role_id", "club_create_min_role_id", "president_apply_min_role_id", "club_admin_role_id", "starboard_emoji", "starboard_threshold", "starboard_credit_min", "starboard_credit_max", "xp_message_min", "xp_message_max", "xp_message_cooldown_sec", "xp_voice_per_minute", "credit_reward_min", "credit_reward_max", "credit_window_min", "credit_window_max", "events_channel_id", "election_interval_cron", "server_name_template", "moderation_enabled", "autoreply_enabled", "starboard_enabled", "xp_enabled", "economy_enabled", "clubs_enabled", "elections_enabled", "events_enabled", "link_fixer_enabled", "link_fixer_disabled_platforms", "activity_enabled", "activity_excluded_channel_ids", "updated_at" FROM `guild_config`;--> statement-breakpoint
+DROP TABLE `guild_config`;--> statement-breakpoint
+ALTER TABLE `__new_guild_config` RENAME TO `guild_config`;--> statement-breakpoint
+PRAGMA foreign_keys=ON;

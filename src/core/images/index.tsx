@@ -55,6 +55,20 @@ import {
   ANILIST_CHARACTER_HEIGHT,
   type AniListCharacterCardProps,
 } from "./components/anilist-character-card.tsx";
+import {
+  WrappedCard,
+  WRAPPED_CARD_WIDTH,
+  wrappedCardHeight,
+  type WrappedCardProps,
+} from "./components/wrapped-card.tsx";
+import {
+  WrappedServerCard,
+  WRAPPED_SERVER_CARD_WIDTH,
+  wrappedServerCardHeight,
+  type WrappedServerCardProps,
+} from "./components/wrapped-server-card.tsx";
+import { fetchImageDataUri } from "./util.ts";
+import type { ServerWrapped, WrappedData } from "../../plugins/activity/types/wrapped.ts";
 
 export { fetchImageDataUri } from "./util.ts";
 export type {
@@ -66,6 +80,8 @@ export type {
   AniListProfileCardProps,
   AniListMediaCardProps,
   AniListCharacterCardProps,
+  WrappedCardProps,
+  WrappedServerCardProps,
 };
 export type { PresidencyTerm } from "./components/profile-card.tsx";
 export type { LeaderboardRow } from "./components/leaderboard-card.tsx";
@@ -175,5 +191,41 @@ export function renderAniListCharacterPng(
   return tryRenderPng(<AniListCharacterCard {...props} />, {
     width: ANILIST_CHARACTER_WIDTH,
     height: ANILIST_CHARACTER_HEIGHT,
+  });
+}
+
+/**
+ * The shareable Wrapped card of one member (their own numbers only).
+ * Returns the PNG, or null on any render failure so the caller can send its fallback.
+ *
+ * @param data - The member's Wrapped snapshot.
+ * @param displayName - The member's display name.
+ * @param avatarUrl - The member's avatar as a PNG or JPEG URL (Discord: `extension: "png"`,
+ *   resvg cannot decode webp); fetched with {@link fetchImageDataUri}. Null or left out
+ *   draws the placeholder.
+ */
+export async function renderWrappedCardPng(
+  data: WrappedData,
+  displayName: string,
+  avatarUrl: string | null = null,
+): Promise<Buffer | null> {
+  const avatarDataUri = avatarUrl ? await fetchImageDataUri(avatarUrl) : null;
+  return tryRenderPng(<WrappedCard data={data} displayName={displayName} avatarDataUri={avatarDataUri} />, {
+    width: WRAPPED_CARD_WIDTH,
+    height: wrappedCardHeight(data),
+  });
+}
+
+/**
+ * The shareable server Wrapped card (whole-server numbers; only the best club and the
+ * president are named).
+ * Returns the PNG, or null on any render failure so the caller can send its fallback.
+ *
+ * @param data - The server's Wrapped snapshot.
+ */
+export function renderWrappedServerCardPng(data: ServerWrapped): Promise<Buffer | null> {
+  return tryRenderPng(<WrappedServerCard data={data} />, {
+    width: WRAPPED_SERVER_CARD_WIDTH,
+    height: wrappedServerCardHeight(data),
   });
 }

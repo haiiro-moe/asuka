@@ -1,0 +1,202 @@
+/**
+ * Pure helpers that decide what the president connection page draws for each value. No DOM and no
+ * server imports, so they are unit-tested with `bun test`.
+ *
+ * The one rule they keep: a `null` from the server means **hidden** (or, for voice, not yet), and is
+ * never drawn as `0`. A real `0` is drawn as `0`.
+ *
+ * @module
+ */
+import type { PresidentClubEventHealth, PresidentEngagement } from "../../../../plugins/activity/types/president.ts";
+import type { ActivityTile } from "../charts.tsx";
+
+/** The two periods a president view can be asked for. */
+export type Period = "week" | "term";
+
+/** The text of an `off` tile's value: a hidden figure is named, never given a number. */
+export const OFF_VALUE = "off";
+
+/**
+ * The note under a hidden figure.
+ *
+ * @param period - The period on screen. The term can also hide a number for being too close to the
+ *   week's, so its note says so.
+ * @returns A short lowercase note starting with `hidden:`.
+ */
+export function hiddenNote(period: Period): string {
+  return period === "week"
+    ? "hidden: too few to show"
+    : "hidden: too few to show, or too close to the week's";
+}
+
+/** Options of {@link countTile}. */
+export interface CountTileOptions {
+  /** The period on screen, for the wording of the hidden note. */
+  period: Period;
+  /** The small mono text after a shown value (for example `of 14`). Never drawn on an `off` tile. */
+  unit?: string;
+  /** The line under a shown value. */
+  note?: string;
+}
+
+/**
+ * Builds a stat tile for a count that can be hidden.
+ *
+ * @param label - The tile's lowercase label.
+ * @param value - The count, or `null` when the server hid it.
+ * @param options - See {@link CountTileOptions}.
+ * @returns A dashed `off` tile with {@link OFF_VALUE} and the hidden note for `null`; otherwise a tile
+ *   whose value is the number as text, so `0` stays `"0"`.
+ */
+export function countTile(label: string, value: number | null, options: CountTileOptions): ActivityTile {
+  if (value === null || !Number.isFinite(value)) {
+    return { label, value: OFF_VALUE, note: hiddenNote(options.period), off: true };
+  }
+  return { label, value: value.toLocaleString("en-GB"), unit: options.unit, note: options.note };
+}
+
+/** What the column chart for one weekly series shows. */
+export type SeriesView =
+  | { kind: "hidden" }
+  | { kind: "empty" }
+  | { kind: "columns"; values: number[]; latest: number };
+
+/**
+ * Decides how a weekly series is drawn.
+ *
+ * @param values - The series, or `null` when the server withholds it.
+ * @returns `hidden` for `null` (the caller says why, never a chart of zeros), `empty` for a series
+ *   with no weeks, otherwise the columns and the last week's value.
+ */
+export function seriesView(values: number[] | null): SeriesView {
+  if (values === null) return { kind: "hidden" };
+  const clean = values.map((v) => (Number.isFinite(v) ? v : 0));
+  if (clean.length === 0) return { kind: "empty" };
+  return { kind: "columns", values: clean, latest: clean[clean.length - 1]! };
+}
+
+/** One bar of the group-size list. */
+export interface GroupBar {
+  label: string;
+  value: number;
+  sub?: string;
+}
+
+/**
+ * Builds the group-size bars: one per listed group, largest first as given, and an `other` row only
+ * when `other` is a number.
+ *
+ * @param sizes - Member counts of the listed groups.
+ * @param other - Members outside the groups, or `null` when hidden (then there is no row at all).
+ * @returns The bars, in the order given.
+ */
+export function groupBars(sizes: number[], other: number | null): GroupBar[] {
+  const bars: GroupBar[] = sizes.map((size) => ({ label: `group of ${size}`, value: size }));
+  if (other !== null && Number.isFinite(other)) bars.push({ label: "other", value: other, sub: "outside groups" });
+  return bars;
+}
+
+/**
+ * Whether the group count is larger than the list: a group was left out on purpose. The page only says
+ * so; it never works out what is missing.
+ *
+ * @param groups - The count of groups, or `null`.
+ * @param listed - How many groups the list holds.
+ * @returns `true` when `groups` is a number above `listed`.
+ */
+export function groupsLeftOut(groups: number | null, listed: number): boolean {
+  return groups !== null && groups > listed;
+}
+
+
+/** The note under a figure the server hides for privacy in the club and event health view. */
+export const CLUB_HIDDEN_NOTE = "hidden: small counts are not shown";
+
+/** The note under a hidden average attendance. */
+export const ATTENDANCE_HIDDEN_NOTE = "hidden for privacy: too few sign-ups to show";
+
+/**
+ * The lowercase label of a period, for headings and narrator lines.
+ *
+ * @param period - The period on screen.
+ * @returns `"the last 7 days"` or `"this term"`.
+ */
+export function periodLabel(period: Period): string {
+  return period === "week" ? "the last 7 days" : "this term";
+}
+
+/**
+ * Formats a figure with at most one decimal (hours and averages), in the page's English grouping.
+ *
+ * @param value - A finite number.
+ * @returns The number as text; `0` is `"0"`.
+ */
+export function oneDecimal(value: number): string {
+  return value.toLocaleString("en-GB", { maximumFractionDigits: 1 });
+}
+
+/** The engagement section as tiles, plus whether the voice figure is withheld. */
+export interface EngagementView {
+  /** `messages`, `active members` and, only when it is a number, `voice hours`. */
+  tiles: ActivityTile[];
+  /** `true` when `voiceHours` is `null`: the page says when voice unlocks instead of drawing a tile. */
+  voiceLocked: boolean;
+}
+
+/**
+ * Builds the engagement section.
+ *
+ * @param data - The `engagement` response.
+ * @param period - The period on screen.
+ * @returns The tiles. A `null` `activeMembers` is an `off` tile (the same figure as the connection total, hidden
+ *   with it), never `0`; a `null` `voiceHours` is no tile and `voiceLocked: true`. A real `0` stays `0`.
+ */
+export function engagementView(data: PresidentEngagement, period: Period): EngagementView {
+  const tiles: ActivityTile[] = [
+    countTile("messages", data.messages, { period, note: `written in ${periodLabel(period)}` }),
+    countTile("active members", data.activeMembers, {
+      period,
+      note: "wrote a message or were in voice. hidden together with the connection total",
+    }),
+  ];
+  const voiceLocked = data.voiceHours === null || !Number.isFinite(data.voiceHours);
+  if (!voiceLocked) {
+    tiles.push({
+      label: "voice hours",
+      value: oneDecimal(data.voiceHours as number),
+      unit: "hours",
+      note: "added up over members",
+    });
+  }
+  return { tiles, voiceLocked };
+}
+
+/**
+ * Builds the club and event health tiles.
+ *
+ * @param data - The `clubs` response.
+ * @param period - The period on screen.
+ * @returns Four tiles. `clubsActive` and `clubsQuiet` are `off` tiles with {@link CLUB_HIDDEN_NOTE} when
+ *   `null` (the server hides them together); `avgAttendance` is an `off` tile with
+ *   {@link ATTENDANCE_HIDDEN_NOTE} when `null`, and a real `0` is `0` with the unit `per event`.
+ */
+export function clubTiles(data: PresidentClubEventHealth, period: Period): ActivityTile[] {
+  const hidden = (v: number | null) => v === null || !Number.isFinite(v);
+  const club = (label: string, v: number | null, note: string): ActivityTile =>
+    hidden(v)
+      ? { label, value: OFF_VALUE, note: CLUB_HIDDEN_NOTE, off: true }
+      : countTile(label, v, { period, note });
+  return [
+    club("clubs active", data.clubsActive, "approved clubs with a message or voice time"),
+    club("clubs quiet", data.clubsQuiet, "approved clubs with nothing in their channels"),
+    countTile("events held", data.eventsHeld, { period, note: "occurrences that started in the period" }),
+    hidden(data.avgAttendance)
+      ? { label: "average attendance", value: OFF_VALUE, note: ATTENDANCE_HIDDEN_NOTE, off: true }
+      : {
+          label: "average attendance",
+          value: oneDecimal(data.avgAttendance as number),
+          unit: "per event",
+          note: "members signed up per held occurrence",
+        },
+  ];
+}

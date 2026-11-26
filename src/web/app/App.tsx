@@ -31,6 +31,9 @@ const LEDES: Record<string, string> = {
   elections: "Candidates, ballots and the calendar of votes. The ballot box sits in the corner.",
   moderation: "Warnings and the mod log. You read what happened while you were away.",
   "store-items": "What the store sells and how much is left. You stock the shelves from here.",
+  activity: "The whole server's hours and habits, counted. You see when everyone talks and where.",
+  "activity-president": "The numbers of the server, without the graph of who said what. You read the room.",
+  "activity-admin": "Who talks to whom, and where the server goes quiet. You follow the threads.",
   "events-editor": "Where events and their groups are written. You plan the evenings for everyone.",
 };
 
