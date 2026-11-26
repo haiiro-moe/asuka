@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
+import * as images from "../../../core/images/index.tsx";
 import { eq } from "drizzle-orm";
 import { db, initDb, schema } from "../../../db/index.ts";
 import { isValidComponentsPayload } from "../../../core/components.ts";
@@ -6,9 +7,16 @@ import { getMessageDef, renderBotMessage } from "../../../core/messages.ts";
 import { closeVoiceSegment, openVoiceSegment, recordMessage, recordReactionAdd } from "../record.ts";
 import { wrappedRoutes } from "../api/wrapped.ts";
 import { setOptIn } from "./optin.ts";
-import { getWrappedStatus, startWrappedRun, startWrappedSend, waitForWrappedRun, wrappedRunTiming } from "./run.ts";
+import { getWrappedStatus, postAnnouncement, startWrappedRun, startWrappedSend, waitForWrappedRun, wrappedRunTiming } from "./run.ts";
 import type { ServerNameLookup } from "./server.ts";
-import { buildServerWrapped, getOrCreateServerToken, getServerWrappedByToken, serverWrappedUrl } from "./server.ts";
+import {
+  buildServerWrapped,
+  getOrCreateServerToken,
+  getServerRow,
+  getServerWrappedByToken,
+  serverWrappedUrl,
+  storeServerWrapped,
+} from "./server.ts";
 import { allButtons, allStrings, at, fakeClient, fakeCtx, msg, resetWrappedTables, setConfig } from "./testing.ts";
 import { env } from "../../../config/env.ts";
 
@@ -226,4 +234,84 @@ test("wrapped.announce is valid, lowercase, without ! and renders every param", 
   const rendered = await renderBotMessage("wrapped.announce", fakeCtx(client), { year: 2026, url: "https://x/wrapped/s/t" });
   for (const s of allStrings(rendered.components)) expect(s).not.toMatch(/\{[a-zA-Z_]\w*\}/);
   expect(allButtons(rendered.components).map((b) => [b.label, b.url])).toEqual([["open the server wrapped", "https://x/wrapped/s/t"]]);
+});
+
+/** Process 2026 and wait. */
+async function processYear(client: ReturnType<typeof fakeClient>["client"]) {
+  startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin" });
+  await waitForWrappedRun();
+}
+
+test("a member who opts out after processing is not named: the public route and the card route drop the pair", async () => {
+  seed();
+  setOptIn("u1", true);
+  setOptIn("u2", true);
+  // Built with names, as a run would build it from the guild cache.
+  storeServerWrapped(2026, buildServerWrapped(2026, { names })!);
+  const token = getOrCreateServerToken(2026);
+  const { client } = fakeClient();
+  const ctx = { ...fakeCtx(client), session: null };
+  const route = wrappedRoutes.find((r) => r.path === "/api/activity/wrapped/s/:token")!;
+  const card = wrappedRoutes.find((r) => r.path === "/api/activity/wrapped/s/:token/card.png")!;
+
+  // Both still opted in: the pair is served.
+  const named = await (await route.handle(new Request("http://x/"), { ...ctx, params: { token } })).text();
+  expect(named).toContain('"aId":"u1"');
+  expect(named).toContain("name-u2");
+
+  setOptIn("u2", false);
+  const text = await (await route.handle(new Request("http://x/"), { ...ctx, params: { token } })).text();
+  for (const leak of ['"u1"', '"u2"', "name-u1", "name-u2"]) expect(text).not.toContain(leak);
+  expect((JSON.parse(text) as { data: { bestPair: unknown } }).data.bestPair).toBeNull();
+
+  // The card route reads through the same check; its JSON fallback shows it.
+  const render = spyOn(images, "renderWrappedServerCardPng").mockResolvedValue(null);
+  try {
+    const fallback = await (await card.handle(new Request("http://x/"), { ...ctx, params: { token } })).text();
+    expect(render).toHaveBeenCalledTimes(1);
+    expect((render.mock.calls[0]![0] as { bestPair: unknown }).bestPair).toBeNull();
+    for (const leak of ['"u1"', '"u2"', "name-u1", "name-u2"]) expect(fallback).not.toContain(leak);
+  } finally {
+    render.mockRestore();
+  }
+});
+
+test("two concurrent postAnnouncement calls post exactly once", async () => {
+  seed();
+  setConfig({ announcementChannelId: "ann" });
+  const { client, log } = fakeClient();
+  await processYear(client);
+  const results = await Promise.all([postAnnouncement(fakeCtx(client), 2026), postAnnouncement(fakeCtx(client), 2026)]);
+  expect(results.sort()).toEqual(["already-announced", "posted"]);
+  expect(log.posts.filter((p) => p.channelId === "ann").length).toBe(1);
+});
+
+test("a failed announcement post releases the claim so it can be retried", async () => {
+  seed();
+  setConfig({ announcementChannelId: "ann" });
+  const failing = fakeClient({ failPosts: ["ann"] });
+  await processYear(failing.client);
+  expect(await postAnnouncement(fakeCtx(failing.client), 2026)).toBe("failed");
+  expect(getServerRow(2026)!.announcedAt).toBeNull();
+
+  const working = fakeClient();
+  expect(await postAnnouncement(fakeCtx(working.client), 2026)).toBe("posted");
+  expect(working.log.posts.length).toBe(1);
+  expect(getServerRow(2026)!.announcedAt).not.toBeNull();
+});
+
+test("a previewed but never processed year cannot be announced", async () => {
+  seed();
+  setConfig({ announcementChannelId: "ann" });
+  const { client, log } = fakeClient();
+  const preview = wrappedRoutes.find((r) => r.path === "/api/activity/wrapped/server-link")!;
+  const res = await preview.handle(new Request("http://x/api/activity/wrapped/server-link?year=2026"), {
+    ...fakeCtx(client),
+    params: {},
+    session: { userId: "admin", role: "admin" },
+  });
+  expect(res.status).toBe(200);
+  expect(getServerRow(2026)!.data).not.toBeNull();
+  expect(await postAnnouncement(fakeCtx(client), 2026)).toBe("not-processed");
+  expect(log.posts.length).toBe(0);
 });

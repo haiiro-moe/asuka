@@ -251,7 +251,8 @@ export interface WrappedResumeResponse {
 
 /** `POST /api/activity/wrapped/announce`. 200 when posted, 409 otherwise. */
 export interface WrappedAnnounceResponse {
-  result: "posted" | "already-announced" | "not-processed" | "no-channel";
+  /** `no-channel`: no announcement channel is set; `failed`: it could not be reached or the post failed (retry). */
+  result: "posted" | "already-announced" | "not-processed" | "no-channel" | "failed";
 }
 
 /** `GET /api/activity/wrapped/signup`: the sign-up message of the current year and the opt-in count. */

@@ -24,13 +24,22 @@ function progressBar(done: number, total: number): string {
   return `${"▰".repeat(cells)}${"▱".repeat(10 - cells)} ${Math.round(ratio * 100)}%`;
 }
 
-/** Reply ephemerally with a plain `card()` ack, as the elections commands do. */
+/**
+ * Reply ephemerally with a plain `card()` ack, as the elections commands do.
+ * After a `deferReply` (the slow subcommands) the card goes through `editReply`.
+ */
 function ack(interaction: ChatInputCommandInteraction, accent: number, title: string, lines: string[]) {
-  return interaction.reply({
-    ...v2(card({ accent, title, lines })),
-    flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
-  });
+  const payload = v2(card({ accent, title, lines }));
+  if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
+  return interaction.reply({ ...payload, flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
 }
+
+/**
+ * Admin subcommands that do network or heavy work before answering. They defer
+ * first (ephemeral), so the 3-second interaction deadline is never missed and a
+ * retry cannot double-post.
+ */
+const SLOW_SUBCOMMANDS = new Set(["start", "send", "announce", "signups", "resume"]);
 
 /** Reply ephemerally with a catalog message. */
 async function replyMessage(
@@ -166,6 +175,9 @@ async function announce(interaction: ChatInputCommandInteraction, ctx: BotContex
   if (result === "not-processed") {
     return ack(interaction, Accent.warning, "not processed", ["nothing to announce yet. process the year first: /wrapped start."]);
   }
+  if (result === "failed") {
+    return ack(interaction, Accent.danger, "announcement failed", ["the post did not go through. try /wrapped announce again."]);
+  }
   return ack(interaction, Accent.warning, "no announcement channel", ["set one in the dashboard first."]);
 }
 
@@ -274,6 +286,7 @@ const wrapped: Command = {
 
     const member = interaction.member as GuildMember | null;
     if (!member || !isAdmin(member)) return ack(interaction, Accent.danger, "forbidden", ["admin only."]);
+    if (SLOW_SUBCOMMANDS.has(sub)) await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (sub === "start") return start(interaction, ctx);
     if (sub === "send") return send(interaction, ctx);
     if (sub === "announce") return announce(interaction, ctx);

@@ -173,7 +173,7 @@ names are stored in the snapshot and the public story never calls Discord. Tests
 | `topEmoji` (3), `unusedCustomEmoji` | text and reactions merged; the guild's custom emoji with no use that year |
 | `topChannels` (5) | by the message's own channel; a thread carries its parent's name |
 | `busiestHour`, `busiestWeekday` | UTC, by messages |
-| `bestPair` | the pair with the highest weight of replies between them (1 each, either way) and voice time together (1 per 10 minutes). The top pair only, and only when both opted in; otherwise null (no runner-up is named instead) |
+| `bestPair` | the pair with the highest weight of replies between them (1 each, either way) and voice time together (1 per 10 minutes). The top pair only, and only when both opted in; otherwise null (no runner-up is named instead). Opt-ins are checked again every time the story is served (`getServerWrappedByToken`, used by both public routes): if either member opted out since the snapshot was built, `bestPair` is served as null, without ids or names |
 | `bestClub` | the approved club with most messages, with its founder's name |
 | `president` | whoever held the chair longest that year: name, terms, days, `serverActivityPercent`, and the elections that started that year with the distinct members who stood |
 
@@ -207,7 +207,9 @@ Statuses: `processing` -> `processed` -> `sending` -> `done`, plus `failed` and 
    same card goes to the mod-log channel, and when that is unset too, nothing. That notice never
    fails the run. No member is written to and nothing is announced.
 2. **Send**, `startWrappedSend(ctx, { startedBy, announce = true })`: allowed when the latest run is
-   `processed` or `done` (a later send reaches members who opted in since and retries failed links);
+   `processed` or `done` (a later send reaches members who opted in since and retries failed links),
+   or `failed` when its processing had completed (`processed` equals `total`), so a send that crashed
+   is retried without reprocessing the year;
    returns `started`, `already-running` or `not-processed`. Failed and skipped links of the year go
    back to pending; each pending link of an opted-in member is DM'd, one per second
    (`wrappedRunTiming.sendDelayMs`), and becomes `sent` or `failed`; a pending link of a member who
@@ -216,9 +218,12 @@ Statuses: `processing` -> `processed` -> `sending` -> `done`, plus `failed` and 
    The run ends `done`; then, when `announce` is on, `postAnnouncement` runs; then
    `wrapped.run-finished` goes to the mod-log channel. `announce` is stored on the run for a resume.
 3. **Announce**, `postAnnouncement(ctx, year)`: posts `wrapped.announce` (banner and a link button to
-   the server story) to the announcement channel, once per year, and sets `announcedAt`. Returns
-   `posted`, `already-announced`, `not-processed` (no server snapshot) or `no-channel` (unset,
-   unreachable, or the post failed).
+   the server story) to the announcement channel, at most once per year. It claims the year first
+   with an atomic update (`announcedAt` set only where it is null) and an in-process guard, so two
+   concurrent calls post once; a failed post releases the claim so it can be retried. Returns
+   `posted`, `already-announced`, `not-processed` (the latest run of that year is not `processed` or
+   `done`, or there is no server snapshot; an admin preview alone does not count), `no-channel` (no
+   announcement channel is set) or `failed` (the channel could not be reached or the post failed).
 
 `getWrappedStatus()` returns the newest run as a `WrappedRunStatus`, or `idle`. `skipped` and
 `optedIn` come from the links and opt-in tables, `announcedAt` from the year's server row. A
@@ -291,7 +296,9 @@ the elections commands, and are not editable.
 | `optin`, `optout` | anyone | record the choice, ephemeral confirmation (or `wrapped.signup-closed`) |
 | `me` | anyone | their own link for the latest run's year (opted in or not); `me-not-ready` before any run, `me-empty` without activity. A member a run missed gets a link made on the spot. |
 
-The admin check is `isAdmin` (Administrator or Manage Server).
+The admin check is `isAdmin` (Administrator or Manage Server). The slow admin subcommands (`start`,
+`send`, `announce`, `signups`, `resume`) defer first (ephemeral) and answer through `editReply`, so the
+3-second interaction deadline is never missed; `status` replies directly.
 
 ## Routes
 
@@ -300,7 +307,7 @@ The admin check is `isAdmin` (Administrator or Manage Server).
 | `GET /api/activity/wrapped/run` | admin | `WrappedRunStatus` |
 | `POST /api/activity/wrapped/run` | admin | body `{ year? }` (default the current UTC year), processing only; 202 or 409 `WrappedRunStartResponse`; 400 on a bad body |
 | `POST /api/activity/wrapped/send` | admin | body `{ announce? }` (default true); 202 or 409 `WrappedSendResponse` |
-| `POST /api/activity/wrapped/announce` | admin | 200 or 409 `WrappedAnnounceResponse`, for the latest run's year |
+| `POST /api/activity/wrapped/announce` | admin | `WrappedAnnounceResponse` for the latest run's year: 200 posted, 502 failed (retry), 409 otherwise |
 | `POST /api/activity/wrapped/run/resume` | admin | 202 or 409 `WrappedResumeResponse` |
 | `POST /api/activity/wrapped/resend/:userId?year=` | admin | `{ result: "sent" \| "failed" }`, 404 `{ result: "no-link" }`; year defaults to the latest run's |
 | `GET /api/activity/wrapped/signup` | admin | `WrappedSignupState` (`year`, `posted`, `buttons`, `closed`, `optedIn`) |

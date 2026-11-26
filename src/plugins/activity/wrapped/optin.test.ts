@@ -60,9 +60,18 @@ async function handleClick(customId: string, userId: string) {
 async function slash(
   sub: string,
   userId: string,
-  opts: { admin?: boolean; year?: number; announce?: boolean; action?: string; fake?: ReturnType<typeof fakeClient> } = {},
+  opts: {
+    admin?: boolean;
+    year?: number;
+    announce?: boolean;
+    action?: string;
+    fake?: ReturnType<typeof fakeClient>;
+    order?: string[];
+  } = {},
 ) {
   const replies: Reply[] = [];
+  /** The order of the interaction calls (and channel fetches, when the fake records them). */
+  const order: string[] = opts.order ?? [];
   const interaction = {
     options: {
       getSubcommand: () => sub,
@@ -75,20 +84,25 @@ async function slash(
     deferred: false,
     replied: false,
     async reply(payload: Reply) {
+      order.push("reply");
       replies.push(payload);
       return {};
     },
     async editReply(payload: Reply) {
+      order.push("editReply");
       replies.push(payload);
       return {};
     },
-    async deferReply() {
+    async deferReply(payload: Reply) {
+      order.push("deferReply");
+      expect(payload.flags! & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral);
+      interaction.deferred = true;
       return {};
     },
   };
   const { client, log } = opts.fake ?? fakeClient();
   await wrappedCommands[0]!.execute(interaction as never, fakeCtx(client));
-  return { replies, log };
+  return { replies, log, order };
 }
 
 /** The joined text of a reply. */
@@ -335,4 +349,45 @@ test("/wrapped signups posts, closes and reopens", async () => {
   const reopened = await slash("signups", "admin", { admin: true, action: "reopen", fake });
   expect(textOf(reopened.replies[0]!)).toContain("sign-ups open");
   expect(signupsClosed()).toBe(false);
+});
+
+test("slow admin subcommands defer first and answer through editReply; fast ones reply directly", async () => {
+  recordMessage(msg("u1", at("2026-06-01T12:00:00Z")));
+  setConfig({ announcementChannelId: "ann" });
+  const order: string[] = [];
+  const fake = fakeClient({ onChannelFetch: () => order.push("channels.fetch") });
+  await slash("start", "admin", { admin: true, year: 2026, fake });
+  await waitForWrappedRun();
+
+  order.length = 0;
+  const announced = await slash("announce", "admin", { admin: true, fake, order });
+  expect(order[0]).toBe("deferReply");
+  expect(order).toContain("channels.fetch");
+  expect(order.indexOf("channels.fetch")).toBeGreaterThan(0);
+  expect(order[order.length - 1]).toBe("editReply");
+  expect(order).not.toContain("reply");
+  expect(textOf(announced.replies[0]!)).toContain("announced");
+
+  for (const sub of ["start", "send", "signups", "resume"]) {
+    const run = await slash(sub, "admin", { admin: true, action: "close", fake });
+    expect(run.order[0]).toBe("deferReply");
+    expect(run.order[run.order.length - 1]).toBe("editReply");
+    await waitForWrappedRun();
+  }
+
+  const status = await slash("status", "admin", { admin: true });
+  expect(status.order).toEqual(["reply"]);
+});
+
+test("/wrapped announce says when the post failed, and no-channel only when none is set", async () => {
+  recordMessage(msg("u1", at("2026-06-01T12:00:00Z")));
+  const fake = fakeClient({ failPosts: ["ann"] });
+  await slash("start", "admin", { admin: true, year: 2026, fake });
+  await waitForWrappedRun();
+
+  const unset = await slash("announce", "admin", { admin: true, fake });
+  expect(textOf(unset.replies[0]!)).toContain("no announcement channel");
+  setConfig({ announcementChannelId: "ann" });
+  const failed = await slash("announce", "admin", { admin: true, fake });
+  expect(textOf(failed.replies[0]!)).toContain("announcement failed");
 });

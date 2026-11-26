@@ -167,7 +167,8 @@ const postSend: ApiRoute = {
 /**
  * `POST /api/activity/wrapped/announce` (admin): post the server Wrapped link
  * to the announcement channel for the latest run's year (once per year).
- * Responds 200 or 409 {@link WrappedAnnounceResponse}.
+ * Responds 200 when posted, 502 when the post failed (retry), 409 otherwise,
+ * with a {@link WrappedAnnounceResponse}.
  */
 const postAnnounce: ApiRoute = {
   method: "POST",
@@ -176,7 +177,7 @@ const postAnnounce: ApiRoute = {
   async handle(_req, ctx) {
     const result = await postAnnouncement(ctx, getWrappedStatus().year ?? currentUtcYear());
     const out: WrappedAnnounceResponse = { result };
-    return Response.json(out, { status: result === "posted" ? 200 : 409 });
+    return Response.json(out, { status: result === "posted" ? 200 : result === "failed" ? 502 : 409 });
   },
 };
 

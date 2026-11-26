@@ -97,9 +97,11 @@ export interface FakeClientLog {
  *
  * @param opts.closedDms - Users whose DMs are closed.
  * @param opts.onDm - Called before each DM is recorded (to look at run status mid-run).
+ * @param opts.failPosts - Channels whose `send` throws (a failed post).
+ * @param opts.onChannelFetch - Called on each `channels.fetch` (to check call order).
  */
 export function fakeClient(
-  opts: { closedDms?: string[]; onDm?: (userId: string) => void } = {},
+  opts: { closedDms?: string[]; onDm?: (userId: string) => void; failPosts?: string[]; onChannelFetch?: (channelId: string) => void } = {},
 ): { client: Client; log: FakeClientLog } {
   const log: FakeClientLog = { dms: [], posts: [], messages: new Map() };
   let messageSeq = 0;
@@ -122,10 +124,12 @@ export function fakeClient(
     },
     channels: {
       async fetch(channelId: string) {
+        opts.onChannelFetch?.(channelId);
         return {
           id: channelId,
           isTextBased: () => true,
           async send(payload: Record<string, unknown>) {
+            if (opts.failPosts?.includes(channelId)) throw discordError(50013, "Missing Permissions");
             log.posts.push({ channelId, payload });
             messageSeq += 1;
             const id = `msg-${messageSeq}`;

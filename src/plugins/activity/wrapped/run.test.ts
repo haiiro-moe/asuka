@@ -550,3 +550,20 @@ test("no mod-log post when the channel is unset", async () => {
   await run(fakeCtx(client));
   expect(log.posts.length).toBe(0);
 });
+
+test("a failed send can be retried when processing had completed, not before", async () => {
+  active("u1", "u2");
+  setOptIn("u1", true);
+  const { client, log } = fakeClient();
+  await processYear(fakeCtx(client));
+  // The send step crashed: the run ended failed with every member processed.
+  db.update(schema.activityWrappedRuns).set({ status: "failed", finishedAt: nowSec() }).run();
+  expect(startWrappedSend(fakeCtx(client), { startedBy: "admin", announce: false })).toBe("started");
+  await waitForWrappedRun();
+  expect(memberDms(log).map((d) => d.userId)).toEqual(["u1"]);
+  expect(getWrappedStatus().status).toBe("done");
+
+  // Processing itself failed half way: the send is refused.
+  db.update(schema.activityWrappedRuns).set({ status: "failed", processed: 1, total: 2 }).run();
+  expect(startWrappedSend(fakeCtx(client), { startedBy: "admin" })).toBe("not-processed");
+});

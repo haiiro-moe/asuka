@@ -297,16 +297,27 @@ export function storeServerWrapped(year: number, data: ServerWrapped): string {
 }
 
 /**
- * Resolve a server Wrapped token.
+ * Resolve a server Wrapped token, ready to serve.
+ *
+ * The stored best pair is checked against the opt-ins again on every read: a
+ * member who opted out after the snapshot was built must not stay named, so
+ * when either member is no longer opted in `bestPair` is replaced by null and
+ * neither id nor name leaves this function.
  *
  * @param token - The token from the URL.
+ * @param optedIn - Opt-in check (default: the opt-in table).
  * @returns The year and snapshot, or null for an unknown or truncated token, or
  *   a year with no snapshot yet.
  */
-export function getServerWrappedByToken(token: string): { year: number; data: ServerWrapped } | null {
+export function getServerWrappedByToken(
+  token: string,
+  optedIn: (userId: string) => boolean = isOptedIn,
+): { year: number; data: ServerWrapped } | null {
   if (typeof token !== "string" || token.length !== 43) return null;
   const row = db.select().from(schema.activityWrappedServer).where(eq(schema.activityWrappedServer.token, token)).get();
   if (!row?.data) return null;
-  return { year: row.year, data: JSON.parse(row.data) as ServerWrapped };
+  const data = JSON.parse(row.data) as ServerWrapped;
+  if (data.bestPair && !(optedIn(data.bestPair.aId) && optedIn(data.bestPair.bId))) data.bestPair = null;
+  return { year: row.year, data };
 }
 

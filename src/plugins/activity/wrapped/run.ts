@@ -33,7 +33,7 @@
  * @packageDocumentation
  */
 import type { TextChannel } from "discord.js";
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { env } from "../../../config/env.ts";
 import { renderBotMessage } from "../../../core/messages.ts";
 import type { BotContext } from "../../../core/plugin.ts";
@@ -219,7 +219,8 @@ export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy
  * Step 2: DM the links of opted-in members, in the background, on the latest
  * run. Allowed when that run is `processed`, or `done` (a later send reaches
  * members who opted in since and retries failed links; sent links are never
- * sent again).
+ * sent again), or `failed` when its processing had completed (`processed`
+ * equals `total`), so a failed send is retried without reprocessing the year.
  *
  * @param ctx - Bot context.
  * @param opts.startedBy - The admin who started the send (named in the mod-log post).
@@ -236,7 +237,9 @@ export function startWrappedSend(
   const row = latestRun();
   if (!row) return "not-processed";
   if (isBusy(row) && !isStale(row)) return "already-running";
-  if (row.status !== "processed" && row.status !== "done") return "not-processed";
+  // A failed send can be retried once processing had completed (every member processed).
+  const processingDone = row.status === "failed" && row.total > 0 && row.processed >= row.total;
+  if (row.status !== "processed" && row.status !== "done" && !processingDone) return "not-processed";
 
   const announce = opts.announce !== false;
   resetForSending(row.year);
@@ -280,40 +283,71 @@ export function resumeWrappedRun(ctx: BotContext): "resumed" | "nothing-to-resum
   return "resumed";
 }
 
+/** Years whose announcement is being posted by this process right now. */
+const announcing = new Set<number>();
+
 /**
  * Step 3: post the server Wrapped announcement (`wrapped.announce`, with the
- * title banner and a link button) to the announcement channel. Once per year:
- * a year already announced is not announced again.
+ * title banner and a link button) to the announcement channel. At most once
+ * per year, even under concurrent calls: the year is claimed first with an
+ * atomic update (`announcedAt` set only where it is still null) plus an
+ * in-process guard, and the claim is released when the post fails, so it can
+ * be retried.
  *
  * @param ctx - Bot context.
  * @param year - The UTC calendar year.
- * @returns `posted`; `already-announced`; `not-processed` when the year has no
- *   server snapshot; `no-channel` when the announcement channel is unset,
- *   unreachable or the post failed.
+ * @returns `posted`; `already-announced` (also while another call is posting);
+ *   `not-processed` unless the latest run of that year is `processed` or
+ *   `done` with a server snapshot (an admin preview alone does not count);
+ *   `no-channel` when the announcement channel is unset; `failed` when the
+ *   channel cannot be reached or the post failed.
  */
 export async function postAnnouncement(
   ctx: BotContext,
   year: number,
-): Promise<"posted" | "already-announced" | "not-processed" | "no-channel"> {
+): Promise<"posted" | "already-announced" | "not-processed" | "no-channel" | "failed"> {
+  const run = db
+    .select({ status: schema.activityWrappedRuns.status })
+    .from(schema.activityWrappedRuns)
+    .where(eq(schema.activityWrappedRuns.year, year))
+    .orderBy(desc(schema.activityWrappedRuns.id))
+    .limit(1)
+    .get();
   const server = getServerRow(year);
-  if (!server?.data) return "not-processed";
-  if (server.announcedAt !== null) return "already-announced";
+  if (!run || (run.status !== "processed" && run.status !== "done") || !server?.data) return "not-processed";
+  if (server.announcedAt !== null || announcing.has(year)) return "already-announced";
   const channelId = getConfig().announcementChannelId;
   if (!channelId) return "no-channel";
+
+  // Claim the year before any await, so a second call sees it taken.
+  announcing.add(year);
+  const claimed = db
+    .update(schema.activityWrappedServer)
+    .set({ announcedAt: nowSec() })
+    .where(and(eq(schema.activityWrappedServer.year, year), isNull(schema.activityWrappedServer.announcedAt)))
+    .returning({ year: schema.activityWrappedServer.year })
+    .all();
+  if (claimed.length !== 1) {
+    announcing.delete(year);
+    return "already-announced";
+  }
   try {
     const channel = await ctx.client.channels.fetch(channelId).catch(() => null);
-    if (!channel?.isTextBased() || !("send" in channel)) return "no-channel";
+    if (!channel?.isTextBased() || !("send" in channel)) throw new Error("the announcement channel cannot be reached");
     const rendered = await renderBotMessage("wrapped.announce", ctx, { year, url: serverWrappedUrl(server.token) });
     await (channel as TextChannel).send(await withWrappedBanner(rendered, year));
+    return "posted";
   } catch (err) {
     console.error("[wrapped] announcement failed:", err);
-    return "no-channel";
+    // Release the claim so the announcement can be retried.
+    db.update(schema.activityWrappedServer)
+      .set({ announcedAt: null })
+      .where(eq(schema.activityWrappedServer.year, year))
+      .run();
+    return "failed";
+  } finally {
+    announcing.delete(year);
   }
-  db.update(schema.activityWrappedServer)
-    .set({ announcedAt: nowSec() })
-    .where(eq(schema.activityWrappedServer.year, year))
-    .run();
-  return "posted";
 }
 
 /**
