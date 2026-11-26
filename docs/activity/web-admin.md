@@ -19,15 +19,18 @@ src/web/app/activity/admin/
   RelationsTab.tsx  InspectPanel.tsx
   DataTab.tsx          backfill window, Wrapped overview, steps, sign-ups
   BackfillModal.tsx
-  WrappedOverview.tsx  ProcessStep.tsx  SendStep.tsx  AnnounceStep.tsx  MemberDmActions.tsx
+  WrappedOverview.tsx  ProcessStep.tsx  SendStep.tsx  AnnounceStep.tsx
+  MemberDmActions.tsx  failed-DM list rows and the member id field
+  useMemberDm.ts       resend and open link for one member
   SignupsWindow.tsx
   parts.tsx            ViewState, DataTable, Quiet, Sheet, ProgressBar, status inks
   http.ts              call(): a JSON request that never throws (409 and 502 bodies matter here)
   format.ts            dates, week labels, durations, channel labels, stepped percent, periods
   status.ts            status-strip text and the poll interval
-  steps.ts             step gates, the backfill button word, the year field
+  steps.ts             step gates, the outward-step confirms, the backfill button word, the year field
+  failed.ts            failed-DM list view, when to show it, when to fetch it again
   fixtures.ts          test fixtures only
-  *.test.ts            bun tests of format, status and steps
+  *.test.ts            bun tests of format, status, steps and failed
 ```
 
 The page returns windows inside a `flex flex-col` wrapper, like the config page: the strip, the
@@ -117,7 +120,7 @@ Four windows:
 2. **1 process** (`POST .../wrapped/run`, `{ year }`): a year field (four digits, 2015 to 2100),
    a progress bar while processing, and once processed the line that a DM has gone to whoever
    started it.
-3. **2 send dms** (`POST .../wrapped/send`, `{ announce }`): `dms go to opted-in members only: n of
+3. **2 send dms** (`POST .../wrapped/send`, `{ announce }`): `DMs go to opted-in members only: n of
    N`, the `announce when the dms finish` chip (on by default), a bar of links settled, the counts,
    and the failed DMs (see below).
 4. **3 post announcement** (`POST .../wrapped/announce`): whether and when it was posted. A 502
@@ -125,15 +128,32 @@ Four windows:
    each have their own line.
 
 Each step's button is enabled by a gate in `steps.ts` (`processGate`, `sendGate`, `announceGate`,
-`resumeGate`); a disabled button has its reason in a subtle line under it. The gates mirror the
-server: send is allowed for `processed`, `done`, or `failed` after full processing; announce for
-`processed` or `done`, once a year.
+`resumeGate`); a disabled button has its reason in a subtle line under it, a sentence-case narrator
+sentence with a full stop (`Resume the interrupted run first.`). The gates mirror the server: send
+is allowed for `processed`, `done`, or `failed` after full processing; announce for `processed` or
+`done`, once a year. Process is refused while a run is processing, sending or **interrupted**
+(processing again would abandon the interrupted run, so the reason points at `resume`). A failed
+run whose processing completed gets `The run failed. Send again, or process the year again.` on
+the announce step.
 
-**Failed DMs.** The run status carries only a count, and no route lists which members failed. The
-send window shows the count and `MemberDmActions`: a member id field with `resend` (`POST
-.../wrapped/resend/:userId?year=`) and `open link` (`GET .../wrapped/link/:userId?year=`, opens a
-new tab; the link also stays on the page). When a list route exists, render one
-`MemberDmActions`-style row per member instead.
+**Confirms.** The two outward, server-wide steps ask first, through `useConfirm` (gold): `send
+dms` (`sendConfirm(s, announce)`: "Send the DMs now to the 212 members who opted in? ...", with
+whether the announcement follows) and `post announcement` (`announceConfirm(s)`: "Post the server
+Wrapped of 2026 in the announcements channel now? ..."). Both return null when the gate is shut, so
+nothing can be confirmed for a disabled step. Re-posting the sign-up message asks the same way.
+Buttons stay disabled while their request is in flight.
+
+**Failed DMs.** Once a send has run (`showFailedList`), the send window lists
+`GET .../wrapped/failed?year=` (`WrappedFailedList`: failed DMs of members still opted in, by user
+id, at most 200) through `FailedDmList`: one row per member (name through `UserName`) with `resend`
+(`POST .../wrapped/resend/:userId?year=`) and `open link` (`GET .../wrapped/link/:userId?year=`,
+opened in a new tab and kept on the row as `their link`). `failedListView` gives the rows, the
+quiet line `And more: the list is capped at 200.` when `truncated`, and the narrator line `No failed
+DMs. Everyone who opted in got theirs.` when empty. The list is fetched again when
+`failedListKey(s)` changes (a send finishes, a new run starts, the failed count moves outside a
+send) and after every resend. Under it, `MemberDmActions` keeps a member id field with the same two
+actions for someone not on the list, such as a member who never opted in and asked for their link
+(a resend reaches them anyway, because an admin asked).
 
 ### Sign-ups
 
@@ -149,7 +169,8 @@ year already has a message. `close sign-ups` and `reopen sign-ups` swap with the
 - No colour literals, no radius, no easing. The progress fill is the system's `.progress`, moved
   in steps; the only inline style is its width.
 - Narrator lines are sentence case, second person where they speak to the admin. Labels, headings,
-  buttons and chips are lowercase. No emoji.
+  buttons and chips are lowercase. No emoji. Narrator lines write `DMs`; lowercase labels write
+  `dms` (`send dms`, `announce when the dms finish`).
 
 ## Check (NixOS)
 

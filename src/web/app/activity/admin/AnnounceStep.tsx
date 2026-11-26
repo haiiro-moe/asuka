@@ -1,16 +1,16 @@
 /**
  * Step 3 of a Wrapped run, post announcement: posts the server Wrapped link to the announcement channel,
- * at most once a year. A failed post (a 502) says so and can be tried again.
+ * at most once a year, after a confirm. A failed post (a 502) says so and can be tried again.
  *
  * @module
  */
 import { useState } from "react";
 import type { WrappedAnnounceResponse } from "../../../../plugins/activity/types/wrapped.ts";
-import { ErrorLine, InkButton, Window } from "../../ui/index.ts";
+import { ErrorLine, InkButton, Window, useConfirm } from "../../ui/index.ts";
 import { formatUtcDay } from "./format.ts";
 import { call } from "./http.ts";
 import { Quiet } from "./parts.tsx";
-import { announceGate } from "./steps.ts";
+import { announceConfirm, announceGate } from "./steps.ts";
 import type { OpsStatus } from "./useOpsStatus.ts";
 
 /** The words for each answer that is not `posted`. */
@@ -30,9 +30,12 @@ export function AnnounceStep({ ops }: { ops: OpsStatus }) {
   const s = ops.wrapped;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
   const gate = announceGate(s);
 
   const post = async () => {
+    const ask = announceConfirm(s);
+    if (!ask || !(await confirm({ label: "confirm: ~/wrapped/announce", ...ask }))) return;
     setBusy(true);
     setError(null);
     const res = await call<WrappedAnnounceResponse>("POST", "/api/activity/wrapped/announce");
@@ -45,6 +48,7 @@ export function AnnounceStep({ ops }: { ops: OpsStatus }) {
 
   return (
     <Window label="sh: ~/wrapped/3-announce" tone={error ? "love" : "pine"}>
+      {dialog}
       <p className="nar px-2">You post the server's Wrapped to the announcement channel. Once a year, and only when you say.</p>
       {s?.announcedAt != null ? (
         <p className="px-2 c6">

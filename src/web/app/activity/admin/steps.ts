@@ -1,7 +1,8 @@
 /**
  * Pure rules of the data tab: when each manual Wrapped step may be pressed (and the reason when not),
- * the backfill button's word, and the year field. Nothing here starts anything; the page only enables
- * buttons. No DOM, so these are unit-tested with `bun test`.
+ * the confirm before each outward step, the backfill button's word, and the year field. Nothing here
+ * starts anything; the page only enables buttons and asks.
+ * No DOM, so these are unit-tested with `bun test`.
  *
  * @module
  */
@@ -12,7 +13,10 @@ import { formatUtcDay } from "./format.ts";
 /** Whether a step's button is enabled, and when it is not, the reason shown in a quiet line under it. */
 export interface StepGate {
   enabled: boolean;
-  /** Lowercase sentence with a full stop; null when enabled. */
+  /**
+   * The reason, as rendered: a narrator sentence in sentence case with a full stop, in the page's voice
+   * (`Resume the interrupted run first.`). Null when enabled.
+   */
   reason: string | null;
 }
 
@@ -37,17 +41,18 @@ export function parseYearInput(text: string): number | null {
 }
 
 /**
- * Step 1, process. Refused while a run is processing or sending, and while the year field is bad. An
- * interrupted run can be processed again, but the line points at resume first.
+ * Step 1, process. Refused while a run is processing or sending, while the latest run is interrupted
+ * (processing again would abandon it, so the line points at resume), and while the year field is bad.
  *
  * @param s - The run status, or null while it is unknown.
  * @param year - The parsed year field.
  */
 export function processGate(s: WrappedRunStatus | null, year: number | null): StepGate {
-  if (!s) return shut("waiting for the run status.");
-  if (s.status === "processing") return shut("a run is processing already.");
-  if (s.status === "sending") return shut("the dms are going out; wait for them to finish.");
-  if (year == null) return shut(`the year must be a whole year from ${MIN_YEAR} to ${MAX_YEAR}.`);
+  if (!s) return shut("Waiting for the run status.");
+  if (s.status === "processing") return shut("A run is processing already.");
+  if (s.status === "sending") return shut("The DMs are going out. Wait for them to finish.");
+  if (s.status === "interrupted") return shut("Resume the interrupted run first. Processing again would abandon it.");
+  if (year == null) return shut(`The year must be a whole year from ${MIN_YEAR} to ${MAX_YEAR}.`);
   return open;
 }
 
@@ -64,18 +69,18 @@ function processingComplete(s: WrappedRunStatus): boolean {
  * @param s - The run status, or null while it is unknown.
  */
 export function sendGate(s: WrappedRunStatus | null): StepGate {
-  if (!s) return shut("waiting for the run status.");
+  if (!s) return shut("Waiting for the run status.");
   switch (s.status) {
     case "idle":
-      return shut("process a year first.");
+      return shut("Process a year first.");
     case "processing":
-      return shut("wait for processing to finish.");
+      return shut("Wait for processing to finish.");
     case "sending":
-      return shut("the dms are going out.");
+      return shut("The DMs are going out.");
     case "interrupted":
-      return shut("resume the interrupted run first.");
+      return shut("Resume the interrupted run first.");
     case "failed":
-      return processingComplete(s) ? open : shut("processing failed part way; process the year again.");
+      return processingComplete(s) ? open : shut("Processing failed part way. Process the year again.");
     case "processed":
     case "done":
       return open;
@@ -89,21 +94,71 @@ export function sendGate(s: WrappedRunStatus | null): StepGate {
  * @param s - The run status, or null while it is unknown.
  */
 export function announceGate(s: WrappedRunStatus | null): StepGate {
-  if (!s) return shut("waiting for the run status.");
-  if (s.announcedAt != null) return shut(`posted on ${formatUtcDay(s.announcedAt)}.`);
+  if (!s) return shut("Waiting for the run status.");
+  if (s.announcedAt != null) return shut(`Posted on ${formatUtcDay(s.announcedAt)}.`);
   switch (s.status) {
     case "processed":
     case "done":
       return open;
     case "sending":
-      return shut("wait for the dms to finish.");
+      return shut("Wait for the DMs to finish.");
     case "interrupted":
-      return shut("resume the interrupted run first.");
+      return shut("Resume the interrupted run first.");
     case "processing":
-      return shut("wait for processing to finish.");
-    default:
-      return shut("process a year first.");
+      return shut("Wait for processing to finish.");
+    case "failed":
+      return processingComplete(s)
+        ? shut("The run failed. Send again, or process the year again.")
+        : shut("Processing failed part way. Process the year again.");
+    case "idle":
+      return shut("Process a year first.");
   }
+}
+
+/** What a confirm dialog before an outward step says: the same fields as `useConfirm`'s options. */
+export interface StepConfirm {
+  /** The narrator sentence: what happens if you go on. */
+  message: string;
+  /** The action word, lowercase. */
+  confirmLabel: string;
+  /** Gold: these start something; nothing is deleted. */
+  tone: "gold";
+}
+
+/**
+ * The confirm before `send dms`: it writes to every opted-in member whose link is not sent yet, and a
+ * sent DM cannot be taken back. Null when the gate is shut (the button is disabled, so there is nothing
+ * to confirm).
+ *
+ * @param s - The run status.
+ * @param announce - The `announce when the dms finish` chip.
+ */
+export function sendConfirm(s: WrappedRunStatus | null, announce: boolean): StepConfirm | null {
+  if (!s || !sendGate(s).enabled) return null;
+  const who = `${s.optedIn.toLocaleString("en-GB")} ${s.optedIn === 1 ? "member who" : "members who"} opted in`;
+  const tail = announce
+    ? " When they finish, the announcement is posted in the announcements channel."
+    : " No announcement is posted.";
+  return {
+    message: `Send the DMs now to the ${who}? Links already sent are not sent again, and a DM cannot be taken back.${tail}`,
+    confirmLabel: "send dms",
+    tone: "gold",
+  };
+}
+
+/**
+ * The confirm before `post announcement`: a public post, once a year. Null when the gate is shut.
+ *
+ * @param s - The run status.
+ */
+export function announceConfirm(s: WrappedRunStatus | null): StepConfirm | null {
+  if (!s || !announceGate(s).enabled) return null;
+  const year = s.year != null ? ` of ${s.year}` : "";
+  return {
+    message: `Post the server Wrapped${year} in the announcements channel now? Everyone sees it, and it goes out once a year.`,
+    confirmLabel: "post",
+    tone: "gold",
+  };
 }
 
 /**
@@ -112,7 +167,7 @@ export function announceGate(s: WrappedRunStatus | null): StepGate {
  * @param s - The run status, or null while it is unknown.
  */
 export function resumeGate(s: WrappedRunStatus | null): StepGate {
-  return s?.status === "interrupted" ? open : shut("only an interrupted run can be resumed.");
+  return s?.status === "interrupted" ? open : shut("Only an interrupted run can be resumed.");
 }
 
 /** True when the run has built the server Wrapped, so its link can be fetched without building one. */
