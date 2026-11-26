@@ -14,7 +14,12 @@ export interface ActionCount {
 
 /** Moderation over time: `GET /api/activity/admin/moderation`. */
 export interface ModerationSeries {
-  /** Moderation actions per 7-day bucket, oldest first. */
+  /**
+   * Start of the first bucket of `weekly`, in unix seconds (UTC): the period's
+   * start. Bucket `i` covers `start + i * 7 days` up to the next one.
+   */
+  start: number;
+  /** Moderation actions per 7-day bucket, oldest first; empty weeks are 0. */
   weekly: number[];
   /** Actions in the period by kind, most frequent first. */
   byAction: ActionCount[];
@@ -82,7 +87,12 @@ export interface Economy {
   creditsIn: number;
   /** Credits spent in the period, as a positive number. */
   creditsOut: number;
-  /** Earned and spent per 7-day bucket, oldest first. */
+  /**
+   * Start of the first bucket of `weekly`, in unix seconds (UTC): the period's
+   * start, the same as {@link ModerationSeries.start} for the same period.
+   */
+  start: number;
+  /** Earned and spent per 7-day bucket, oldest first; empty weeks are zeros. */
   weekly: EconomyWeek[];
   /** Members with the highest positive net, at most 10. */
   topEarners: EarnerRow[];

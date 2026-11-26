@@ -154,12 +154,29 @@ describe("newcomers", () => {
     ]);
   });
 
-  test("a reply after the first week does not count", () => {
+  test("a reply on day 7 counts, one on day 8 does not", () => {
     const joined = NOW - 20 * DAY;
     recordMembership("20", "join", joined);
-    const first = msg({ userId: "20", ts: joined + 100 });
-    msg({ userId: "21", ts: joined + 8 * DAY, replyToUserId: "20", replyToMessageId: first });
-    expect(newcomers(P)[0]!.gotReplyInWeek).toBe(false);
+    const a = msg({ userId: "20", ts: joined + 100 });
+    msg({ userId: "21", ts: joined + 6 * DAY + 3600, replyToUserId: "20", replyToMessageId: a }); // day 7
+
+    recordMembership("22", "join", joined + 10);
+    const b = msg({ userId: "22", ts: joined + 100 });
+    msg({ userId: "21", ts: joined + 10 + 7 * DAY, replyToUserId: "22", replyToMessageId: b }); // day 8, first second
+    msg({ userId: "21", ts: joined + 7 * DAY + 3600, replyToUserId: "22", replyToMessageId: b }); // day 8
+
+    expect(newcomers(P)).toEqual([
+      { userId: "22", joinedAt: joined + 10, gotReplyInWeek: false, messagesInWeek: 1 },
+      { userId: "20", joinedAt: joined, gotReplyInWeek: true, messagesInWeek: 1 },
+    ]);
+  });
+
+  test("the last second of the first week still counts", () => {
+    const joined = NOW - 20 * DAY;
+    recordMembership("20", "join", joined);
+    const a = msg({ userId: "20", ts: joined + 100 });
+    msg({ userId: "21", ts: joined + 7 * DAY - 1, replyToUserId: "20", replyToMessageId: a });
+    expect(newcomers(P)[0]!.gotReplyInWeek).toBe(true);
   });
 
   test("messages in a thread under an excluded channel are ignored", () => {
@@ -179,6 +196,7 @@ describe("economy", () => {
     recordCredit("31", 10, 10, NOW - 2 * DAY);
     recordCredit("30", -20, 60, NOW - DAY);
     recordCredit("32", -5, 0, NOW - DAY);
+    recordCredit("33", 0, 0, NOW - DAY); // neither in nor out
     recordCredit("30", 999, 999, NOW - 40 * DAY); // before the period
     db.insert(schema.storePurchases)
       .values([
@@ -195,9 +213,43 @@ describe("economy", () => {
       { userId: "31", net: 10 },
     ]);
     expect(e.storeSales).toBe(1);
-    expect(e.weekly).toHaveLength(5);
-    expect(e.weekly.reduce((s, w) => s + w.in, 0)).toBe(90);
-    expect(e.weekly.at(-1)).toEqual({ in: 40, out: 25 });
+    expect(e.start).toBe(P.from);
+    expect(e.weekly).toEqual([
+      { in: 0, out: 0 },
+      { in: 50, out: 0 },
+      { in: 0, out: 0 },
+      { in: 0, out: 0 },
+      { in: 40, out: 25 },
+    ]);
+  });
+
+  test("an empty ledger gives zeros and padded weeks", () => {
+    expect(economy(P)).toEqual({
+      creditsIn: 0,
+      creditsOut: 0,
+      start: P.from,
+      weekly: Array.from({ length: 5 }, () => ({ in: 0, out: 0 })),
+      topEarners: [],
+      storeSales: 0,
+    });
+  });
+
+  test("top earners: positive net only, at most 10, ties by id", () => {
+    for (let i = 0; i < 12; i++) recordCredit(String(50 + i), 100 - i, 100 - i, NOW - DAY);
+    recordCredit("51", 1, 0, NOW - DAY); // ties 51 (99 + 1) with 50 (100)
+    recordCredit("70", -3, 0, NOW - DAY);
+    const top = economy(P).topEarners;
+    expect(top).toHaveLength(10);
+    expect(top.slice(0, 3)).toEqual([
+      { userId: "50", net: 100 },
+      { userId: "51", net: 100 },
+      { userId: "52", net: 98 },
+    ]);
+    expect(top.at(-1)).toEqual({ userId: "59", net: 91 });
+  });
+
+  test("moderation and economy share the bucket start for one period", () => {
+    expect(moderationSeries(P).start).toBe(economy(P).start);
   });
 });
 
@@ -313,6 +365,31 @@ describe("channelHealth", () => {
       { channelId: "c2", messages: 1, unansweredPct: 100, medianReplySec: null },
     ]);
   });
+
+  test("exact percentage and an even-count median", () => {
+    const t = NOW - 3 * DAY;
+    const a = msg({ userId: "1", ts: t });
+    const b = msg({ userId: "1", ts: t });
+    msg({ userId: "1", ts: t });
+    msg({ userId: "2", ts: t + 60, replyToUserId: "1", replyToMessageId: a });
+    msg({ userId: "3", ts: t + 121, replyToUserId: "1", replyToMessageId: b });
+    msg({ userId: "2", ts: t + 50, channelId: "c3", replyToUserId: "1", replyToMessageId: "old" }); // target not recorded
+    // c1: 5 messages, a and b answered (60 s and 121 s): 3 of 5 unanswered, median (60 + 121) / 2 = 90.5.
+    expect(channelHealth(P)).toEqual([
+      { channelId: "c1", messages: 5, unansweredPct: 60, medianReplySec: 91 },
+      { channelId: "c3", messages: 1, unansweredPct: 100, medianReplySec: null },
+    ]);
+  });
+
+  test("one decimal, and a reply to a message before the period does not count", () => {
+    const t = NOW - 3 * DAY;
+    const before = msg({ userId: "1", ts: NOW - 31 * DAY });
+    const a = msg({ userId: "1", ts: t });
+    msg({ userId: "2", ts: t + 30, replyToUserId: "1", replyToMessageId: a });
+    msg({ userId: "2", ts: t + 40, replyToUserId: "1", replyToMessageId: before });
+    // 3 messages in the period, 1 answered: 66.666... -> 66.7.
+    expect(channelHealth(P)).toEqual([{ channelId: "c1", messages: 3, unansweredPct: 66.7, medianReplySec: 30 }]);
+  });
 });
 
 describe("moderation", () => {
@@ -339,9 +416,12 @@ describe("moderation", () => {
       { action: "ban", count: 1 },
       { action: "timeout", count: 1 },
     ]);
-    expect(m.weekly).toHaveLength(5);
-    expect(m.weekly.reduce((s, n) => s + n, 0)).toBe(4);
-    expect(m.weekly.at(-1)).toBe(3);
+    expect(m.start).toBe(P.from);
+    expect(m.weekly).toEqual([0, 1, 0, 0, 3]);
+  });
+
+  test("no moderation still gives padded weeks", () => {
+    expect(moderationSeries(P)).toEqual({ start: P.from, weekly: [0, 0, 0, 0, 0], byAction: [] });
   });
 
   test("repeat offenders: warnings plus timeouts, kicks and bans, twice or more", () => {
@@ -408,5 +488,33 @@ describe("clubsAndEvents", () => {
         { id: 1, title: "movie night", attendees: 1 },
       ],
     });
+  });
+
+  test("a club silent for exactly 30 days is alive, one second more is dead", () => {
+    const old = NOW - 100 * DAY;
+    db.insert(schema.clubs)
+      .values([
+        { id: 1, name: "edge", ownerId: "1", status: "approved", channelId: "k1", createdAt: old },
+        { id: 2, name: "past", ownerId: "1", status: "approved", channelId: "k2", voiceChannelId: "kv", createdAt: old },
+        { id: 3, name: "just old enough", ownerId: "1", status: "approved", threadId: "k3", createdAt: NOW - 30 * DAY },
+      ])
+      .run();
+    msg({ channelId: "k1", ts: NOW - 30 * DAY });
+    msg({ channelId: "kv", ts: NOW - 30 * DAY - 1 });
+    expect(clubsAndEvents(P).clubs).toEqual([
+      { id: 1, name: "edge", messages: 1, dead: false },
+      { id: 2, name: "past", messages: 0, dead: true },
+      { id: 3, name: "just old enough", messages: 0, dead: true },
+    ]);
+  });
+
+  test("messages in an excluded club thread do not keep it alive", () => {
+    db.insert(schema.clubs)
+      .values({ id: 1, name: "hidden", ownerId: "1", status: "approved", channelId: "k1", createdAt: NOW - 100 * DAY })
+      .run();
+    msg({ channelId: "kt", parentChannelId: "k1", ts: NOW - DAY });
+    expect(clubsAndEvents(P).clubs).toEqual([{ id: 1, name: "hidden", messages: 1, dead: false }]);
+    setExcluded("k1");
+    expect(clubsAndEvents(P).clubs).toEqual([{ id: 1, name: "hidden", messages: 0, dead: true }]);
   });
 });

@@ -33,8 +33,16 @@ All are `GET`, `access: "admin"`, and take `?period=7d|week|30d|term|year|all` (
   (voice, which has no parent). A channel excluded today drops out of the next request, threads
   under it included, although its rows stay in the log.
 - **Periods are `from` inclusive, `to` exclusive**, in unix seconds; all buckets are UTC.
-- **Weekly series** are 7-day buckets counted from the period's start, or from the table's first
-  row when that is later (so `all` does not start in 1970). The last bucket may be partial.
+- **Weekly series** (`moderationSeries().weekly`, `economy().weekly`) are 7-day UTC buckets that
+  always start at `p.from`. Each series comes with `start` (unix seconds, the start of its first
+  bucket, equal to `p.from`), so the page can label the weeks, and two series for one period line
+  up bucket by bucket. Bucket `i` covers `start + i * 7 days` up to the next one, the last may be
+  partial, and weeks without rows are zeros. For `all` (`from` 0) that means one bucket per week
+  since 1970.
+- **Aggregation happens in SQL.** These queries run synchronously in the bot's process, next to the
+  Discord gateway, so they never load a period's rows into JavaScript: counts, sums, weekly buckets
+  and top lists are `GROUP BY`s, and only grouped rows come back (the one exception is the list of
+  answered messages' reply delays, which `channelHealth` needs for a median).
 - **Sorting is stable:** biggest first, ties broken by id or name, so two requests with the same
   data give the same order.
 
@@ -57,8 +65,10 @@ One row per member with a `join` in `activity_membership` inside the period (the
 there). Their first week is the 7 days from that join:
 
 - `messagesInWeek`: their messages in that week.
-- `gotReplyInWeek`: someone else replied to one of those messages within that week. A reply to
-  yourself does not count, and neither does a reply after the week.
+- `gotReplyInWeek`: someone else replied to one of those messages within that week, which ends
+  7 days after the join (exclusive: a reply on day 7 counts, one on day 8 does not). A reply to
+  yourself does not count. The reply lookup is bounded to the week on both sides, so it uses the
+  `ts` index.
 
 Latest join first.
 
@@ -78,23 +88,33 @@ Per channel with messages in the period, threads counted under their parent chan
 
 - `unansweredPct`: share of messages that nobody else replied to in the period, 0 to 100 with one
   decimal. Replies are messages themselves, so they count too.
-- `medianReplySec`: median time from a message to its first reply by someone else; null when no
-  message was answered.
+- `medianReplySec`: median time from a message to its first reply by someone else, rounded to
+  whole seconds (an even count takes the mean of the two middle values); null when no message was
+  answered.
 
-Busiest channel first.
+Both the message and its reply must be in the period and in a visible channel; a reply to a
+message from before the period does not answer anything. Message counts are grouped per channel in
+SQL. The delays come from a self-join of each reply onto its target by `message_id` (unique, so
+the join uses its index), grouped per target with `min(reply.ts - target.ts)`; only those per-target
+delays come back, for the median. Busiest channel first.
 
 ### Economy (`economy`)
 
-From the `activity_credits` ledger: positive deltas are `creditsIn`, negative deltas are
-`creditsOut` (returned as a positive amount), also per week. `topEarners` are the members with
-the highest positive net (earned minus spent), at most 10. `storeSales` is the number of
-`store_purchases` rows in the period.
+From the `activity_credits` ledger, summed in SQL: positive deltas are `creditsIn`, negative
+deltas are `creditsOut` (returned as a positive amount), and a zero delta counts as neither. The
+same two sums per week make `weekly` (with `start`, see above). `topEarners` are the members with
+the highest positive net (earned minus spent), at most 10, ties by id (`HAVING sum(delta) > 0
+ORDER BY sum(delta) DESC LIMIT 10`). `storeSales` is the number of `store_purchases` rows in the
+period.
 
 ### Clubs and events (`clubsAndEvents`)
 
 - **Clubs:** every approved club, with the messages in its thread, channel and voice-channel chat,
   and in threads under those. A club is `dead` when it is older than `QUIET_DAYS` and nobody wrote
-  in it during the last `QUIET_DAYS` days before `p.to`; a new, still quiet club is not dead.
+  in it during the last `QUIET_DAYS` days before `p.to`; a new, still quiet club is not dead. The
+  window includes its first second, so a club whose last message is exactly 30 days old is alive
+  and one a second older is dead. One grouped query counts every club's messages in the period
+  and a second one, bounded to the quiet window, finds which clubs had any message there.
 - **Events** that ran in the period: a one-off whose start (or end) is in it, or a recurring event
   that started before the period's end and had not stopped repeating before its start.
   `attendees` is the size of its participant list (`event_participants` has no per-occurrence

@@ -8,7 +8,7 @@
  * where the table has one, so a thread under an excluded channel is hidden too.
  * Buckets are UTC. See docs/activity/queries-admin.md.
  */
-import { and, count, eq, gt, gte, inArray, isNotNull, lt, max, min, ne, or, sql, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, isNotNull, lt, max, min, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
@@ -22,6 +22,7 @@ import type {
   CloseRow,
   CommandUsageRow,
   DriftRow,
+  EarnerRow,
   Economy,
   EconomyWeek,
   EventRow,
@@ -84,19 +85,20 @@ function inPeriod(column: Parameters<typeof gte>[0], p: Period) {
 }
 
 /**
- * Where a weekly series starts: at the period's start, or at the table's first
- * row when that is later (so `all` does not start at 1970).
- *
- * @param p - The period.
- * @param firstTs - The table's earliest timestamp; null for an empty table.
+ * Number of 7-day buckets in a weekly series. Every series starts at `p.from`,
+ * so two series for one period line up; the last bucket may be partial.
  */
-function seriesStart(p: Period, firstTs: number | null): number {
-  return firstTs == null ? p.from : Math.max(p.from, firstTs);
+function weekCount(p: Period): number {
+  return Math.max(0, Math.ceil((p.to - p.from) / WEEK));
 }
 
-/** Number of 7-day buckets from `start` to the end of the period (the last one may be partial). */
-function weekCount(p: Period, start: number): number {
-  return Math.max(0, Math.ceil((p.to - start) / WEEK));
+/**
+ * SQL for the weekly bucket index of a timestamp column, counted from
+ * `p.from`. The cast keeps the division whole even if a bound value arrives
+ * as a real; rows are in the period, so the index is never negative.
+ */
+function weekIndex(column: Parameters<typeof gte>[0], p: Period) {
+  return sql<number>`cast((${column} - ${p.from}) / ${WEEK} as integer)`;
 }
 
 /** Round to one decimal. */
@@ -115,38 +117,30 @@ function median(values: number[]): number {
 /**
  * Moderation over time.
  *
- * Counts the {@link MOD_ACTIONS} rows of `mod_log` in the period. Weekly
- * buckets start at the period's start, or at the first moderation entry when
- * that is later.
+ * Counts the {@link MOD_ACTIONS} rows of `mod_log` in the period, grouped in
+ * SQL. Weekly buckets start at `p.from` (returned as `start`), and weeks
+ * without actions are 0.
  *
  * @param p - The period.
  * @returns Actions per week and per kind (most frequent first, ties by name).
  */
 export function moderationSeries(p: Period): ModerationSeries {
-  const actions = [...MOD_ACTIONS];
-  const rows = db
-    .select({ action: modLog.action, ts: modLog.createdAt })
-    .from(modLog)
-    .where(and(inArray(modLog.action, actions), inPeriod(modLog.createdAt, p)))
-    .all();
-  const first = db
-    .select({ ts: min(modLog.createdAt) })
-    .from(modLog)
-    .where(inArray(modLog.action, actions))
-    .get();
+  const where = and(inArray(modLog.action, [...MOD_ACTIONS]), inPeriod(modLog.createdAt, p));
 
-  const start = seriesStart(p, first?.ts ?? null);
-  const weekly = new Array<number>(weekCount(p, start)).fill(0);
-  const byKind = new Map<string, number>();
-  for (const r of rows) {
-    if (r.ts >= start) weekly[Math.floor((r.ts - start) / WEEK)]!++;
-    byKind.set(r.action, (byKind.get(r.action) ?? 0) + 1);
+  const weekly = new Array<number>(weekCount(p)).fill(0);
+  const week = weekIndex(modLog.createdAt, p);
+  for (const r of db.select({ week, n: count() }).from(modLog).where(where).groupBy(week).all()) {
+    if (r.week < weekly.length) weekly[r.week] = r.n;
   }
 
-  const byAction: ActionCount[] = [...byKind]
-    .map(([action, n]) => ({ action, count: n }))
+  const byAction: ActionCount[] = db
+    .select({ action: modLog.action, count: count() })
+    .from(modLog)
+    .where(where)
+    .groupBy(modLog.action)
+    .all()
     .sort((x, y) => y.count - x.count || x.action.localeCompare(y.action));
-  return { weekly, byAction };
+  return { start: p.from, weekly, byAction };
 }
 
 /**
@@ -226,6 +220,8 @@ export function newcomers(p: Period): NewcomerRow[] {
           and(
             inArray(activityMessages.replyToMessageId, own),
             ne(activityMessages.userId, j.userId),
+            // A reply never precedes its target, so the ts index bounds this to the week.
+            gte(activityMessages.ts, joinedAt),
             lt(activityMessages.ts, weekEnd),
             notExcluded(activityMessages.channelId, activityMessages.parentChannelId),
           ),
@@ -303,51 +299,58 @@ export function drift(p: Period): DriftRow[] {
  * a thread count under the thread's parent channel. Channels without messages
  * in the period are not listed.
  *
+ * Both parts run in SQL: message counts are grouped per channel, and the
+ * first-reply delays come from a self-join of replies onto their targets (the
+ * join drives from the reply side onto the unique `message_id` index). Only the
+ * answered messages' delays reach JavaScript, for the median.
+ *
  * @param p - The period.
  * @returns Channels by message count, busiest first, ties by id.
  */
 export function channelHealth(p: Period): ChannelHealthRow[] {
-  const visible = notExcluded(activityMessages.channelId, activityMessages.parentChannelId);
-  const messages = db
-    .select({
-      messageId: activityMessages.messageId,
-      userId: activityMessages.userId,
-      channelId: activityMessages.channelId,
-      parentChannelId: activityMessages.parentChannelId,
-      ts: activityMessages.ts,
-      replyToMessageId: activityMessages.replyToMessageId,
-    })
+  const key = sql<string>`coalesce(${activityMessages.parentChannelId}, ${activityMessages.channelId})`;
+  const totals = db
+    .select({ channelId: key, messages: count() })
     .from(activityMessages)
-    .where(and(inPeriod(activityMessages.ts, p), visible))
-    .orderBy(activityMessages.ts)
+    .where(and(inPeriod(activityMessages.ts, p), notExcluded(activityMessages.channelId, activityMessages.parentChannelId)))
+    .groupBy(key)
     .all();
 
-  const byId = new Map(messages.map((m) => [m.messageId, m]));
-  const firstReply = new Map<string, number>();
-  for (const r of messages) {
-    if (r.replyToMessageId == null) continue;
-    const target = byId.get(r.replyToMessageId);
-    if (!target || target.userId === r.userId || r.ts < target.ts) continue;
-    if (!firstReply.has(target.messageId)) firstReply.set(target.messageId, r.ts - target.ts);
+  const t = alias(activityMessages, "t");
+  const r = alias(activityMessages, "r");
+  const targetKey = sql<string>`coalesce(${t.parentChannelId}, ${t.channelId})`;
+  const answered = db
+    .select({ channelId: targetKey, delay: sql<number>`min(${r.ts} - ${t.ts})` })
+    .from(r)
+    .innerJoin(t, and(eq(r.replyToMessageId, t.messageId), ne(r.userId, t.userId), gte(r.ts, t.ts)))
+    .where(
+      and(
+        inPeriod(r.ts, p),
+        inPeriod(t.ts, p),
+        notExcluded(r.channelId, r.parentChannelId),
+        notExcluded(t.channelId, t.parentChannelId),
+      ),
+    )
+    .groupBy(t.messageId)
+    .all();
+
+  const delays = new Map<string, number[]>();
+  for (const a of answered) {
+    const list = delays.get(a.channelId) ?? [];
+    list.push(a.delay);
+    delays.set(a.channelId, list);
   }
 
-  const channels = new Map<string, { messages: number; delays: number[] }>();
-  for (const m of messages) {
-    const key = m.parentChannelId ?? m.channelId;
-    const c = channels.get(key) ?? { messages: 0, delays: [] };
-    c.messages++;
-    const delay = firstReply.get(m.messageId);
-    if (delay !== undefined) c.delays.push(delay);
-    channels.set(key, c);
-  }
-
-  return [...channels]
-    .map(([channelId, c]) => ({
-      channelId,
-      messages: c.messages,
-      unansweredPct: round1((100 * (c.messages - c.delays.length)) / c.messages),
-      medianReplySec: c.delays.length > 0 ? median(c.delays) : null,
-    }))
+  return totals
+    .map((c) => {
+      const d = delays.get(c.channelId) ?? [];
+      return {
+        channelId: c.channelId,
+        messages: c.messages,
+        unansweredPct: round1((100 * (c.messages - d.length)) / c.messages),
+        medianReplySec: d.length > 0 ? median(d) : null,
+      };
+    })
     .sort((x, y) => y.messages - x.messages || x.channelId.localeCompare(y.channelId));
 }
 
@@ -356,45 +359,48 @@ export function channelHealth(p: Period): ChannelHealthRow[] {
  * `store_purchases`.
  *
  * Positive deltas are credits in, negative deltas credits out (returned as a
- * positive amount). Weekly buckets start at the period's start, or at the
- * ledger's first row when that is later.
+ * positive amount); a zero delta counts as neither. Everything is summed in
+ * SQL. Weekly buckets start at `p.from` (returned as `start`), and weeks
+ * without changes are zeros.
  *
  * @param p - The period.
  * @returns Totals, the weekly series, the top earners by positive net and the number of store purchases.
  */
 export function economy(p: Period): Economy {
-  const rows = db
-    .select({ userId: activityCredits.userId, delta: activityCredits.delta, ts: activityCredits.ts })
-    .from(activityCredits)
-    .where(inPeriod(activityCredits.ts, p))
-    .all();
-  const first = db.select({ ts: min(activityCredits.ts) }).from(activityCredits).get();
+  const where = inPeriod(activityCredits.ts, p);
+  const sums = {
+    in: sql<number>`coalesce(sum(case when ${activityCredits.delta} > 0 then ${activityCredits.delta} end), 0)`,
+    out: sql<number>`coalesce(-sum(case when ${activityCredits.delta} < 0 then ${activityCredits.delta} end), 0)`,
+  };
 
-  const start = seriesStart(p, first?.ts ?? null);
-  const weekly: EconomyWeek[] = Array.from({ length: weekCount(p, start) }, () => ({ in: 0, out: 0 }));
-  const net = new Map<string, number>();
-  let creditsIn = 0;
-  let creditsOut = 0;
-  for (const r of rows) {
-    const week = r.ts >= start ? weekly[Math.floor((r.ts - start) / WEEK)] : undefined;
-    if (r.delta > 0) {
-      creditsIn += r.delta;
-      if (week) week.in += r.delta;
-    } else {
-      creditsOut -= r.delta;
-      if (week) week.out -= r.delta;
-    }
-    net.set(r.userId, (net.get(r.userId) ?? 0) + r.delta);
+  const totals = db.select(sums).from(activityCredits).where(where).get();
+
+  const weekly: EconomyWeek[] = Array.from({ length: weekCount(p) }, () => ({ in: 0, out: 0 }));
+  const week = weekIndex(activityCredits.ts, p);
+  for (const r of db.select({ week, ...sums }).from(activityCredits).where(where).groupBy(week).all()) {
+    if (r.week < weekly.length) weekly[r.week] = { in: r.in, out: r.out };
   }
 
-  const topEarners = [...net]
-    .filter(([, n]) => n > 0)
-    .map(([userId, n]) => ({ userId, net: n }))
-    .sort((x, y) => y.net - x.net || x.userId.localeCompare(y.userId))
-    .slice(0, TOP_EARNERS_LIMIT);
+  const net = sql<number>`sum(${activityCredits.delta})`;
+  const topEarners: EarnerRow[] = db
+    .select({ userId: activityCredits.userId, net })
+    .from(activityCredits)
+    .where(where)
+    .groupBy(activityCredits.userId)
+    .having(gt(net, 0))
+    .orderBy(desc(net), activityCredits.userId)
+    .limit(TOP_EARNERS_LIMIT)
+    .all();
 
   const sales = db.select({ n: count() }).from(storePurchases).where(inPeriod(storePurchases.createdAt, p)).get();
-  return { creditsIn, creditsOut, weekly, topEarners, storeSales: sales?.n ?? 0 };
+  return {
+    creditsIn: totals?.in ?? 0,
+    creditsOut: totals?.out ?? 0,
+    start: p.from,
+    weekly,
+    topEarners,
+    storeSales: sales?.n ?? 0,
+  };
 }
 
 /**
@@ -414,8 +420,7 @@ export function economy(p: Period): Economy {
  */
 export function clubsAndEvents(p: Period): ClubsAndEvents {
   const quietStart = p.to - QUIET_DAYS * DAY;
-  const clubRows: ClubRow[] = [];
-  for (const c of db
+  const approved = db
     .select({
       id: clubs.id,
       name: clubs.name,
@@ -426,22 +431,51 @@ export function clubsAndEvents(p: Period): ClubsAndEvents {
     })
     .from(clubs)
     .where(eq(clubs.status, "approved"))
-    .all()) {
-    const channels = [c.threadId, c.channelId, c.voiceChannelId].filter((id): id is string => id != null);
-    let messages = 0;
-    let lastTs: number | null = null;
-    if (channels.length > 0) {
-      const inClub = and(
-        or(inArray(activityMessages.channelId, channels), inArray(activityMessages.parentChannelId, channels)),
-        notExcluded(activityMessages.channelId, activityMessages.parentChannelId),
-      );
-      messages = db.select({ n: count() }).from(activityMessages).where(and(inClub, inPeriod(activityMessages.ts, p))).get()?.n ?? 0;
-      lastTs = db.select({ ts: max(activityMessages.ts) }).from(activityMessages).where(and(inClub, lt(activityMessages.ts, p.to))).get()?.ts ?? null;
-    }
-    const dead = c.createdAt <= quietStart && (lastTs == null || lastTs < quietStart);
-    clubRows.push({ id: c.id, name: c.name, messages, dead });
+    .all();
+
+  // Which club each channel belongs to, so one grouped query serves every club.
+  const clubOf = new Map<string, number>();
+  for (const c of approved) {
+    for (const id of [c.threadId, c.channelId, c.voiceChannelId]) if (id != null) clubOf.set(id, c.id);
   }
-  clubRows.sort((x, y) => y.messages - x.messages || x.id - y.id);
+  const channels = [...clubOf.keys()];
+
+  /** Messages per club in `[from, to)`, grouped in SQL by channel and parent. */
+  const perClub = (from: number, to: number): Map<number, number> => {
+    const out = new Map<number, number>();
+    if (channels.length === 0) return out;
+    const rows = db
+      .select({ channelId: activityMessages.channelId, parentChannelId: activityMessages.parentChannelId, n: count() })
+      .from(activityMessages)
+      .where(
+        and(
+          gte(activityMessages.ts, from),
+          lt(activityMessages.ts, to),
+          or(inArray(activityMessages.channelId, channels), inArray(activityMessages.parentChannelId, channels)),
+          notExcluded(activityMessages.channelId, activityMessages.parentChannelId),
+        ),
+      )
+      .groupBy(activityMessages.channelId, activityMessages.parentChannelId)
+      .all();
+    for (const r of rows) {
+      const club = clubOf.get(r.channelId) ?? (r.parentChannelId == null ? undefined : clubOf.get(r.parentChannelId));
+      if (club !== undefined) out.set(club, (out.get(club) ?? 0) + r.n);
+    }
+    return out;
+  };
+
+  const inPeriodCounts = perClub(p.from, p.to);
+  // Dead-club check: only whether anything was written in the quiet window, a bounded range.
+  const recent = perClub(quietStart, p.to);
+
+  const clubRows: ClubRow[] = approved
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      messages: inPeriodCounts.get(c.id) ?? 0,
+      dead: c.createdAt <= quietStart && !recent.has(c.id),
+    }))
+    .sort((x, y) => y.messages - x.messages || x.id - y.id);
 
   const ran = and(
     lt(events.startAt, p.to),
