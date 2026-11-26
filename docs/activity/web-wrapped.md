@@ -6,31 +6,45 @@ server's story at `/wrapped/s/<token>`. The data, links, runs and routes are in
 
 ## Rules
 
-- **Public, no session.** The pages send no cookie (`credentials: "omit"`); the token in the path is
-  the authorisation. An unknown or truncated token gets the route's uniform 404, and the page shows
-  one narrator line (`This link opens nothing. ...`), never a blank page. Any other failure shows a
-  narrator line with a `retry` button.
+- **Public, no session.** Every request the pages make (the story JSON, the outro's card image and
+  `save image`) goes through `fetch` with `credentials: "omit"`, so no cookie is sent; the card image
+  is shown from a blob URL, not a plain `<img src>`. The token in the path is the authorisation. An
+  unknown or truncated token gets the route's uniform 404, and the page shows one narrator line
+  (`This link opens nothing. ...`), never a blank page. Any other failure shows a narrator line with a
+  `retry` button.
 - **Generic title.** Both pages set `document.title` to `wrapped · asuka`. The token and names never
   go into the title.
 - **Always a phone column.** A tall Window (`fish: ~/wrapped/<year>`, `fish: ~/wrapped/server/<year>`)
   on the blob backdrop: the full viewport height below 721px, and from 721px up centred with a 9:19.5
-  shape, at most 420px wide and at most 910px tall. It is never stretched wide.
+  shape, at most 420px wide and at most `min(100dvh - 48px, 910px)` tall. It is never stretched wide.
+- **Nothing is ever out of reach.** The slide box scrolls vertically (`overflow-y: auto`,
+  `overscroll-behavior: contain`, the thin foam scroll bar of haiiro windows). A slide is centred
+  with `margin-block: auto`, so one taller than its box starts at its top and scrolls instead of being
+  clipped. This holds at 320x568, on a landscape phone (568x320) and in a short desktop window.
 - **haiiro only.** Bundle classes for everything that has a look (`window`, `progress_track`,
   `progress_fill`, `veil`, `stat-panel`, `kv`, `fx-cols`, `fx-axis`, `fx-rank`, `mirror`, `nar`, `cmd`,
-  `kbd`, `disp`), Tailwind for layout only. Big readouts are Jacquard 24 at 86px (64px when longer than
-  seven characters); names are IBM at 32px; narrator lines are sentence-case rose. Emoji appear only as
-  data; a custom emoji is written `:name:` and no image is fetched, so the page talks to no other host.
+  `kbd`, `disp`), Tailwind for layout only. Big readouts are Jacquard 24, sized
+  `clamp(28px, 13dvh, 86px)` (`clamp(28px, 10dvh, 64px)` when longer than seven characters): 86px or
+  64px on tall screens (64px and up from 641px of viewport height), smaller on short ones, never below
+  28px. Names are IBM at 32px; narrator lines are sentence-case rose. Emoji appear only as data; a
+  custom emoji is written `:name:` and no emoji image is fetched, so the page talks to no other host.
+- **Short screens** (viewport height 640px or less): slide gaps go from 16px to 8px, the hour columns
+  to 48px, the mirror bars to 24px a side, stat cells to 8px padding and rank rows to their text
+  height. The titles slide always lists at most four titles (`titlesShown`) and then
+  `and n more`.
 
 ## Code
 
 ```
 src/web/app/activity/wrapped/
-  story.ts               pure: StoryState, tick, go, veilFrame, segmentFill, keyAction,
-                         personalSlides, serverSlides, label helpers (hourLabel, ordinal, emojiLabel,
-                         emojiKeyLabel, readoutSize, formatNumber, capitalise)
+  story.ts               pure: StoryState, tick, go, veilFrame, segmentFill, keyAction, classifyTap,
+                         personalSlides, serverSlides, titlesShown, label helpers (hourLabel, ordinal,
+                         emojiLabel, emojiKeyLabel, readoutSize, formatNumber, capitalise)
   story.test.ts          bun test for all of the above
   slides.tsx             StoryShell, StoryFrame (the player), usePublicJson, StoryNotice,
                          PersonalSlideView, ServerSlideView
+  slides.test.ts         server-side render checks: the scroll container, the prev / next buttons,
+                         the capped titles list
   WrappedStory.tsx       /wrapped/:token
   WrappedServerStory.tsx /wrapped/s/:token
 ```
@@ -47,33 +61,54 @@ From the top of the window down:
    `pause` button.
 2. The progress bar: one `progress_track` per slide. Seen slides are full, later ones empty, the
    current one fills in sixths (`segmentFill`); the last slide's segment is full once reached.
-3. The slide area. Two real `<button>`s cover it: the left 35% (`previous slide`) and the right 65%
-   (`next slide`). The slide itself takes no pointer events.
+3. The slide area: the scroll container (`data-slide-scroll`, focusable, a group named `slide n of N`)
+   with the slide in it. A new slide starts scrolled to the top. Two real buttons, `previous slide`
+   and `next slide` (labelled `back` and `next`), sit at its bottom corners, visually hidden until
+   they get keyboard focus, so assistive tech and the keyboard have real controls for both zones.
 4. A hint row (`tap left to go back, right to go on` with the keys), which on the last slide becomes
-   `save image` (downloads the card PNG) and `copy link` (copies the page address).
+   `save image` (downloads the card PNG) and `copy link` (copies the page address). This row is
+   outside the slide area, so nothing covers those buttons.
+
+### Tap versus scroll
+
+There is no overlay over the slide. The slide area listens to pointer events and decides on release
+with `classifyTap(dx, dy, ms, x, width)`:
+
+- a press that moved more than 10px (`TAP_MOVE_PX`), or lasted more than 300 ms (`TAP_MAX_MS`), is a
+  scroll, drag or long press: `none`;
+- otherwise a press that started in the left 35% (`PREV_ZONE`) of the area is `prev`, anywhere else
+  (the 35% line included) `next`;
+- a width that is not a positive number gives `none`.
+
+Only the primary pointer counts (the left mouse button). A press that starts on a button or link, or
+on the scroll bar, is ignored, and `pointercancel` (the browser taking over a touch to scroll) drops
+the press.
 
 | Input | Does |
 |---|---|
-| left 35% / left arrow | previous slide (clamped) |
-| right 65% / right arrow | next slide (clamped) |
+| tap in the left 35% / left arrow / `previous slide` | previous slide (clamped) |
+| tap anywhere else / right arrow / `next slide` | next slide (clamped) |
+| drag, swipe, wheel | scrolls the slide |
 | Space | play or pause (not when a button or link has focus, so it keeps its own meaning) |
 
 The key listener is on `window` and removed on unmount; it ignores keys with Ctrl, Alt or Meta and
 keys typed into a field.
 
 **Autoplay**: `tick` once a second (`STEP_MS`); after `STEPS_PER_SLIDE` (6) steps the story moves on.
-It stops on the last slide and does nothing while paused. Moving by hand keeps the pause as it was.
+It stops on the last slide, does nothing while paused and holds while the tab is hidden. Moving by
+hand keeps the pause as it was.
 
 **The veil**: on a slide change the bundle's `.veil` runs over three 100 ms frames (`veilFrame`):
 frame 1 `.veil` (sparse), frame 2 `.veil.heavy` (dense; the slide swaps here), frame 3 `.veil`, then
-nothing. Stepped with `requestAnimationFrame`, never eased.
+nothing. Stepped with `requestAnimationFrame`, never eased. The veil takes no pointer events.
 
 **Reduced motion** (`prefers-reduced-motion: reduce`): no veil (the slide cuts), no autoplay, and the
-play / pause button and the Space hint are not shown. Tapping and the arrow keys still work.
+play / pause button and the Space hint are not shown. Tapping, the buttons and the arrow keys still
+work.
 
-`save image` fetches the card route; when the card cannot be drawn the route answers JSON, and the page
-says `The card would not draw. You try again later.` instead of saving it. The outro's image falls back
-to a dither placeholder the same way.
+`save image` and the outro's image both fetch the card route. When the card cannot be drawn the route
+answers JSON, not an image: `save image` then says `The card would not draw. You try again later.`
+instead of saving, and the outro shows a dither placeholder (also shown while the card loads).
 
 ## The personal story
 
@@ -90,7 +125,7 @@ true to show:
 | `soulmate` | a soulmate or a most-replied-to member | the soulmate's name; without voice the line drops the shared calls |
 | `club` | `data.club` | the club, members, messages and voice ranks |
 | `president` | `data.presidency` | days in office, votes, messages in office, emoji in office, the mirror bars (the server per day over the year against during the terms) |
-| `titles` | `titles.length > 0` | each title (`★ label`) with its detail |
+| `titles` | `titles.length > 0` | the count, then up to four titles (`★ label` with its detail) and `and n more` |
 | `outro` | always | the card image (`t/:token/card.png`), then `save image` and `copy link` |
 
 ## The server story

@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { ServerWrapped, WrappedData } from "../../../../plugins/activity/types/wrapped.ts";
 import {
   STEPS_PER_SLIDE,
+  TITLES_SHOWN,
+  classifyTap,
   emojiKeyLabel,
+  titlesShown,
   emojiLabel,
   go,
   hourLabel,
@@ -259,5 +262,48 @@ describe("labels", () => {
   test("readoutSize keeps short readouts at 86px and never goes below 64px", () => {
     expect(readoutSize("2026")).toBe(86);
     expect(readoutSize("1,234,567")).toBe(64);
+  });
+});
+
+describe("classifyTap", () => {
+  test("a short tap in the left 35% goes back", () => {
+    expect(classifyTap(0, 0, 100, 10, 400)).toBe("prev");
+    expect(classifyTap(3, -4, 200, 139, 400)).toBe("prev");
+  });
+
+  test("a short tap in the right 65% goes on", () => {
+    expect(classifyTap(0, 0, 100, 300, 400)).toBe("next");
+  });
+
+  test("the 35% boundary belongs to the right zone", () => {
+    expect(classifyTap(0, 0, 100, 140, 400)).toBe("next");
+    expect(classifyTap(0, 0, 100, 139.9, 400)).toBe("prev");
+  });
+
+  test("a movement over the threshold is a scroll or drag, not a tap", () => {
+    expect(classifyTap(0, 11, 100, 300, 400)).toBe("none");
+    expect(classifyTap(-11, 0, 100, 10, 400)).toBe("none");
+    expect(classifyTap(8, 8, 100, 10, 400)).toBe("none");
+    expect(classifyTap(0, 10, 100, 300, 400)).toBe("next");
+  });
+
+  test("a long press is not a tap", () => {
+    expect(classifyTap(0, 0, 301, 300, 400)).toBe("none");
+    expect(classifyTap(0, 0, 300, 300, 400)).toBe("next");
+  });
+
+  test("a zero or bad width does not throw and does nothing", () => {
+    expect(classifyTap(0, 0, 100, 0, 0)).toBe("none");
+    expect(classifyTap(0, 0, 100, 5, Number.NaN)).toBe("none");
+  });
+});
+
+describe("titlesShown", () => {
+  test("shows up to four titles and counts the rest", () => {
+    expect(TITLES_SHOWN).toBe(4);
+    expect(titlesShown(0)).toEqual({ shown: 0, more: 0 });
+    expect(titlesShown(3)).toEqual({ shown: 3, more: 0 });
+    expect(titlesShown(4)).toEqual({ shown: 4, more: 0 });
+    expect(titlesShown(7)).toEqual({ shown: 4, more: 3 });
   });
 });

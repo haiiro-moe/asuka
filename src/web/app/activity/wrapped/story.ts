@@ -98,6 +98,49 @@ export function keyAction(key: string): KeyAction | null {
   return null;
 }
 
+/** A pointer that moved further than this, in CSS pixels, was a scroll or a drag, not a tap. */
+export const TAP_MOVE_PX = 10;
+
+/** A pointer held longer than this, in milliseconds, was a press, not a tap. */
+export const TAP_MAX_MS = 300;
+
+/** The share of the slide's width, from the left, that goes back; the rest goes on. */
+export const PREV_ZONE = 0.35;
+
+/**
+ * Decides what a pointer gesture on the slide area does, so tapping never blocks scrolling. A tap is a
+ * press that moved at most {@link TAP_MOVE_PX} and lasted at most {@link TAP_MAX_MS}; in the left
+ * {@link PREV_ZONE} of the width it goes back, anywhere else (the 35% line included) it goes on.
+ * Anything else, and a width that is not a positive number, is `none`.
+ *
+ * @param dx - Horizontal movement between pointer down and up, in CSS pixels.
+ * @param dy - Vertical movement, in CSS pixels.
+ * @param ms - Time between pointer down and up.
+ * @param x - Where the pointer went down, from the slide area's left edge.
+ * @param width - The slide area's width.
+ */
+export function classifyTap(dx: number, dy: number, ms: number, x: number, width: number): "prev" | "next" | "none" {
+  if (!(width > 0)) return "none";
+  if (Math.hypot(dx, dy) > TAP_MOVE_PX || ms > TAP_MAX_MS) return "none";
+  return x < width * PREV_ZONE ? "prev" : "next";
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+
+/** How many titles the titles slide lists before it says `and n more`. */
+export const TITLES_SHOWN = 4;
+
+/**
+ * How many of a member's titles the titles slide lists, and how many it only counts.
+ *
+ * @param count - The member's titles.
+ * @param max - The most to list; defaults to {@link TITLES_SHOWN}.
+ */
+export function titlesShown(count: number, max: number = TITLES_SHOWN): { shown: number; more: number } {
+  const shown = Math.min(Math.max(0, count), max);
+  return { shown, more: Math.max(0, count - shown) };
+}
+
 /* ------------------------------------------------------------------------------------------------ */
 
 /** The slides a personal story can have, in the order they play. */

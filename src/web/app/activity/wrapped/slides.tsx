@@ -10,13 +10,14 @@
  *
  * @module
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { ServerWrapped, WrappedLinkResponse } from "../../../../plugins/activity/types/wrapped.ts";
 import { ActivityColumns, ActivityRank, type ActivityRankRow } from "../charts.tsx";
 import { Blobs, ErrorLine, InkButton, Loading, PromptLine, Saved, Window, cx, useReducedMotion } from "../../ui/index.ts";
 import {
   STEP_MS,
   capitalise,
+  classifyTap,
   emojiKeyLabel,
   emojiLabel,
   formatNumber,
@@ -27,6 +28,7 @@ import {
   readoutSize,
   segmentFill,
   tick,
+  titlesShown,
   veilFrame,
   type StoryState,
 } from "./story.ts";
@@ -85,12 +87,14 @@ export interface StoryFrameProps<T extends string> {
 }
 
 /**
- * The story player. Autoplay moves one step a second, six steps a slide, and can be paused; the progress
- * bar fills in those steps. The left 35% of the slide goes back and the right 65% goes on (real buttons),
- * as do the left and right arrow keys; Space plays or pauses. A slide change runs the dither veil over
- * three 100 ms frames (sparse, dense, sparse) and swaps the slide on the dense one. Under
- * `prefers-reduced-motion` there is no veil and no autoplay (the play control is not shown). On the last
- * slide the hint row becomes `save image` and `copy link`.
+ * The story player. Autoplay moves one step a second, six steps a slide, and can be paused (and holds
+ * while the tab is hidden); the progress bar fills in those steps. A tap on the left 35% of the slide
+ * goes back and anywhere else goes on, decided by {@link classifyTap} so a scroll or a drag is never
+ * read as a tap; the slide itself scrolls when it is taller than its box. Real `previous slide` and
+ * `next slide` buttons (hidden until focused) and the left and right arrow keys do the same; Space
+ * plays or pauses. A slide change runs the dither veil over three 100 ms frames (sparse, dense, sparse)
+ * and swaps the slide on the dense one. Under `prefers-reduced-motion` there is no veil and no autoplay
+ * (the play control is not shown). On the last slide the hint row becomes `save image` and `copy link`.
  */
 export function StoryFrame<T extends string>({ label, who, slides, render, cardUrl, cardFile }: StoryFrameProps<T>) {
   const count = slides.length;
@@ -99,11 +103,16 @@ export function StoryFrame<T extends string>({ label, who, slides, render, cardU
   const [shown, setShown] = useState(0);
   const shownRef = useRef(0);
   const [frame, setFrame] = useState<0 | 1 | 2 | 3>(0);
+  const areaRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const downRef = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
 
-  // Autoplay: one step a second, never under reduced motion.
+  // Autoplay: one step a second, never under reduced motion, held while the tab is hidden.
   useEffect(() => {
     if (reduced || state.paused) return;
-    const t = setInterval(() => setState((s) => tick(s, count)), STEP_MS);
+    const t = setInterval(() => {
+      if (!document.hidden) setState((s) => tick(s, count));
+    }, STEP_MS);
     return () => clearInterval(t);
   }, [reduced, state.paused, count]);
 
@@ -135,6 +144,11 @@ export function StoryFrame<T extends string>({ label, who, slides, render, cardU
     return () => cancelAnimationFrame(raf);
   }, [state.slide, reduced]);
 
+  // A new slide starts at its top.
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [shown]);
+
   // Arrow keys move, Space plays or pauses. Space on a focused button keeps its own meaning.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -162,6 +176,30 @@ export function StoryFrame<T extends string>({ label, who, slides, render, cardU
   const last = state.slide === count - 1;
   const current = slides[shown] ?? slides[0];
 
+  // Tap versus scroll: remember where a primary press went down, decide on release.
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    downRef.current = null;
+    if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest("button, a, input, textarea, select")) return;
+    const sc = scrollRef.current;
+    // a press on the scroll bar is not a tap
+    if (sc && e.clientX - sc.getBoundingClientRect().left >= sc.clientWidth) return;
+    downRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp };
+  };
+  const onPointerUp = (e: PointerEvent<HTMLDivElement>) => {
+    const d = downRef.current;
+    downRef.current = null;
+    const rect = areaRef.current?.getBoundingClientRect();
+    if (!d || d.id !== e.pointerId || !rect) return;
+    const action = classifyTap(e.clientX - d.x, e.clientY - d.y, e.timeStamp - d.t, d.x - rect.left, rect.width);
+    if (action === "prev") prev();
+    else if (action === "next") next();
+  };
+  const onPointerCancel = () => {
+    downRef.current = null;
+  };
+
   return (
     <StoryShell label={label} ariaLabel="wrapped story">
       <div className="flex min-h-[32px] items-center gap-3">
@@ -184,21 +222,32 @@ export function StoryFrame<T extends string>({ label, who, slides, render, cardU
         slide {state.slide + 1} of {count}
       </p>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div className="pointer-events-none h-full">{current !== undefined && render(current)}</div>
+      <div
+        ref={areaRef}
+        className="relative min-h-0 flex-1 cursor-pointer"
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+      >
+        <div
+          ref={scrollRef}
+          data-slide-scroll=""
+          tabIndex={0}
+          role="group"
+          aria-label={`slide ${shown + 1} of ${count}`}
+          className="h-full overflow-y-auto overscroll-contain [scrollbar-color:var(--color-foam)_var(--color-muted)] [scrollbar-width:thin] -outline-offset-2"
+        >
+          {current !== undefined && render(current)}
+        </div>
         {frame !== 0 && <div className={cx("veil pointer-events-none", frame === 2 && "heavy")} aria-hidden="true" />}
-        <button
-          type="button"
-          aria-label="previous slide"
-          className="absolute inset-y-0 left-0 w-[35%] cursor-pointer border-0 bg-transparent p-0 -outline-offset-2"
-          onClick={prev}
-        />
-        <button
-          type="button"
-          aria-label="next slide"
-          className="absolute inset-y-0 right-0 w-[65%] cursor-pointer border-0 bg-transparent p-0 -outline-offset-2"
-          onClick={next}
-        />
+        <div className="pointer-events-none absolute inset-x-1 bottom-1 z-10 flex justify-between">
+          <InkButton tone="text" aria-label="previous slide" className="pointer-events-auto sr-only focus:not-sr-only" onClick={prev}>
+            back
+          </InkButton>
+          <InkButton tone="text" aria-label="next slide" className="pointer-events-auto sr-only focus:not-sr-only" onClick={next}>
+            next
+          </InkButton>
+        </div>
       </div>
 
       {last ? (
@@ -342,11 +391,29 @@ export function StoryNotice({ label, load, retry }: { label: string; load: Publi
 /* ------------------------------------------------------------------------------------------------ */
 /* Slide parts                                                                                       */
 
-/** One slide: a `» label` prompt, then its parts, pushed to the middle of the slide area. */
+/**
+ * One slide: a `» label` prompt, then its parts. It sits in the scroll container: it is at least as tall
+ * as the slide box and centred in it (`margin-block: auto`), and a slide taller than the box starts at
+ * its top and scrolls, so nothing is ever clipped. Below 641px of viewport height the gaps, columns,
+ * mirror bars, stat cells and rank rows tighten. A `fill` slide (the outro) takes exactly the box, so
+ * its card shrinks to fit.
+ */
 function Slide({ label, fill, children }: { label: string; fill?: boolean; children: ReactNode }) {
   return (
-    <div className="flex h-full flex-col px-1">
-      <div className={cx("flex flex-col gap-4", fill ? "min-h-0 flex-1 py-2" : "my-auto")}>
+    <div
+      className={cx(
+        "flex flex-col px-1",
+        fill ? "h-full" : "min-h-full",
+        "[@media(max-height:640px)]:[&_.fx-cols]:h-12 [@media(max-height:640px)]:[&_.mirror>.dn]:h-6 [@media(max-height:640px)]:[&_.mirror>.up]:h-6",
+        "[@media(max-height:640px)]:[&_.stat-panel>div]:p-2 [@media(max-height:640px)]:[&_.fx-rank_.row]:min-h-0 [@media(max-height:640px)]:[&_.fx-rank_.row]:py-[2px]",
+      )}
+    >
+      <div
+        className={cx(
+          "flex flex-col gap-4 [@media(max-height:640px)]:gap-2",
+          fill ? "min-h-0 flex-1 py-2" : "my-auto py-1",
+        )}
+      >
         <p className="cmd">{label}</p>
         {children}
       </div>
@@ -354,10 +421,20 @@ function Slide({ label, fill, children }: { label: string; fill?: boolean; child
   );
 }
 
-/** A big readout in Jacquard 24 (86px, or 64px for long ones), with an optional IBM unit after it. */
+/**
+ * A big readout in Jacquard 24 with an optional IBM unit after it. On a tall screen it is 86px (64px
+ * for long readouts, see `readoutSize`); it scales down with the viewport height on short screens,
+ * never below 28px.
+ */
 function Readout({ value, unit, tone = "c3" }: { value: string; unit?: string; tone?: "c3" | "c6" | "c7" | null }) {
   return (
-    <p className={cx("disp break-all", tone, readoutSize(value) === 86 ? "text-[86px]" : "text-[64px]")}>
+    <p
+      className={cx(
+        "disp break-all",
+        tone,
+        readoutSize(value) === 86 ? "text-[length:clamp(28px,13dvh,86px)]" : "text-[length:clamp(28px,10dvh,64px)]",
+      )}
+    >
       {value}
       {unit && <span className="ml-2 font-mono text-nav text-subtle">{unit}</span>}
     </p>
@@ -475,20 +552,52 @@ function channelParts(name: string | null, parentName: string | null): { label: 
   return { label: name !== null ? `#${name}` : "a channel" };
 }
 
-/** The card image of the outro in a hairline frame; a dither placeholder when it will not load. */
+/**
+ * The card image of the outro in a hairline frame. The PNG is fetched with `credentials: "omit"` (like
+ * every request of these pages, so no cookie goes with it) and shown from a blob URL, which is revoked
+ * when the slide goes. A dither placeholder stands in while it loads and when the card will not draw
+ * (the route then answers JSON, not an image).
+ */
 function StoryCard({ src, alt }: { src: string; alt: string }) {
+  const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    let made: string | null = null;
+    setUrl(null);
+    setFailed(false);
+    fetch(src, { credentials: "omit" })
+      .then(async (res) => {
+        const type = res.headers.get("content-type") ?? "";
+        if (!res.ok || !type.startsWith("image/")) throw new Error("no image");
+        const blob = await res.blob();
+        if (!live) return;
+        made = URL.createObjectURL(blob);
+        setUrl(made);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
+    return () => {
+      live = false;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [src]);
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center">
-      {failed ? (
-        <span className="dith block aspect-[4/5] h-full max-h-[320px] border border-ink-muted" role="img" aria-label={alt} />
-      ) : (
+      {url && !failed ? (
         <img
-          src={src}
+          src={url}
           alt={alt}
           decoding="async"
           className="block h-auto max-h-full w-auto max-w-full border border-ink-muted object-contain"
           onError={() => setFailed(true)}
+        />
+      ) : (
+        <span
+          className="dith block aspect-[4/5] h-full max-h-[320px] border border-ink-muted"
+          role="img"
+          aria-label={failed ? alt : `${alt}, loading`}
         />
       )}
     </div>
@@ -646,21 +755,24 @@ export function PersonalSlideView({ slide, res, cardUrl }: PersonalSlideViewProp
         </Slide>
       );
     }
-    case "titles":
+    case "titles": {
+      const { shown, more } = titlesShown(d.titles.length);
       return (
         <Slide label="titles">
           <Readout value={String(d.titles.length)} unit={d.titles.length === 1 ? "title" : "titles"} />
           <ul className="flex flex-col gap-2">
-            {d.titles.map((t) => (
+            {d.titles.slice(0, shown).map((t) => (
               <li key={t.key} className="flex flex-col">
                 <span className="c3">★ {t.label}</span>
                 <span className="text-label text-subtle">{t.detail}</span>
               </li>
             ))}
           </ul>
+          {more > 0 && <p className="text-label text-subtle">and {formatNumber(more)} more</p>}
           <Nar>You took {d.titles.length === 1 ? "a title" : `${d.titles.length} titles`} this year.</Nar>
         </Slide>
       );
+    }
     case "outro":
       return (
         <Slide label={`that was ${d.year}`} fill>
