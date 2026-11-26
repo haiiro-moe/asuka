@@ -141,8 +141,8 @@ const createMessageItem: ApiRoute = {
         description:
           typeof body?.description === "string"
             ? body.description
-            : `One-time magic link to rewrite the bot's “${def.label}” message.`,
-        icon: "✏️",
+            : `one-time magic link to rewrite the bot's “${def.label}” message.`,
+        icon: "»",
         price,
         kind: "panel_access",
         panel: "botmessage",

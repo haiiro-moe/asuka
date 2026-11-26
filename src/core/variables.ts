@@ -89,6 +89,6 @@ export async function resolveVariable(name: string, ctx: BotContext): Promise<st
     return stringifyVariableResult(await runVariableCode(variable.code, ctx));
   } catch (err) {
     console.error(`[variables] "${name}" failed:`, err);
-    return `⚠${name}`;
+    return `×${name}`;
   }
 }

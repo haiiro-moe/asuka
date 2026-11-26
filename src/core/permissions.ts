@@ -65,20 +65,20 @@ export function checkCommandAccess(
 ): string | null {
   const member = interaction.member as GuildMember | null;
   if (!member || !("permissions" in member)) {
-    return "This command can only be used inside the server.";
+    return "this command only works inside the server.";
   }
 
   if (
     command.requiredPermission !== undefined &&
     !hasPermission(member, command.requiredPermission)
   ) {
-    return "You don't have permission to use this command.";
+    return "you don't have permission to use this command.";
   }
 
   if (command.requiredRoleConfigKey) {
     const roleId = config[command.requiredRoleConfigKey] as string | null;
     if (!hasRoleOrHigher(member, roleId)) {
-      return "You don't have the required role to use this command.";
+      return "you don't have the role this command needs.";
     }
   }
 

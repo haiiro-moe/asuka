@@ -26,15 +26,15 @@ export interface RecurrenceSpec {
 }
 
 export const RECURRENCE_LABELS: Record<Recurrence, string> = {
-  none: "One-off",
-  daily: "Daily",
-  weekdays: "Weekdays (Mon–Fri)",
-  weekly: "Weekly",
-  biweekly: "Every 2 weeks",
-  monthly_day: "Monthly (same day of month)",
-  monthly_weekday: "Monthly (same nth weekday)",
-  yearly: "Yearly",
-  custom_days: "Every N days",
+  none: "one-off",
+  daily: "daily",
+  weekdays: "weekdays (Mon–Fri)",
+  weekly: "weekly",
+  biweekly: "every 2 weeks",
+  monthly_day: "monthly (same day of month)",
+  monthly_weekday: "monthly (same nth weekday)",
+  yearly: "yearly",
+  custom_days: "every N days",
 };
 
 /** Safety valve: never iterate more than this many candidate occurrences. */

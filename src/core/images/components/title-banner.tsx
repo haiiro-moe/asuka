@@ -1,31 +1,44 @@
-import { OutlinedText, sanitizeText } from "./outlined-text.tsx";
-import { randomVibrant } from "../util.ts";
+import { StillBackdrop } from "./haiiro/still-backdrop.tsx";
+import { Text, cleanText, type Tone } from "./haiiro/text.tsx";
+import { Title } from "./haiiro/title.tsx";
 
+/** Banner width in px. */
 export const BANNER_WIDTH = 900;
+/** Banner height in px. */
 export const BANNER_HEIGHT = 160;
 
+/** Props for {@link TitleBanner}. */
+export interface TitleBannerProps {
+  /** The announcement title. Drawn lowercase, as haiiro titles are. */
+  title: string;
+  /** Title ink (default `text`). Must be a token name, never a CSS colour. */
+  color?: Tone;
+}
+
 /**
- * Transparent-background announcement title: huge comic text in a random
- * vibrant color with a black outline, slightly tilted for energy.
+ * Announcement banner in haiiro: the still dithered backdrop, a prompt line
+ * (`@ asuka » announce`) and the title in Jacquard 24 with the hard base shadow, like a
+ * page head. Titles up to 22 characters use the 86px display size; longer ones drop to
+ * 43px and may wrap to two lines.
+ *
+ * @param props - {@link TitleBannerProps}
  */
-export function TitleBanner(props: { title: string; color?: string }) {
-  const title = sanitizeText(props.title);
-  // Scale down long titles so they stay on one line at 900px.
-  const size = title.length > 20 ? Math.max(40, Math.round(1500 / title.length)) : 76;
+export function TitleBanner(props: TitleBannerProps) {
+  const title = cleanText(props.title).toLowerCase();
+  const display = title.length <= 22;
   return (
-    <div
-      style={{
-        display: "flex",
-        width: "100%",
-        height: "100%",
-        alignItems: "center",
-        justifyContent: "center",
-        transform: "rotate(-2deg)",
-      }}
-    >
-      <OutlinedText size={size} color={props.color ?? randomVibrant()} align="center">
-        {title}
-      </OutlinedText>
-    </div>
+    <StillBackdrop width={BANNER_WIDTH} height={BANNER_HEIGHT} padding={20} gap={display ? 2 : 8} seed={11}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <Text tone="love">@</Text>
+        <Text tone="foam">asuka</Text>
+        <Text tone="rose">»</Text>
+        <Text tone="gold">announce</Text>
+      </div>
+      <div style={{ display: "flex" }}>
+        <Title size={display ? "display" : "title"} tone={props.color}>
+          {title}
+        </Title>
+      </div>
+    </StillBackdrop>
   );
 }

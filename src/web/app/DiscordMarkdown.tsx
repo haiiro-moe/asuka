@@ -1,11 +1,17 @@
-import { Fragment, type ReactNode } from "react";
+/**
+ * Discord-flavoured markdown for previews (bot message editor, events, club announcements), drawn with
+ * haiiro tokens: Discord's structure, haiiro's colours and type.
+ *
+ * @module
+ */
+import { Fragment, useState, type ReactNode } from "react";
 import { useNames } from "./names.tsx";
 
 const MENTION_RE = /<@!?(\d+)>/g;
 
 type NameResolver = (id: string) => string;
 
-/** Split plain text on <@id> mentions, rendering each as a resolved-name pill. */
+/** Split plain text on <@id> mentions, rendering each resolved name as text on a pine band. */
 function renderMentions(text: string, resolve: NameResolver, keyPrefix: string): ReactNode[] {
   const out: ReactNode[] = [];
   const re = new RegExp(MENTION_RE);
@@ -15,7 +21,7 @@ function renderMentions(text: string, resolve: NameResolver, keyPrefix: string):
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(text.slice(last, m.index));
     out.push(
-      <span key={`${keyPrefix}-m${idx++}`} className="bg-indigo-500/30 text-indigo-200 rounded px-1">
+      <span key={`${keyPrefix}-m${idx++}`} className="bg-pine text-text px-[0.5ch]">
         @{resolve(m[1]!)}
       </span>,
     );
@@ -23,6 +29,34 @@ function renderMentions(text: string, resolve: NameResolver, keyPrefix: string):
   }
   if (last < text.length) out.push(text.slice(last));
   return out;
+}
+
+/**
+ * A `||spoiler||`: hidden under the system's dither veil until clicked (or Enter/Space), then shown on
+ * an overlay band. No fade: it is either covered or not.
+ */
+function Spoiler({ children }: { children: ReactNode }) {
+  const [shown, setShown] = useState(false);
+  if (shown) return <span className="bg-overlay px-[0.5ch]">{children}</span>;
+  const reveal = () => setShown(true);
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label="spoiler, press to reveal"
+      title="spoiler"
+      className="dith inline px-[0.5ch] cursor-pointer [color:transparent] select-none"
+      onClick={reveal}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          reveal();
+        }
+      }}
+    >
+      <span aria-hidden="true">{children}</span>
+    </span>
+  );
 }
 
 /**
@@ -62,7 +96,7 @@ function parseInline(text: string, resolve: NameResolver, keyPrefix = "i"): Reac
       if (end !== -1) {
         flush();
         nodes.push(
-          <code key={`${keyPrefix}-c${key++}`} className="bg-slate-900 rounded px-1 text-[0.85em]">
+          <code key={`${keyPrefix}-c${key++}`} className="bg-base border border-ink-hairline px-[0.5ch]">
             {text.slice(i + 1, end)}
           </code>,
         );
@@ -73,15 +107,7 @@ function parseInline(text: string, resolve: NameResolver, keyPrefix = "i"): Reac
     if (two === "**" && wrap("**", (c) => <strong>{c}</strong>)) continue;
     if (two === "__" && wrap("__", (c) => <u>{c}</u>)) continue;
     if (two === "~~" && wrap("~~", (c) => <s>{c}</s>)) continue;
-    if (
-      two === "||" &&
-      wrap("||", (c) => (
-        <span className="bg-slate-600 text-slate-600 hover:text-slate-100 rounded px-1 transition cursor-pointer">
-          {c}
-        </span>
-      ))
-    )
-      continue;
+    if (two === "||" && wrap("||", (c) => <Spoiler>{c}</Spoiler>)) continue;
     if (ch === "*" && wrap("*", (c) => <em>{c}</em>)) continue;
     if (ch === "_" && wrap("_", (c) => <em>{c}</em>)) continue;
 
@@ -105,6 +131,17 @@ function classify(line: string): LineKind {
   return "text";
 }
 
+/**
+ * Heading looks on the VGA grid (crisp at 16 and 32px only): `#` 32px bold, `##` foam bold (the
+ * in-window heading job, as in the approved editor preview), `###` bold. `text-body` sets the size;
+ * `text-base` would be the base colour.
+ */
+const HEADING_CLASS: Record<"h2" | "h3" | "h4", string> = {
+  h2: "text-nav font-bold text-text",
+  h3: "text-body font-bold text-foam",
+  h4: "text-body font-bold text-text",
+};
+
 /** Render a non-code segment: headers, blockquotes, bullet lists, paragraphs. */
 function renderBlock(content: string, resolve: NameResolver): ReactNode[] {
   const lines = content.split("\n");
@@ -123,10 +160,8 @@ function renderBlock(content: string, resolve: NameResolver): ReactNode[] {
     if (kind === "h2" || kind === "h3" || kind === "h4") {
       const text = lines[i]!.replace(/^#{1,3}\s+/, "");
       const Tag = kind;
-      const cls =
-        kind === "h2" ? "text-xl font-bold" : kind === "h3" ? "text-lg font-bold" : "text-base font-bold";
       blocks.push(
-        <Tag key={`b${key}`} className={cls}>
+        <Tag key={`b${key}`} className={`m-0 ${HEADING_CLASS[kind]}`}>
           {parseInline(text, resolve, `h${key++}`)}
         </Tag>,
       );
@@ -137,7 +172,7 @@ function renderBlock(content: string, resolve: NameResolver): ReactNode[] {
     if (kind === "subtext") {
       const text = lines[i]!.replace(/^-#\s+/, "");
       blocks.push(
-        <div key={`b${key}`} className="text-slate-400 text-xs">
+        <div key={`b${key}`} className="text-label text-subtle">
           {parseInline(text, resolve, `s${key++}`)}
         </div>,
       );
@@ -152,7 +187,7 @@ function renderBlock(content: string, resolve: NameResolver): ReactNode[] {
         i++;
       }
       blocks.push(
-        <blockquote key={`b${key}`} className="border-l-2 border-slate-500 pl-2 text-slate-300">
+        <blockquote key={`b${key}`} className="m-0 border-l-4 border-muted pl-[1ch]">
           {group.map((l, idx) => (
             <Fragment key={idx}>
               {idx > 0 && <br />}
@@ -172,7 +207,7 @@ function renderBlock(content: string, resolve: NameResolver): ReactNode[] {
         i++;
       }
       blocks.push(
-        <ul key={`b${key}`} className="list-disc pl-5">
+        <ul key={`b${key}`} className="m-0 list-disc pl-[3ch]">
           {items.map((l, idx) => (
             <li key={idx}>{parseInline(l, resolve, `l${key}-${idx}`)}</li>
           ))}
@@ -189,7 +224,7 @@ function renderBlock(content: string, resolve: NameResolver): ReactNode[] {
       i++;
     }
     blocks.push(
-      <p key={`b${key}`}>
+      <p key={`b${key}`} className="m-0">
         {group.map((l, idx) => (
           <Fragment key={idx}>
             {idx > 0 && <br />}
@@ -204,7 +239,12 @@ function renderBlock(content: string, resolve: NameResolver): ReactNode[] {
   return blocks;
 }
 
-/** Render a Components V2 text block's content with Discord-flavored markdown. */
+/**
+ * Render a Components V2 text block's content with Discord-flavoured markdown: headings, `-#` subtext,
+ * quotes (4px muted bar), bullet lists, fenced and inline code (on base with a hairline), bold,
+ * underline, strike, italic, spoilers (dither veil, click to reveal) and `<@id>` mentions (resolved
+ * names on a pine band). Emoji in the content are data and stay as written.
+ */
 export function DiscordMarkdown({ content }: { content: string }) {
   const mentionIds = [...content.matchAll(new RegExp(MENTION_RE))].map((m) => m[1]!);
   const resolve = useNames(mentionIds);
@@ -214,10 +254,10 @@ export function DiscordMarkdown({ content }: { content: string }) {
   const segments = content.split(/```([\s\S]*?)```/);
 
   return (
-    <div className="text-sm space-y-1">
+    <div className="text-body space-y-1 [overflow-wrap:anywhere]">
       {segments.map((seg, idx) =>
         idx % 2 === 1 ? (
-          <pre key={idx} className="bg-slate-900 rounded p-2 overflow-x-auto text-xs">
+          <pre key={idx} className="m-0 bg-base border border-ink-hairline px-[1ch] py-1 overflow-x-auto">
             <code>{seg}</code>
           </pre>
         ) : (

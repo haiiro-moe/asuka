@@ -39,9 +39,9 @@ export function tierForSize(size: number): number {
 }
 
 export const TIER_LABEL: Record<number, string> = {
-  1: "Fledgling club",
-  2: "Officially recognized club",
-  3: "Supported club",
+  1: "fledgling club",
+  2: "officially recognized club",
+  3: "supported club",
 };
 
 /** How many approved clubs a user currently belongs to. */
@@ -293,7 +293,7 @@ export function consumeAnnounceToken(token: string): AnnounceTokenRow | null {
  * unambiguous — it's posted in the club's own channel/thread).
  */
 export function announceHeader(clubName: string): unknown {
-  return { type: 10, content: `-# 📢 Announcement from ${clubName}` };
+  return { type: 10, content: `-# announcement from ${clubName}` };
 }
 
 /**
@@ -447,20 +447,20 @@ export async function submitForApproval(client: Client, clubId: number) {
     ...v2(
       card({
         accent: Accent.club,
-        title: `🆕 Club proposal: ${club.name}`,
+        title: `club proposal: ${club.name}`,
         lines: [
           club.description,
-          `**Owner:** <@${club.ownerId}>`,
-          `**Founders:** ${founders.map((id) => `<@${id}>`).join(", ")}`,
+          `**owner:** <@${club.ownerId}>`,
+          `**founders:** ${founders.map((id) => `<@${id}>`).join(", ")}`,
         ],
         buttons: [
           new ButtonBuilder()
             .setCustomId(`club:approve:${club.id}`)
-            .setLabel("Approve")
+            .setLabel("approve")
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
             .setCustomId(`club:reject:${club.id}`)
-            .setLabel("Reject")
+            .setLabel("reject")
             .setStyle(ButtonStyle.Danger),
         ],
       }),
@@ -672,29 +672,29 @@ export async function provisionForTier(guild: Guild, club: Club) {
 
   // --- Phase 2: announce tier changes while the old spaces are still open. ---
   if (tier > oldTier && oldTier <= 1 && tier >= 2) {
-    await notify(club.threadId, Accent.success, "📈 Club upgraded!", [
+    await notify(club.threadId, Accent.success, "club upgraded", [
       `**${club.name}** is now a **${TIER_LABEL[tier]}**.`,
-      channelId ? `Continue in your new channel: <#${channelId}>` : "",
+      channelId ? `continue in your new channel: <#${channelId}>` : "",
     ]);
-    await notify(channelId, Accent.success, `Welcome to ${club.name}! 🎉`, [
-      `Your club is now a **${TIER_LABEL[tier]}**.`,
-      voiceId ? `Voice channel: <#${voiceId}>` : "",
+    await notify(channelId, Accent.success, `welcome to ${club.name}`, [
+      `your club is now a **${TIER_LABEL[tier]}**.`,
+      voiceId ? `voice channel: <#${voiceId}>` : "",
     ]);
   } else if (tier > oldTier && tier >= 3) {
-    await notify(channelId, Accent.success, "📈 Club upgraded!", [
+    await notify(channelId, Accent.success, "club upgraded", [
       `**${club.name}** is now a **${TIER_LABEL[tier]}** with a voice channel: <#${voiceId}>`,
     ]);
   } else if (tier < oldTier && tier <= 1) {
-    await notify(club.channelId, Accent.warning, "📉 Club downgraded", [
-      `**${club.name}** dropped to **${TIER_LABEL[tier] ?? "inactive"}**. This channel is being archived.`,
-      threadId ? `Continue in your thread: <#${threadId}>` : "",
+    await notify(club.channelId, Accent.warning, "club downgraded", [
+      `**${club.name}** dropped to **${TIER_LABEL[tier] ?? "inactive"}**. this channel is being archived.`,
+      threadId ? `continue in your thread: <#${threadId}>` : "",
     ]);
-    await notify(threadId, Accent.warning, "📉 Club downgraded", [
-      `**${club.name}** has moved back to a private thread.`,
+    await notify(threadId, Accent.warning, "club downgraded", [
+      `**${club.name}** is back in a private thread.`,
     ]);
   } else if (tier < oldTier && tier === 2) {
-    await notify(channelId, Accent.warning, "📉 Club downgraded", [
-      `**${club.name}** dropped to **${TIER_LABEL[tier]}**. The voice channel has been archived.`,
+    await notify(channelId, Accent.warning, "club downgraded", [
+      `**${club.name}** dropped to **${TIER_LABEL[tier]}**. the voice channel is archived.`,
     ]);
   }
 
@@ -916,9 +916,9 @@ export async function approveClub(guild: Guild, clubId: number) {
   await notifyFoundersMessage(guild.client, clubId, "clubs.approved-dm", {
     club: club.name,
     space: provisioned?.threadId
-      ? `Your club thread: <#${provisioned.threadId}>`
+      ? `your club thread: <#${provisioned.threadId}>`
       : provisioned?.channelId
-        ? `Your club channel: <#${provisioned.channelId}>`
+        ? `your club channel: <#${provisioned.channelId}>`
         : "",
   });
   return provisioned;
@@ -975,13 +975,13 @@ export async function syncDirectory(client: Client) {
   const container = new ContainerBuilder()
     .setAccentColor(Accent.club)
     .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent("## 📋 Club Directory"),
+      new TextDisplayBuilder().setContent("## club directory"),
     );
 
   if (clubs.length === 0) {
     container.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        "No clubs yet. Use `/club create` to start one!",
+        "no clubs yet. use `/club create` to start one.",
       ),
     );
   } else {
@@ -993,13 +993,13 @@ export async function syncDirectory(client: Client) {
           ? `<#${club.threadId}>`
           : "_provisioning…_";
       const voice = club.voiceChannelId
-        ? ` · 🔊 <#${club.voiceChannelId}>`
+        ? ` · voice <#${club.voiceChannelId}>`
         : "";
       container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
       container.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `**${club.name}** — ${TIER_LABEL[club.level] ?? "Club"} (${size} members)\n` +
-            `${ref}${voice}\n-# ${club.description || "No description"}`,
+          `**${club.name}** — ${TIER_LABEL[club.level] ?? "club"} (${size} members)\n` +
+            `${ref}${voice}\n-# ${club.description || "no description"}`,
         ),
       );
     }

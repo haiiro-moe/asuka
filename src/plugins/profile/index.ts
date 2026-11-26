@@ -109,8 +109,8 @@ function profileTextContainer(user: User, displayName: string): ContainerBuilder
       new TextDisplayBuilder().setContent(`## ${displayName}'s profile`),
       new TextDisplayBuilder().setContent(
         [
-          `**Level:** ${prog.level}`,
-          `**Social Credits:** ${m.socialCredits} (rank #${rank})`,
+          `**level:** ${prog.level}`,
+          `**social credits:** ${m.socialCredits} (rank #${rank})`,
         ].join("\n"),
       ),
     )
@@ -125,9 +125,9 @@ function profileTextContainer(user: User, displayName: string): ContainerBuilder
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         [
-          `**XP:** ${m.xp}`,
+          `**xp:** ${m.xp}`,
           `${progressBar(prog.current, prog.needed)} ${prog.current}/${prog.needed} to level ${prog.level + 1}`,
-          `**Clubs:** ${clubs.length ? clubs.join(", ") : "None"}`,
+          `**clubs:** ${clubs.length ? clubs.join(", ") : "none"}`,
         ].join("\n"),
       ),
     );
@@ -139,10 +139,10 @@ function profileTextContainer(user: User, displayName: string): ContainerBuilder
       .addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
           [
-            "**🏛️ Presidency Log**",
+            "**presidency log**",
             ...presidencyLog.map(
               (t) =>
-                `<t:${t.termStart}:D> – ${t.termEnd ? `<t:${t.termEnd}:D>` : "Present"} (${t.votes} votes)`,
+                `<t:${t.termStart}:D> – ${t.termEnd ? `<t:${t.termEnd}:D>` : "present"} (${t.votes} votes)`,
             ),
           ].join("\n"),
         ),
@@ -159,28 +159,28 @@ function electionTextContainer(user: User, displayName: string): ContainerBuilde
   const { candidate, isPresident } = getElectionCandidacy(user.id);
 
   const lines = [
-    `**Leaderboard rank:** #${rank}`,
-    `**Level:** ${prog.level} · **XP:** ${m.xp} (${prog.current}/${prog.needed} to next)`,
-    `**Social Credits:** ${m.socialCredits}`,
+    `**leaderboard rank:** #${rank}`,
+    `**level:** ${prog.level} · **xp:** ${m.xp} (${prog.current}/${prog.needed} to next)`,
+    `**social credits:** ${m.socialCredits}`,
   ];
   if (candidate) {
     lines.push(
       "",
-      `**Campaign motto:** ${candidate.motto || "—"}`,
-      `**If elected:** ${candidate.roleDescription || "—"}`,
+      `**campaign motto:** ${candidate.motto || "—"}`,
+      `**if elected:** ${candidate.roleDescription || "—"}`,
     );
     if (isPresident) {
-      lines.push("", `-# Sitting president — won with ${candidate.voteCount} vote(s).`);
+      lines.push("", `-# sitting president — won with ${candidate.voteCount} vote(s).`);
     }
   } else {
-    lines.push("", "-# Not currently standing in an election.");
+    lines.push("", "-# not currently standing in an election.");
   }
 
   return new ContainerBuilder()
     .setAccentColor(Accent.election)
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## ${isPresident ? "🏛️" : "🗳️"} ${displayName} — ${isPresident ? "President Profile" : "Election Profile"}`,
+        `## ${displayName} — ${isPresident ? "president profile" : "election profile"}`,
       ),
       new TextDisplayBuilder().setContent(lines.join("\n")),
     );
@@ -202,11 +202,11 @@ async function profileView(user: User, displayName: string, view: ProfileViewKin
         view === "main"
           ? new ButtonBuilder()
               .setCustomId(`pf:election:${user.id}`)
-              .setLabel(isPresident ? "🏛️ President profile" : "🗳️ Election profile")
+              .setLabel(isPresident ? "president profile" : "election profile")
               .setStyle(ButtonStyle.Secondary)
           : new ButtonBuilder()
               .setCustomId(`pf:main:${user.id}`)
-              .setLabel("👤 Profile")
+              .setLabel("profile")
               .setStyle(ButtonStyle.Secondary),
       )
     : null;
@@ -238,7 +238,7 @@ async function profileView(user: User, displayName: string, view: ProfileViewKin
           motto: candidate?.motto ?? null,
           vision: candidate?.roleDescription ?? null,
           isCandidate: Boolean(candidate),
-          subtitle: isPresident ? "PRESIDENT" : undefined,
+          subtitle: isPresident ? "president" : undefined,
         });
 
   if (png) {
@@ -290,7 +290,7 @@ const profileToggle = defineListener({
       console.error("[profile] view toggle failed:", err);
       await interaction
         .editReply(
-          v2(card({ accent: Accent.danger, title: "Something went wrong", lines: ["Run /profile again."] })),
+          v2(card({ accent: Accent.danger, title: "something went wrong", lines: ["run /profile again."] })),
         )
         .catch(() => {});
     }
@@ -317,12 +317,12 @@ async function leaderboardView(client: Client, page: number) {
   const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`lb:${clamped - 1}`)
-      .setLabel("Previous")
+      .setLabel("previous")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(clamped <= 0),
     new ButtonBuilder()
       .setCustomId(`lb:${clamped + 1}`)
-      .setLabel("Next")
+      .setLabel("next")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(clamped >= totalPages - 1),
   );
@@ -341,7 +341,7 @@ async function leaderboardView(client: Client, page: number) {
       .setAccentColor(Accent.star)
       .addMediaGalleryComponents(gallery)
       .addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(`-# Page ${clamped + 1}/${totalPages}`),
+        new TextDisplayBuilder().setContent(`-# page ${clamped + 1}/${totalPages}`),
       )
       .addActionRowComponents(buttons);
     return { ...v2(container), files: [file] };
@@ -352,14 +352,14 @@ async function leaderboardView(client: Client, page: number) {
         (m, i) =>
           `**${clamped * PAGE_SIZE + i + 1}.** <@${m.userId}> — ${m.socialCredits} credits · lvl ${m.level}`,
       )
-    : ["No ranked members yet."];
+    : ["no ranked members yet."];
 
   const container = new ContainerBuilder()
     .setAccentColor(Accent.star)
     .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent("## 🏆 Social Credit Leaderboard"),
+      new TextDisplayBuilder().setContent("## ★ social credit leaderboard"),
       new TextDisplayBuilder().setContent(lines.join("\n")),
-      new TextDisplayBuilder().setContent(`-# Page ${clamped + 1}/${totalPages}`),
+      new TextDisplayBuilder().setContent(`-# page ${clamped + 1}/${totalPages}`),
     )
     .addActionRowComponents(buttons);
 
@@ -390,7 +390,7 @@ const pagination = defineListener({
       console.error("[profile] leaderboard page failed:", err);
       await interaction
         .editReply(
-          v2(card({ accent: Accent.danger, title: "Something went wrong", lines: ["Run /leaderboard again."] })),
+          v2(card({ accent: Accent.danger, title: "something went wrong", lines: ["run /leaderboard again."] })),
         )
         .catch(() => {});
     }

@@ -98,7 +98,7 @@ const credits: Command = {
 
     if (user.bot) {
       return interaction.reply({
-        ...v2(card({ accent: Accent.danger, title: "Failed", lines: ["Bots don't hold Social Credits."] })),
+        ...v2(card({ accent: Accent.danger, title: "failed", lines: ["bots don't hold social credits."] })),
         flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
       });
     }

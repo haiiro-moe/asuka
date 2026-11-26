@@ -12,7 +12,7 @@ import { tatsuScoreToXp, estimateMessages, simulateCredits } from "./convert.ts"
 
 function progressCard(lines: string[]) {
   return v2(
-    card({ accent: Accent.primary, title: "Tatsu migration", lines }),
+    card({ accent: Accent.primary, title: "tatsu migration", lines }),
   );
 }
 
@@ -22,7 +22,7 @@ async function runMigration(
   guildId: string,
 ) {
   await interaction.editReply(
-    progressCard(["Fetching the Tatsu leaderboard… (0 entries so far)"]),
+    progressCard(["fetching the Tatsu leaderboard… (0 entries so far)"]),
   );
 
   let lastEdit = 0;
@@ -32,14 +32,14 @@ async function runMigration(
     lastEdit = Date.now();
     await interaction
       .editReply(
-        progressCard([`Fetching the Tatsu leaderboard… (${fetched} entries so far)`]),
+        progressCard([`fetching the Tatsu leaderboard… (${fetched} entries so far)`]),
       )
       .catch(() => {});
   });
 
   await interaction.editReply(
     progressCard([
-      `Fetched **${rankings.length}** leaderboard entries. Importing…`,
+      `fetched **${rankings.length}** leaderboard entries. importing…`,
     ]),
   );
 
@@ -89,12 +89,12 @@ async function runMigration(
     v2(
       card({
         accent: Accent.success,
-        title: "Tatsu migration complete",
+        title: "tatsu migration complete",
         lines: [
-          `Imported **${imported}** members (top level: **${topLevel}**).`,
-          `Granted **${totalCredits}** Social Credits from simulated activity.`,
-          `Skipped **${skippedDeparted}** entries for users no longer in the server (or bots).`,
-          ...(skippedZero ? [`Skipped **${skippedZero}** zero-score entries.`] : []),
+          `imported **${imported}** members (top level: **${topLevel}**).`,
+          `granted **${totalCredits}** social credits from simulated activity.`,
+          `skipped **${skippedDeparted}** entries for users no longer in the server (or bots).`,
+          ...(skippedZero ? [`skipped **${skippedZero}** zero-score entries.`] : []),
         ],
       }),
     ),
@@ -123,10 +123,10 @@ const migrate: Command = {
       const detail =
         err instanceof TatsuApiError
           ? err.message
-          : "Unexpected error — check the bot logs.";
+          : "unexpected error. check the bot logs.";
       console.error("[tatsu-migrate]", err);
       await interaction.editReply(
-        v2(card({ accent: Accent.danger, title: "Tatsu migration failed", lines: [detail] })),
+        v2(card({ accent: Accent.danger, title: "tatsu migration failed", lines: [detail] })),
       );
     }
   },

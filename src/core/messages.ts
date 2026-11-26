@@ -10,6 +10,12 @@ import type { BotContext } from "./plugin.ts";
 /**
  * Catalog of bot responses editable from the web dashboard. Each entry ships a
  * static Components V2 default; an override row in `bot_messages` replaces it.
+ * Shipped defaults are written in the haiiro voice: lowercase titles, short
+ * plain or narrator lines, glyphs (`» @ ★ ✓ ×`, `☼` for events) instead of
+ * emoji, no exclamation marks. A default only applies while no override row
+ * exists (see {@link getMessagePayload}), so editing a default here never
+ * changes a template an admin has already saved.
+ *
  * Text content supports two substitutions at send time:
  *   {param}  — context values documented per message (user, level, …)
  *   {{name}} — owner-defined JS variables (src/core/variables.ts)
@@ -25,7 +31,7 @@ export interface BotMessageDef {
   defaultComponents: unknown[];
 }
 
-/** Shorthand for a single-container default payload matching core card(). */
+/** Shorthand for a single-container default payload matching core card(). Titles are lowercase by convention. */
 function cardPayload(accent: number, title: string, lines: string[]): unknown[] {
   return [
     {
@@ -49,8 +55,8 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Posted in the level-up channel when a member reaches a new level.",
     category: "XP & Levels",
     params: [user, { name: "level", description: "The level just reached" }],
-    defaultComponents: cardPayload(Accent.success, "Level up! 🎉", [
-      "{user} reached **level {level}**!",
+    defaultComponents: cardPayload(Accent.success, "level up", [
+      "{user} is now **level {level}**.",
     ]),
   },
   {
@@ -64,9 +70,9 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "balance", description: "New balance" },
       reason,
     ],
-    defaultComponents: cardPayload(Accent.success, "Credits granted", [
+    defaultComponents: cardPayload(Accent.success, "credits granted", [
       "{user} received **{amount} SC**.",
-      "New balance: **{balance} SC**.",
+      "new balance: **{balance} SC**.",
       "{reason}",
     ]),
   },
@@ -81,9 +87,9 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "balance", description: "New balance" },
       reason,
     ],
-    defaultComponents: cardPayload(Accent.warning, "Credits revoked", [
+    defaultComponents: cardPayload(Accent.warning, "credits revoked", [
       "{user} lost **{amount} SC**.",
-      "New balance: **{balance} SC**.",
+      "new balance: **{balance} SC**.",
       "{reason}",
     ]),
   },
@@ -93,8 +99,8 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Confirmation card for /timeout.",
     category: "Moderation",
     params: [user, { name: "duration", description: "Human-readable duration" }],
-    defaultComponents: cardPayload(Accent.warning, "Member timed out", [
-      "{user} muted for **{duration}**.",
+    defaultComponents: cardPayload(Accent.warning, "member timed out", [
+      "{user} is muted for **{duration}**.",
     ]),
   },
   {
@@ -103,7 +109,7 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Confirmation card for /untimeout.",
     category: "Moderation",
     params: [user],
-    defaultComponents: cardPayload(Accent.success, "Timeout removed", [
+    defaultComponents: cardPayload(Accent.success, "timeout removed", [
       "{user} can speak again.",
     ]),
   },
@@ -113,7 +119,7 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Confirmation card for /kick.",
     category: "Moderation",
     params: [user, reason],
-    defaultComponents: cardPayload(Accent.warning, "Member kicked", ["{user} was kicked."]),
+    defaultComponents: cardPayload(Accent.warning, "member kicked", ["{user} was kicked."]),
   },
   {
     key: "moderation.ban",
@@ -121,7 +127,7 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Confirmation card for /ban.",
     category: "Moderation",
     params: [user, reason],
-    defaultComponents: cardPayload(Accent.danger, "Member banned", ["{user} was banned."]),
+    defaultComponents: cardPayload(Accent.danger, "member banned", ["{user} was banned."]),
   },
   {
     key: "moderation.unban",
@@ -129,7 +135,7 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Confirmation card for /unban.",
     category: "Moderation",
     params: [user, reason],
-    defaultComponents: cardPayload(Accent.success, "Ban lifted", ["{user} was unbanned."]),
+    defaultComponents: cardPayload(Accent.success, "ban lifted", ["{user} was unbanned."]),
   },
   {
     key: "moderation.warn",
@@ -141,9 +147,9 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       reason,
       { name: "count", description: "The member's total warning count" },
     ],
-    defaultComponents: cardPayload(Accent.warning, "Warning issued", [
-      "{user} now has **{count}** warning(s).",
-      "Reason: {reason}",
+    defaultComponents: cardPayload(Accent.warning, "warning issued", [
+      "{user} now has **{count}** warnings.",
+      "reason: {reason}",
     ]),
   },
   {
@@ -161,13 +167,13 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "group", description: "Group name, or “—” when ungrouped" },
       { name: "recurrence", description: "Human-readable recurrence" },
     ],
-    defaultComponents: cardPayload(Accent.primary, "📅 New event: {title}", [
+    defaultComponents: cardPayload(Accent.primary, "☼ new event: {title}", [
       "{description}",
       "",
-      "**When:** {when}",
-      "**Where:** {location}",
-      "**Repeats:** {recurrence}",
-      "-# Use /events to browse events and toggle the 🔔 to participate.",
+      "**when:** {when}",
+      "**where:** {location}",
+      "**repeats:** {recurrence}",
+      "-# /events lists every event and lets you sign up.",
     ]),
   },
   {
@@ -182,10 +188,10 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "location", description: "Channel mention, or “—” when unset" },
       { name: "participants", description: "Number of participants" },
     ],
-    defaultComponents: cardPayload(Accent.warning, "⏰ Reminder: {title}", [
-      "Starts {relative} — {start}",
-      "**Where:** {location}",
-      "-# {participants} participant(s) signed up.",
+    defaultComponents: cardPayload(Accent.warning, "☼ reminder: {title}", [
+      "starts {relative}, {start}",
+      "**where:** {location}",
+      "-# {participants} signed up.",
     ]),
   },
   {
@@ -199,9 +205,9 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "relative", description: "Relative start time (e.g. “in a day”)" },
       { name: "location", description: "Channel mention, or “—” when unset" },
     ],
-    defaultComponents: cardPayload(Accent.primary, "⏰ {title}", [
-      "You signed up for **{title}** — it starts {relative} ({start}).",
-      "**Where:** {location}",
+    defaultComponents: cardPayload(Accent.primary, "☼ {title}", [
+      "you signed up for **{title}**. it starts {relative} ({start}).",
+      "**where:** {location}",
     ]),
   },
   {
@@ -210,8 +216,8 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Posted in the club's space when someone joins.",
     category: "Clubs",
     params: [user, { name: "club", description: "The club's name" }],
-    defaultComponents: cardPayload(Accent.success, "👋 New member", [
-      "{user} joined the club!",
+    defaultComponents: cardPayload(Accent.success, "new member", [
+      "{user} joined the club.",
     ]),
   },
   {
@@ -220,7 +226,7 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Posted in the club's space when someone leaves voluntarily.",
     category: "Clubs",
     params: [user, { name: "club", description: "The club's name" }],
-    defaultComponents: cardPayload(Accent.warning, "👋 Member left", [
+    defaultComponents: cardPayload(Accent.warning, "member left", [
       "{user} left the club.",
     ]),
   },
@@ -230,7 +236,7 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Posted in the club's space when someone is kicked from it.",
     category: "Clubs",
     params: [user, { name: "club", description: "The club's name" }],
-    defaultComponents: cardPayload(Accent.warning, "🚪 Member removed", [
+    defaultComponents: cardPayload(Accent.warning, "member removed", [
       "{user} was removed from the club.",
     ]),
   },
@@ -244,8 +250,8 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "owner", description: "Mention of the club owner" },
       { name: "description", description: "The club's description" },
     ],
-    defaultComponents: cardPayload(Accent.club, "✅ New club recognized", [
-      "**{club}** has been approved! Led by {owner}.",
+    defaultComponents: cardPayload(Accent.club, "new club recognized", [
+      "**{club}** is approved and led by {owner}.",
       "{description}",
     ]),
   },
@@ -258,8 +264,8 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "club", description: "The club's name" },
       { name: "space", description: "Mention of the club's thread/channel (may be empty)" },
     ],
-    defaultComponents: cardPayload(Accent.success, "Club approved: {club} 🎉", [
-      "Your club was approved! Head to the server to find your new space.",
+    defaultComponents: cardPayload(Accent.success, "club approved: {club}", [
+      "**{club}** is open. your new space is waiting in the server.",
       "{space}",
     ]),
   },
@@ -269,8 +275,8 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "DM sent to every founder when their club proposal is rejected.",
     category: "Clubs",
     params: [{ name: "club", description: "The club's name" }],
-    defaultComponents: cardPayload(Accent.danger, "Club not approved: {club}", [
-      "Your club proposal was reviewed and not approved this time.",
+    defaultComponents: cardPayload(Accent.danger, "club not approved: {club}", [
+      "your proposal was reviewed and not approved this time.",
     ]),
   },
   {
@@ -282,7 +288,7 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "club", description: "The club's name" },
       { name: "user", description: "Mention of the founder who declined" },
     ],
-    defaultComponents: cardPayload(Accent.warning, "Club cancelled: {club}", [
+    defaultComponents: cardPayload(Accent.warning, "club cancelled: {club}", [
       "{user} declined to be a founding member, so the proposal was cancelled.",
     ]),
   },
@@ -292,7 +298,7 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Posted in the announcement channel when a club is disbanded.",
     category: "Clubs",
     params: [{ name: "club", description: "The club's name" }],
-    defaultComponents: cardPayload(Accent.warning, "🗑️ Club terminated", [
+    defaultComponents: cardPayload(Accent.warning, "club terminated", [
       "**{club}** has been disbanded.",
     ]),
   },
@@ -305,8 +311,8 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
       { name: "actor", description: "Mention of who changed it (or a fallback phrase)" },
       { name: "changes", description: "What was applied, one item per line" },
     ],
-    defaultComponents: cardPayload(Accent.election, "🎨 Server theme updated", [
-      "Changed by {actor}",
+    defaultComponents: cardPayload(Accent.election, "server theme updated", [
+      "changed by {actor}",
       "{changes}",
     ]),
   },
@@ -316,8 +322,8 @@ export const MESSAGE_CATALOG: BotMessageDef[] = [
     description: "Reply to /ping.",
     category: "System",
     params: [{ name: "latency", description: "Gateway latency in ms" }],
-    defaultComponents: cardPayload(Accent.primary, "Pong! 🏓", [
-      "Gateway latency: **{latency}ms**",
+    defaultComponents: cardPayload(Accent.primary, "pong", [
+      "gateway latency: **{latency}ms**",
     ]),
   },
 ];

@@ -412,7 +412,7 @@ export async function grantDueRewards(ctx: BotContext) {
             v2(
               card({
                 accent: event.accentColor ?? Accent.success,
-                title: `🎁 Rewards: ${event.title}`,
+                title: `rewards: ${event.title}`,
                 lines: granted.map((g) => `- ${g}`),
               }),
             ),

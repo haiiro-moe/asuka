@@ -1,50 +1,41 @@
-import { OutlinedText, sanitizeText } from "./outlined-text.tsx";
-import { randomVibrant } from "../util.ts";
+import { ImageFrame } from "./haiiro/image-frame.tsx";
+import { Text, cleanText } from "./haiiro/text.tsx";
+import { Title } from "./haiiro/title.tsx";
+
+/** Props for {@link CardHeader}. */
+export interface CardHeaderProps {
+  /** Member display name, shown as the card's Jacquard title. */
+  displayName: string;
+  /** Avatar as a PNG/JPEG data URI, or null for the dither placeholder with the initial. */
+  avatarDataUri: string | null;
+  /** One narrator-voice line under the name (rose). */
+  subtitle: string;
+  /** Width in px to hold the header to (the frame's content width): a long name is cut with an ellipsis instead of widening the frame. */
+  width?: number;
+}
 
 /**
- * Shared card header: circular avatar (or placeholder) next to the member's
- * name in a random vibrant color, with a small subtitle line underneath.
+ * Shared card header in haiiro: a 96px full-colour avatar in a hairline frame, the
+ * member's name as the card title (Jacquard 24, 43px) and a rose subtitle line under it.
+ * Lay it out as the first row inside a `CardFrame`.
+ *
+ * @param props - {@link CardHeaderProps}
  */
-export function CardHeader(props: {
-  displayName: string;
-  avatarDataUri: string | null;
-  subtitle: string;
-}) {
-  const name = sanitizeText(props.displayName) || "?";
-  const avatarStyle = {
-    width: 128,
-    height: 128,
-    borderRadius: 64,
-    border: "5px solid #000",
-  } as const;
+export function CardHeader(props: CardHeaderProps) {
+  const name = cleanText(props.displayName) || "?";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-      {props.avatarDataUri ? (
-        <img src={props.avatarDataUri} style={avatarStyle} />
-      ) : (
-        <div
-          style={{
-            ...avatarStyle,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "#fffbef",
-            fontFamily: "Comic",
-            fontWeight: 700,
-            fontSize: 64,
-            color: "#000",
-          }}
-        >
-          {name[0]!.toUpperCase()}
-        </div>
-      )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <OutlinedText size={name.length > 16 ? 44 : 56} color={randomVibrant()}>
-          {name}
-        </OutlinedText>
-        <OutlinedText size={26} color="#fff" stroke={4}>
-          {props.subtitle}
-        </OutlinedText>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        ...(props.width != null ? { width: props.width, flexShrink: 0 } : {}),
+      }}
+    >
+      <ImageFrame src={props.avatarDataUri} size={96} initial={name} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 }}>
+        <Title truncate>{name}</Title>
+        <Text tone="rose" truncate>{cleanText(props.subtitle)}</Text>
       </div>
     </div>
   );

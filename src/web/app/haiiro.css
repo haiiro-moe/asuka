@@ -1,0 +1,162 @@
+/* haiiro for the Asuka dashboard: fonts, tokens, the system's component bundle and the asuka layer.
+
+   Source: the haiiro design system (private artifact; local copy under themes/haiiro-design-system in the haiiro workspace)
+   (local copy themes/haiiro-design-system/, pulled 2026-11-25). The tokens below are hand-copied from
+   project/tokens.json; haiiro-bundle.css is project/components/bundle.css, verbatim, and must not be edited
+   (re-copy it when the system changes). asuka.css holds the few parts the approved Asuka mockups use that
+   the system does not carry yet. This is the only file with raw colour values, apart from the bundle copy.
+
+   Both stylesheets go into the components layer, so Tailwind's layout utilities can still adjust spacing
+   and size on a haiiro element; the tokens stay unlayered so they win over Tailwind's theme layer. */
+@import "./haiiro-bundle.css" layer(components);
+@import "./asuka.css" layer(components);
+
+/* Fonts, all served by Asuka itself: a visitor makes no request to any other host.
+   - IBM: IBM VGA 8x16, the face of everything. Its bold is the 2x face, registered as weight 700, so <b>
+     and font-weight: bold switch to it and the browser never fakes a bold. Adapted from The Ultimate
+     Oldschool PC Font Pack by VileR (https://int10h.org/oldschool-pc-fonts/), CC BY-SA 4.0; only the
+     name tables were changed (fonts/IBM-VGA-8x16-CC-BY-SA-4.0.txt).
+   - Jacquard 24: page titles and the lede's drop cap only. SIL OFL 1.1 (fonts/Jacquard-24-OFL-1.1.txt).
+   - Unifont, Unifont Upper: behind both, on the same 8x16 pixel grid, for every glyph the others lack.
+     SIL OFL 1.1 or GPL 2+ with the font embedding exception (fonts/Unifont-*.txt). The browser fetches
+     them only when a page shows such a glyph.
+   Files from themes/haiiro-fonts/web/ (see its SOURCE.md). */
+@font-face {
+  font-family: IBM;
+  src: url("./fonts/IBMVGA8x16-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: IBM;
+  src: url("./fonts/IBMVGA8x16-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Jacquard 24";
+  src: url("./fonts/Jacquard24-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: Unifont;
+  src: url("./fonts/Unifont.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Unifont Upper";
+  src: url("./fonts/UnifontUpper.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Tokens (project/tokens.json). One dark theme, Rosé Pine (main); no light theme. */
+:root {
+  color-scheme: dark;
+
+  /* colour */
+  --color-base: #191724;
+  --color-surface: #1f1d2e;
+  --color-overlay: #26233a;
+  --color-muted: #6e6a86;
+  --color-subtle: #908caa;
+  --color-text: #e0def4;
+  --color-love: #eb6f92;
+  --color-gold: #f6c177;
+  --color-rose: #ebbcba;
+  --color-pine: #31748f;
+  --color-foam: #9ccfd8;
+  --color-iris: #c4a7e7;
+  --color-highlight-low: #21202e;
+  --color-highlight-med: #403d52;
+  --color-highlight-high: #524f67;
+  --ink-muted: rgba(224, 222, 244, 0.55);
+  --ink-hairline: rgba(224, 222, 244, 0.25);
+  --ink-track: rgba(224, 222, 244, 0.14);
+  --veil-heavy: rgba(25, 23, 36, 0.55);
+  --clearing-fill: rgba(25, 23, 36, 0.94);
+
+  /* colour, One Soul realm (Gruvbox dark); the bundle's .realm scope maps these itself */
+  --realm-base: #282828;
+  --realm-surface: #32302f;
+  --realm-overlay: #3c3836;
+  --realm-muted: #928374;
+  --realm-subtle: #a89984;
+  --realm-text: #ebdbb2;
+  --realm-love: #fb4934;
+  --realm-gold: #fabd2f;
+  --realm-rose: #fe8019;
+  --realm-pine: #689d6a;
+  --realm-foam: #8ec07c;
+  --realm-iris: #d3869b;
+  --realm-highlight-med: #504945;
+  --realm-highlight-high: #665c54;
+
+  /* type */
+  --font-mono: IBM, Unifont, "Unifont Upper", ui-monospace, monospace;
+  --font-display: "Jacquard 24", IBM, Unifont, "Unifont Upper", serif;
+
+  /* spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 50px;
+  --space-20: 80px;
+
+  /* radius: haiiro is square */
+  --radius-none: 0;
+
+  /* shadow: hard offsets only */
+  --shadow-title: 8px 8px 0 #191724;
+  --shadow-free: 2px 2px 0 #191724;
+  --shadow-art: 8px 8px 0 #191724;
+
+  /* border width */
+  --border-hairline: 1px;
+  --border-divider: 3px;
+  --border-window: 5px;
+
+  /* size */
+  --bar-height: 40px;
+  --toast-width: 420px;
+  --osd-width: 360px;
+  --panel-width: 640px;
+  --transport-cell: 48px;
+  --dither-tile: 4px;
+  --free-clearing-x: 36px;
+  --free-clearing-y: 28px;
+  --pixel-cell: 8px;
+  --pixel-gap: 2px;
+  --glyph-target: 44px;
+
+  /* blob backdrop (read by ui/blobs.ts as numbers) */
+  --blob-cell: 6px;
+  --blob-density: 700;
+  --blob-count-min: 6;
+  --blob-count-max: 60;
+  --blob-radius-max: 24;
+  --blob-speed-min: 1.5;
+  --blob-speed-max: 6;
+  --blob-fps: 30;
+
+  /* motion: things pixelate or cut, nothing eases */
+  --pixelate-duration: 500ms;
+  --pixelate-steps: 4;
+  --pixelate-cell-start: 16px;
+  --pixelate-stagger: 60ms;
+  --reveal-steps: 3;
+  --realm-transition-fps: 12;
+  --realm-transition-duration: 1s;
+  --realm-transition-cell: 8px;
+  --realm-transition-band: 0.22;
+}

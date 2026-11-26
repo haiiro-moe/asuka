@@ -1,133 +1,137 @@
+import type { ReactNode } from "react";
 import { api } from "./api.ts";
-import { card, useAsync } from "./ui.ts";
+import { Chip, Empty, ErrorLine, Heading, ImageFrame, Loading, Swatch, Window, useAsync } from "./ui.ts";
 
+/** Formats a unix timestamp (seconds) as `4 Nov 2026`. */
 const fmtDate = (unixSec: number) =>
-  new Date(unixSec * 1000).toLocaleDateString("en-US", {
+  new Date(unixSec * 1000).toLocaleDateString("en-GB", {
     year: "numeric",
     month: "short",
     day: "numeric",
   });
 
-function StatRow({ name, value }: { name: string; value: string | number }) {
-  return (
-    <div className="flex justify-between font-bold">
-      <span>{name}</span>
-      <span>{value}</span>
-    </div>
-  );
-}
-
-/** Chunky black-bordered progress bar, same look as the PNG cards' XP bar. */
-function ComicBar({ pct }: { pct: number }) {
-  return (
-    <div
-      className="h-7 rounded-full border-4 border-black overflow-hidden"
-      style={{ backgroundColor: "#e8e0cc" }}
-    >
-      <div
-        className="h-full"
-        style={{
-          width: `${Math.min(100, Math.max(0, pct))}%`,
-          backgroundImage: "linear-gradient(90deg, #ffd23f, #ff6b35)",
-        }}
-      />
-    </div>
-  );
-}
+/** The `~/<name>` part of a window label: lowercase, no spaces. */
+const homeName = (name: string) => name.toLowerCase().replace(/\s+/g, "-");
 
 /**
- * HTML rendition of the /profile PNG card, plus live Discord roles.
- * `children` (e.g. the own-profile inventory) render between the XP and
- * roles cards.
+ * HTML rendition of the /profile PNG card as a character sheet, plus live Discord roles.
+ * `children` (e.g. the own-profile inventory) render between the sheet and the roles window.
+ *
+ * @param props.userId Discord user id of the member to show.
+ * @param props.children Extra windows slotted under the sheet.
  */
-export function MemberProfilePage({
-  userId,
-  children,
-}: {
-  userId: string;
-  children?: React.ReactNode;
-}) {
+export function MemberProfilePage({ userId, children }: { userId: string; children?: ReactNode }) {
   const { data, error } = useAsync<any>(() => api.memberProfile(userId), [userId]);
 
-  if (error) return <div className={card + " font-bold"}>Member not found.</div>;
-  if (!data) return <p className="on-bg">Loading…</p>;
+  if (error) {
+    return (
+      <Window label="fish: ~/unknown" tone="love">
+        <ErrorLine>Member not found. The name you asked for is not on the roll.</ErrorLine>
+      </Window>
+    );
+  }
+  if (!data) return <Loading>Looking the member up</Loading>;
 
-  const pct = data.xpNeeded > 0 ? (data.xpCurrent / data.xpNeeded) * 100 : 0;
+  const pct = data.xpNeeded > 0 ? Math.min(100, Math.max(0, (data.xpCurrent / data.xpNeeded) * 100)) : 0;
 
   return (
-    <div className="space-y-4 max-w-3xl">
-      <div className={card + " flex flex-wrap items-center gap-4 sm:gap-5 p-5"}>
-        {data.avatarUrl && (
-          <img
-            src={data.avatarUrl}
-            alt=""
-            className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-4 border-black shadow-[4px_4px_0_rgba(0,0,0,0.55)] object-cover shrink-0"
-          />
-        )}
-        <div className="min-w-0">
-          <div className="comic-title text-4xl sm:text-5xl break-words">{data.displayName}</div>
-          <div className="comic-title text-xl sm:text-2xl" style={{ color: "#ff6b35" }}>
-            LEVEL {data.level} · RANK #{data.rank || "—"}
+    <div className="flex w-full flex-col gap-4">
+      <Window label={`fish: ~/${homeName(data.displayName)}`}>
+        <div className="flex flex-wrap items-center gap-4 p-2">
+          <ImageFrame src={data.avatarUrl} alt="" size={96} />
+          <div className="min-w-0">
+            <div className="disp break-words" style={{ fontSize: 48 }}>
+              {data.displayName}
+            </div>
+            <p className="c4 m-0">
+              level {data.level} » rank {data.rank ? `#${data.rank}` : "none yet"}
+            </p>
+            {!data.inGuild && <p className="nar m-0">No longer in the server.</p>}
           </div>
-          {!data.inGuild && (
-            <div className="text-ink-soft text-sm font-bold mt-1">No longer in the server.</div>
+        </div>
+
+        <div className="p-2">
+          <div className="progress">
+            <div className="progress_head">
+              <span>level {data.level}</span>
+              <span className="progress_num">
+                {data.xpCurrent.toLocaleString()} / {data.xpNeeded.toLocaleString()} xp to level {data.level + 1}
+              </span>
+            </div>
+            <div
+              className="progress_track"
+              role="progressbar"
+              aria-label="xp to next level"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(pct)}
+            >
+              <div className="progress_fill" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <div className="fx-sheet p-2">
+          <span className="kv_label">credits</span>
+          <span>{data.credits.toLocaleString()} SC</span>
+          <span className="kv_label">xp</span>
+          <span>{data.xp.toLocaleString()}</span>
+          <span className="kv_label">messages</span>
+          <span>{data.messageCount.toLocaleString()}</span>
+          {data.guildJoinedAt && (
+            <>
+              <span className="kv_label">joined</span>
+              <span>{fmtDate(data.guildJoinedAt)}</span>
+            </>
           )}
         </div>
-      </div>
-
-      <div className={card + " space-y-2"}>
-        <StatRow name="Social Credits" value={data.credits.toLocaleString()} />
-        <StatRow name="XP" value={data.xp.toLocaleString()} />
-        <ComicBar pct={pct} />
-        <div className="text-sm font-bold">
-          {data.xpCurrent}/{data.xpNeeded} XP to level {data.level + 1}
-        </div>
-        <StatRow name="Messages" value={data.messageCount.toLocaleString()} />
-        {data.guildJoinedAt && <StatRow name="Joined server" value={fmtDate(data.guildJoinedAt)} />}
-      </div>
+      </Window>
 
       {children}
 
-      <div className={card}>
-        <div className="comic-title text-2xl mb-2">ROLES</div>
-        <div className="flex flex-wrap gap-2">
+      <Window label={`fish: ~/${homeName(data.displayName)}/roles`}>
+        <Heading first>roles</Heading>
+        <div className="flex flex-wrap gap-2 px-2 pb-2">
           {data.roles.map((r: any) => (
-            <span
-              key={r.id}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border-2 border-black bg-white text-sm font-bold"
-            >
-              <span
-                className="w-3 h-3 rounded-full border border-black shrink-0"
-                style={{ backgroundColor: r.color ?? "#99aab5" }}
-              />
-              {r.name}
-            </span>
+            <Chip key={r.id} on>
+              <Swatch colour={r.color ?? "var(--color-muted)"} /> {r.name}
+            </Chip>
           ))}
-          {data.roles.length === 0 && (
-            <span className="text-ink-soft font-bold text-sm">No roles.</span>
-          )}
+          {data.roles.length === 0 && <Empty>No roles yet. The member wears nothing.</Empty>}
         </div>
-      </div>
 
-      <div className={card}>
-        <div className="comic-title text-2xl mb-1" style={{ color: "#ff6b35" }}>
-          CLUBS
+        <Heading>clubs</Heading>
+        <div className="flex flex-wrap gap-2 px-2 pb-2">
+          {data.clubs.map((c: string) => (
+            <Chip key={c}>{c}</Chip>
+          ))}
+          {data.clubs.length === 0 && <Empty>No clubs. A free evening, then.</Empty>}
         </div>
-        <div className="font-bold">{data.clubs.length ? data.clubs.join(", ") : "None"}</div>
-      </div>
+      </Window>
 
       {data.presidency.length > 0 && (
-        <div className={card}>
-          <div className="comic-title text-2xl mb-1" style={{ color: "#9b59b6" }}>
-            PRESIDENCY LOG
+        <Window label={`fish: ~/${homeName(data.displayName)}/presidency`}>
+          <div className="fx-scroll">
+            <table className="fx-table">
+              <thead>
+                <tr>
+                  <th>from</th>
+                  <th>to</th>
+                  <th className="r">votes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.presidency.map((t: any, i: number) => (
+                  <tr key={i}>
+                    <td>{fmtDate(t.termStart)}</td>
+                    <td>{t.termEnd ? fmtDate(t.termEnd) : "present"}</td>
+                    <td className="r">{t.votes}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          {data.presidency.map((t: any, i: number) => (
-            <div key={i} className="font-bold text-sm py-0.5">
-              {fmtDate(t.termStart)} – {t.termEnd ? fmtDate(t.termEnd) : "Present"} ({t.votes}{" "}
-              votes)
-            </div>
-          ))}
-        </div>
+        </Window>
       )}
     </div>
   );

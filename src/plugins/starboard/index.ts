@@ -64,7 +64,7 @@ function buildPost(message: Message, count: number) {
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setStyle(ButtonStyle.Link)
-        .setLabel("Jump to message")
+        .setLabel("jump to message")
         .setURL(message.url),
     ),
   );

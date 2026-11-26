@@ -14,6 +14,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   pngAttachment,
+  Accent,
 } from "../../core/components.ts";
 import type { Command, Plugin } from "../../core/plugin.ts";
 import {
@@ -44,8 +45,8 @@ import {
   type MediaType,
 } from "./api.ts";
 
-/** AniList brand blue (matches the site accent used on the cards). */
-const ANILIST_ACCENT = 0x3db4f2;
+/** AniList messages use the haiiro primary accent (pine), not the AniList brand blue. */
+const ANILIST_ACCENT: number = Accent.primary;
 
 const EPHEMERAL = MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral;
 
@@ -57,14 +58,14 @@ function getLink(userId: string) {
     .get();
 }
 
-function linkButton(url: string, label = "View on AniList"): ActionRowBuilder<ButtonBuilder> {
+function linkButton(url: string, label = "view on AniList"): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(label).setURL(url),
   );
 }
 
 function errorCard(lines: string[]) {
-  return v2(card({ accent: 0xe85d75, title: "AniList", lines }));
+  return v2(card({ accent: Accent.danger, title: "anilist", lines }));
 }
 
 /** PNG card + link button when rendering works, text card otherwise. */
@@ -96,7 +97,7 @@ function imageReply(
 async function handleLink(interaction: ChatInputCommandInteraction) {
   if (!isAniListConfigured()) {
     return interaction.reply({
-      ...errorCard(["AniList linking isn't set up on this bot yet — ask an admin to configure it."]),
+      ...errorCard(["AniList linking isn't set up on this bot yet. ask an admin to configure it."]),
       flags: EPHEMERAL,
     });
   }
@@ -105,12 +106,12 @@ async function handleLink(interaction: ChatInputCommandInteraction) {
     ...v2(
       card({
         accent: ANILIST_ACCENT,
-        title: "Link your AniList account",
+        title: "link your AniList account",
         lines: [
-          "Click below to sign in with AniList and authorize this bot.",
-          "The link expires in 10 minutes and is only usable once.",
+          "click below to sign in with AniList and authorize this bot.",
+          "the link expires in 10 minutes and works once.",
         ],
-      }).addActionRowComponents(linkButton(buildAuthorizeUrl(state), "Sign in with AniList")),
+      }).addActionRowComponents(linkButton(buildAuthorizeUrl(state), "sign in with AniList")),
     ),
     flags: EPHEMERAL,
   });
@@ -125,11 +126,11 @@ async function handleUnlink(interaction: ChatInputCommandInteraction) {
     ...v2(
       card({
         accent: ANILIST_ACCENT,
-        title: "AniList unlinked",
+        title: "anilist unlinked",
         lines: [
           existing
-            ? `Removed the link to **${existing.username}**.`
-            : "There was no linked AniList account.",
+            ? `removed the link to **${existing.username}**.`
+            : "there was no linked AniList account.",
         ],
       }),
     ),
@@ -144,7 +145,7 @@ async function handleProfile(interaction: ChatInputCommandInteraction) {
     return interaction.reply({
       ...errorCard([
         target.id === interaction.user.id
-          ? "You haven't linked an AniList account yet — use `/al link`."
+          ? "you haven't linked an AniList account yet. use `/al link`."
           : `<@${target.id}> hasn't linked an AniList account.`,
       ]),
       flags: EPHEMERAL,
@@ -180,8 +181,8 @@ async function handleProfile(interaction: ChatInputCommandInteraction) {
       imageReply(png, `anilist-${alUser.name}.png`, alUser.siteUrl, {
         title: `${alUser.name} on AniList`,
         lines: [
-          `**Anime:** ${anime.count} titles · ${daysWatched.toFixed(1)} days watched · mean ${anime.meanScore || "—"}`,
-          `**Manga:** ${manga.count} titles · ${manga.chaptersRead} chapters read · mean ${manga.meanScore || "—"}`,
+          `**anime:** ${anime.count} titles · ${daysWatched.toFixed(1)} days watched · mean ${anime.meanScore || "—"}`,
+          `**manga:** ${manga.count} titles · ${manga.chaptersRead} chapters read · mean ${manga.meanScore || "—"}`,
         ],
       }),
     );
@@ -189,8 +190,8 @@ async function handleProfile(interaction: ChatInputCommandInteraction) {
     await interaction.editReply(
       errorCard([
         isNotFound(err)
-          ? `AniList user **${link.username}** no longer exists — re-link with \`/al link\`.`
-          : "AniList is unreachable right now — try again in a bit.",
+          ? `anilist user **${link.username}** no longer exists. re-link with \`/al link\`.`
+          : "anilist is unreachable right now. try again in a bit.",
       ]),
     );
   }
@@ -210,7 +211,7 @@ async function handleMedia(interaction: ChatInputCommandInteraction, type: Media
   await interaction.deferReply();
   const media = await resolveMedia(query, type);
   if (!media) {
-    return interaction.editReply(errorCard([`Nothing found for **${query}**.`]));
+    return interaction.editReply(errorCard([`nothing found for **${query}**.`]));
   }
 
   const [coverDataUri, bannerDataUri] = await Promise.all([
@@ -250,8 +251,8 @@ async function handleMedia(interaction: ChatInputCommandInteraction, type: Media
       title: mediaTitle(media),
       lines: [
         mediaMetaLine(media),
-        media.averageScore != null ? `**Score:** ${media.averageScore}%` : "",
-        media.genres.length ? `**Genres:** ${media.genres.slice(0, 5).join(", ")}` : "",
+        media.averageScore != null ? `**score:** ${media.averageScore}%` : "",
+        media.genres.length ? `**genres:** ${media.genres.slice(0, 5).join(", ")}` : "",
         cleanDescription(media.description, 300),
       ].filter(Boolean),
     }),
@@ -271,7 +272,7 @@ async function handleCharacter(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
   const character = await resolveCharacter(query);
   if (!character) {
-    return interaction.editReply(errorCard([`Nothing found for **${query}**.`]));
+    return interaction.editReply(errorCard([`nothing found for **${query}**.`]));
   }
 
   const imageDataUri = character.image?.large
@@ -296,8 +297,8 @@ async function handleCharacter(interaction: ChatInputCommandInteraction) {
       title: name,
       lines: [
         character.name.native ?? "",
-        character.favourites != null ? `**Favorites:** ${character.favourites}` : "",
-        appearsIn.length ? `**Appears in:** ${appearsIn.join(", ")}` : "",
+        character.favourites != null ? `**favorites:** ${character.favourites}` : "",
+        appearsIn.length ? `**appears in:** ${appearsIn.join(", ")}` : "",
         cleanDescription(character.description, 300),
       ].filter(Boolean),
     }),

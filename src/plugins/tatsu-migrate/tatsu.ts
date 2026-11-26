@@ -47,7 +47,7 @@ async function fetchPage(
       await sleep(RATE_LIMIT_BACKOFF_MS);
       continue;
     }
-    if (res.status === 401) throw new TatsuApiError(401, "Invalid Tatsu API key.");
+    if (res.status === 401) throw new TatsuApiError(401, "invalid Tatsu API key.");
     if (!res.ok) {
       throw new TatsuApiError(res.status, `Tatsu API returned HTTP ${res.status}.`);
     }

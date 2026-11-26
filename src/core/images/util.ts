@@ -1,29 +1,26 @@
-import { randomInt, remapInternalHost } from "../util.ts";
+import { remapInternalHost } from "../util.ts";
 
-/** A random saturated hue for titles/backgrounds. */
-export function randomVibrant(): string {
-  return `hsl(${randomInt(0, 360)}, 95%, 60%)`;
-}
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** A random hue plus an offset partner, for two-tone gradient backgrounds. */
-export function randomVibrantPair(): [string, string] {
-  const hue = randomInt(0, 360);
-  return [`hsl(${hue}, 90%, 62%)`, `hsl(${(hue + 45) % 360}, 90%, 52%)`];
-}
-
-/** Format a unix-seconds timestamp as a short date for rendered images. */
+/**
+ * Format a unix-seconds timestamp as a short date for rendered images, in the haiiro
+ * style: day, short month, year (`4 Nov 2026`), in the server's local time zone.
+ *
+ * @param unixSec - Seconds since the Unix epoch.
+ * @returns The formatted date.
+ */
 export function fmtDate(unixSec: number): string {
-  return new Date(unixSec * 1000).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  const d = new Date(unixSec * 1000);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 /**
  * Fetch an image (e.g. a Discord CDN avatar) and inline it as a base64 data
- * URI for satori. Callers must request PNG avatars — resvg cannot decode webp,
+ * URI for satori. Callers must request PNG or JPEG: resvg cannot decode webp,
  * so use displayAvatarURL({ extension: "png", forceStatic: true }).
+ *
+ * @param url - Image URL; internal hosts are remapped first.
+ * @returns A `data:` URI, or null when the fetch fails.
  */
 export async function fetchImageDataUri(url: string): Promise<string | null> {
   try {

@@ -10,6 +10,10 @@ import { renderBotMessage, messageCtx } from "./messages.ts";
  *
  * When `image` is set it renders as a banner above the lines and replaces the
  * markdown title (the banner is the title).
+ *
+ * Callers pass `title` and `lines` already in the haiiro voice (lowercase title,
+ * no emoji); this helper adds no decoration of its own. `accent` should be an
+ * {@link Accent} value and defaults to `Accent.primary` (pine).
  */
 export async function announce(
   client: Client,
