@@ -14,7 +14,38 @@ import {
 } from "../queries/admin.ts";
 import { parsePeriodParam } from "../time.ts";
 import type { Period } from "../time.ts";
-import type { RelationKind } from "../types/admin.ts";
+import type { ChannelHealthRow, NamedChannelHealthRow, RelationKind } from "../types/admin.ts";
+
+/** Resolves a channel or thread id to its display name; null when unknown or gone. */
+export type ChannelNameLookup = (channelId: string) => string | null;
+
+/**
+ * A {@link ChannelNameLookup} over the locked guild's channel cache
+ * (`ctx.client.guilds.cache.get(ctx.guildId)?.channels.cache`). Threads the
+ * bot has seen are in that cache too. Nothing is fetched from Discord.
+ *
+ * @param ctx - The route context.
+ */
+export function cachedChannelNames(ctx: ApiContext): ChannelNameLookup {
+  const cache = ctx.client.guilds.cache.get(ctx.guildId)?.channels.cache;
+  return (channelId) => cache?.get(channelId)?.name ?? null;
+}
+
+/**
+ * Add display names to channel-health rows. Kept apart from the query so the
+ * query stays free of discord.js and tests can pass a fake lookup.
+ *
+ * @param rows - Rows from `channelHealth`.
+ * @param lookup - Resolves an id to a name.
+ * @returns The rows with `name` and `parentName` (null for a normal channel or an unknown id).
+ */
+export function withChannelNames(rows: ChannelHealthRow[], lookup: ChannelNameLookup): NamedChannelHealthRow[] {
+  return rows.map((r) => ({
+    ...r,
+    name: lookup(r.channelId),
+    parentName: r.parentChannelId == null ? null : lookup(r.parentChannelId),
+  }));
+}
 
 /** A 400 answer with a JSON `{ error }` body. */
 function badRequest(error: string): Response {
@@ -62,15 +93,17 @@ function adminView(
  *
  * All are `GET`, `access: "admin"`, and take `?period=7d|week|30d|term|year|all`
  * (default `30d`). `relations` also takes `?kind=replies|mentions|voice`
- * (default `replies`), and `inspect/:userId` answers 400 for an id that is not
- * all digits. Shapes are in `../types/admin.ts`; see docs/activity/queries-admin.md.
+ * (default `replies`), `channels` adds `name` and `parentName` from the guild's
+ * channel cache ({@link withChannelNames}), and `inspect/:userId` answers 400
+ * for an id that is not all digits. Shapes are in `../types/admin.ts`; see
+ * docs/activity/queries-admin.md.
  */
 export const adminRoutes: ApiRoute[] = [
   adminView("moderation", (p) => moderationSeries(p)),
   adminView("offenders", (p) => repeatOffenders(p)),
   adminView("newcomers", (p) => newcomers(p)),
   adminView("drift", (p) => drift(p)),
-  adminView("channels", (p) => channelHealth(p)),
+  adminView("channels", (p, _url, ctx) => withChannelNames(channelHealth(p), cachedChannelNames(ctx))),
   adminView("economy", (p) => economy(p)),
   adminView("clubs-events", (p) => clubsAndEvents(p)),
   adminView("bot", (p) => botUsage(p)),

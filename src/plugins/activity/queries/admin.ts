@@ -314,36 +314,42 @@ export function drift(p: Period): DriftRow[] {
 }
 
 /**
- * Health of each text channel: how many messages go unanswered and how fast
- * the others get a reply.
+ * Health of each text channel and thread: how many messages go unanswered and
+ * how fast the others get a reply.
  *
  * A message is answered when someone other than its author replied to it in
- * the period; its reply time is the time to the first such reply. Messages in
- * a thread count under the thread's parent channel. Channels without messages
- * in the period are not listed.
+ * the period; its reply time is the time to the first such reply. A thread is
+ * a channel of its own: its messages make their own row (keyed by the
+ * message's own `channelId`, with `parentChannelId` set), never folded into
+ * the parent. A thread under an excluded channel is hidden like the channel.
+ * Channels without messages in the period are not listed.
  *
  * Both parts run in SQL: message counts are grouped per channel, and the
  * first-reply delays come from a self-join of replies onto their targets (the
- * join drives from the reply side onto the unique `message_id` index). Only the
- * answered messages' delays reach JavaScript, for the median.
+ * join drives from the reply side onto the unique `message_id` index), keyed by
+ * the target's channel. Only the answered messages' delays reach JavaScript,
+ * for the median.
  *
  * @param p - The period.
- * @returns Channels by message count, busiest first, ties by id.
+ * @returns Channels and threads by message count, busiest first, ties by id.
  */
 export function channelHealth(p: Period): ChannelHealthRow[] {
-  const key = sql<string>`coalesce(${activityMessages.parentChannelId}, ${activityMessages.channelId})`;
   const totals = db
-    .select({ channelId: key, messages: count() })
+    .select({
+      channelId: activityMessages.channelId,
+      // Every row of a thread carries the same parent; max() skips nulls.
+      parentChannelId: max(activityMessages.parentChannelId),
+      messages: count(),
+    })
     .from(activityMessages)
     .where(and(inPeriod(activityMessages.ts, p), notExcluded(activityMessages.channelId, activityMessages.parentChannelId)))
-    .groupBy(key)
+    .groupBy(activityMessages.channelId)
     .all();
 
   const t = alias(activityMessages, "t");
   const r = alias(activityMessages, "r");
-  const targetKey = sql<string>`coalesce(${t.parentChannelId}, ${t.channelId})`;
   const answered = db
-    .select({ channelId: targetKey, delay: sql<number>`min(${r.ts} - ${t.ts})` })
+    .select({ channelId: t.channelId, delay: sql<number>`min(${r.ts} - ${t.ts})` })
     .from(r)
     .innerJoin(t, and(eq(r.replyToMessageId, t.messageId), ne(r.userId, t.userId), gte(r.ts, t.ts)))
     .where(
@@ -369,6 +375,7 @@ export function channelHealth(p: Period): ChannelHealthRow[] {
       const d = delays.get(c.channelId) ?? [];
       return {
         channelId: c.channelId,
+        parentChannelId: c.parentChannelId ?? null,
         messages: c.messages,
         unansweredPct: round1((100 * (c.messages - d.length)) / c.messages),
         medianReplySec: d.length > 0 ? median(d) : null,

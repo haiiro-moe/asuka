@@ -402,7 +402,7 @@ describe("memberInspect", () => {
 });
 
 describe("channelHealth", () => {
-  test("unanswered share and median reply time, threads under their parent", () => {
+  test("unanswered share and median reply time; a thread is its own row", () => {
     const t = NOW - 2 * DAY;
     const a = msg({ userId: "1", ts: t });
     msg({ userId: "2", ts: t + 60, replyToUserId: "1", replyToMessageId: a });
@@ -414,9 +414,33 @@ describe("channelHealth", () => {
     setExcluded("c9");
     expect(channelHealth(P)).toEqual([
       // 5 messages in c1: a, own and the self reply are unanswered; the replies themselves are too.
-      { channelId: "c1", messages: 5, unansweredPct: 80, medianReplySec: 60 },
-      { channelId: "c2", messages: 1, unansweredPct: 100, medianReplySec: null },
+      { channelId: "c1", parentChannelId: null, messages: 5, unansweredPct: 80, medianReplySec: 60 },
+      { channelId: "t2", parentChannelId: "c2", messages: 1, unansweredPct: 100, medianReplySec: null },
     ]);
+  });
+
+  test("a thread with its own unanswered rate is a separate row from its parent", () => {
+    const t = NOW - 2 * DAY;
+    // Parent c5: 2 messages, the first answered after 30 s.
+    const p1 = msg({ userId: "1", channelId: "c5", ts: t });
+    msg({ userId: "2", channelId: "c5", ts: t + 30, replyToUserId: "1", replyToMessageId: p1 });
+    // Thread t5 under c5: 4 messages, two answered (120 s, 300 s).
+    const q1 = msg({ userId: "1", channelId: "t5", parentChannelId: "c5", ts: t });
+    const q2 = msg({ userId: "1", channelId: "t5", parentChannelId: "c5", ts: t });
+    msg({ userId: "2", channelId: "t5", parentChannelId: "c5", ts: t + 120, replyToUserId: "1", replyToMessageId: q1 });
+    msg({ userId: "3", channelId: "t5", parentChannelId: "c5", ts: t + 300, replyToUserId: "1", replyToMessageId: q2 });
+    expect(channelHealth(P)).toEqual([
+      { channelId: "t5", parentChannelId: "c5", messages: 4, unansweredPct: 50, medianReplySec: 210 },
+      { channelId: "c5", parentChannelId: null, messages: 2, unansweredPct: 50, medianReplySec: 30 },
+    ]);
+  });
+
+  test("a thread under an excluded parent is not listed", () => {
+    msg({ userId: "1", channelId: "c5", ts: NOW - DAY });
+    msg({ userId: "1", channelId: "t5", parentChannelId: "c5", ts: NOW - DAY });
+    msg({ userId: "1", channelId: "c6", ts: NOW - DAY });
+    setExcluded("c5");
+    expect(channelHealth(P).map((r) => r.channelId)).toEqual(["c6"]);
   });
 
   test("exact percentage and an even-count median", () => {
@@ -429,8 +453,8 @@ describe("channelHealth", () => {
     msg({ userId: "2", ts: t + 50, channelId: "c3", replyToUserId: "1", replyToMessageId: "old" }); // target not recorded
     // c1: 5 messages, a and b answered (60 s and 121 s): 3 of 5 unanswered, median (60 + 121) / 2 = 90.5.
     expect(channelHealth(P)).toEqual([
-      { channelId: "c1", messages: 5, unansweredPct: 60, medianReplySec: 91 },
-      { channelId: "c3", messages: 1, unansweredPct: 100, medianReplySec: null },
+      { channelId: "c1", parentChannelId: null, messages: 5, unansweredPct: 60, medianReplySec: 91 },
+      { channelId: "c3", parentChannelId: null, messages: 1, unansweredPct: 100, medianReplySec: null },
     ]);
   });
 
@@ -441,7 +465,9 @@ describe("channelHealth", () => {
     msg({ userId: "2", ts: t + 30, replyToUserId: "1", replyToMessageId: a });
     msg({ userId: "2", ts: t + 40, replyToUserId: "1", replyToMessageId: before });
     // 3 messages in the period, 1 answered: 66.666... -> 66.7.
-    expect(channelHealth(P)).toEqual([{ channelId: "c1", messages: 3, unansweredPct: 66.7, medianReplySec: 30 }]);
+    expect(channelHealth(P)).toEqual([
+      { channelId: "c1", parentChannelId: null, messages: 3, unansweredPct: 66.7, medianReplySec: 30 },
+    ]);
   });
 });
 

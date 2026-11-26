@@ -56,16 +56,30 @@ export interface DriftRow {
   lastActiveAt: number;
 }
 
-/** Health of one text channel. Threads count under their parent channel. */
+/** Health of one text channel or thread. A thread is a row of its own, not folded into its parent. */
 export interface ChannelHealthRow {
-  /** The channel. */
+  /** The channel, or the thread. */
   channelId: string;
+  /** The parent channel when `channelId` is a thread; null for a normal channel. */
+  parentChannelId: string | null;
   /** Messages sent in the period. */
   messages: number;
   /** Share of those messages nobody else replied to, 0 to 100, one decimal. */
   unansweredPct: number;
   /** Median seconds from a message to its first reply; null when none was answered. */
   medianReplySec: number | null;
+}
+
+/**
+ * A {@link ChannelHealthRow} with display names, as `GET /api/activity/admin/channels`
+ * returns it. Names come from the bot's channel cache, so the page can show
+ * `thread in #parent`.
+ */
+export interface NamedChannelHealthRow extends ChannelHealthRow {
+  /** The channel's or thread's name; null when unknown or deleted. */
+  name: string | null;
+  /** The parent channel's name; null for a normal channel, or when unknown or deleted. */
+  parentName: string | null;
 }
 
 /** Social Credits moved in one 7-day bucket. */

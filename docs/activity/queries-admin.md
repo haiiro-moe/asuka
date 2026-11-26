@@ -16,7 +16,7 @@ All are `GET`, `access: "admin"`, and take `?period=7d|week|30d|term|year|all` (
 | `/api/activity/admin/offenders` | `repeatOffenders(p)` | `OffenderRow[]` |
 | `/api/activity/admin/newcomers` | `newcomers(p)` | `NewcomerRow[]` |
 | `/api/activity/admin/drift` | `drift(p)` | `DriftRow[]` |
-| `/api/activity/admin/channels` | `channelHealth(p)` | `ChannelHealthRow[]` |
+| `/api/activity/admin/channels` | `channelHealth(p)`, then `withChannelNames` | `NamedChannelHealthRow[]` |
 | `/api/activity/admin/economy` | `economy(p)` | `Economy` |
 | `/api/activity/admin/clubs-events` | `clubsAndEvents(p)` | `ClubsAndEvents` |
 | `/api/activity/admin/bot` | `botUsage(p)` | `CommandUsageRow[]` |
@@ -24,7 +24,8 @@ All are `GET`, `access: "admin"`, and take `?period=7d|week|30d|term|year|all` (
 | `/api/activity/admin/inspect/:userId` | `memberInspect(userId, p)` | `MemberInspect` |
 
 `relations` takes `kind=replies|mentions|voice` (absent means `replies`; anything else is a 400).
-`inspect/:userId` answers 400 when the id is not all digits.
+`inspect/:userId` answers 400 when the id is not all digits. `channels` adds display names in the
+route layer, so the query stays free of discord.js (see "Channel health" below).
 
 ## Rules every query follows
 
@@ -90,7 +91,10 @@ change is a `leave` are left out: they are gone, not drifting. Most recently act
 
 ### Channel health (`channelHealth`)
 
-Per channel with messages in the period, threads counted under their parent channel:
+One row per channel **or thread** with messages in the period. Threads are channels: each is keyed
+by the message's own `channelId` and has its own unanswered rate and reply time, never folded into
+its parent. A thread's row carries `parentChannelId` (null for a normal channel). A thread under an
+excluded channel is hidden with it (`notExcluded(channelId, parentChannelId)`).
 
 - `unansweredPct`: share of messages that nobody else replied to in the period, 0 to 100 with one
   decimal. Replies are messages themselves, so they count too.
@@ -101,8 +105,15 @@ Per channel with messages in the period, threads counted under their parent chan
 Both the message and its reply must be in the period and in a visible channel; a reply to a
 message from before the period does not answer anything. Message counts are grouped per channel in
 SQL. The delays come from a self-join of each reply onto its target by `message_id` (unique, so
-the join uses its index), grouped per target with `min(reply.ts - target.ts)`; only those per-target
-delays come back, for the median. Busiest channel first.
+the join uses its index), grouped per target with `min(reply.ts - target.ts)` and keyed by the
+target's own channel; only those per-target delays come back, for the median. Busiest first.
+
+The route adds `name` and `parentName` to each row (`NamedChannelHealthRow`), so the page can show
+`thread in #parent`. `withChannelNames(rows, lookup)` takes a lookup function, and the route passes
+`cachedChannelNames(ctx)`, which reads the guild's channel cache
+(`ctx.client.guilds.cache.get(ctx.guildId)?.channels.cache`) and fetches nothing from Discord. A
+channel or thread missing from the cache (deleted, or a thread the bot has not seen since it
+started) gets null.
 
 ### Economy (`economy`)
 
@@ -166,7 +177,7 @@ throws.
 `warnings`, `store_purchases`, `clubs`, `events` and `event_participants`) and covers every view,
 including a thread under a channel excluded after its rows were written. `api/admin.test.ts`
 covers the routes: paths and access, the 400 for an unknown period, an unknown relation kind and a
-non-numeric user id.
+non-numeric user id, and the channel names `channels` adds from a fake guild channel cache.
 
 ```sh
 nix develop -c bun test src/plugins/activity/queries src/plugins/activity/api
