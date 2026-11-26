@@ -9,7 +9,7 @@ import { Heading, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityTiles } from "../charts.tsx";
 import { useActivity } from "../useActivity.ts";
 import { axisLabels, formatCount, weekLabels, type PeriodKey } from "./format.ts";
-import { formatUtcDate } from "../format.ts";
+import { columnsAriaLabel, formatUtcDate } from "../format.ts";
 import { DataTable, Quiet, ViewState } from "./parts.tsx";
 
 /**
@@ -27,7 +27,11 @@ export function EconomyTab({ period }: { period: PeriodKey }) {
       empty="No weeks in this period yet."
     >
       {(d) => {
-        const axis = axisLabels(weekLabels(d.start, d.weekly.length));
+        const labels = weekLabels(d.start, d.weekly.length);
+        const axis = axisLabels(labels);
+        const week = (i: number) => `week of ${labels[i] ?? ""}`;
+        const earned = d.weekly.map((w) => w.in);
+        const spent = d.weekly.map((w) => w.out);
         const moved = d.creditsIn + d.creditsOut > 0;
         return (
           <>
@@ -44,9 +48,14 @@ export function EconomyTab({ period }: { period: PeriodKey }) {
               {moved ? (
                 <>
                   <Heading>earned per week</Heading>
-                  <ActivityColumns values={d.weekly.map((w) => w.in)} axis={axis} />
+                  <ActivityColumns values={earned} axis={axis} ariaLabel={columnsAriaLabel("social credits earned per week, utc", earned, week, true)} />
                   <Heading>spent per week</Heading>
-                  <ActivityColumns values={d.weekly.map((w) => w.out)} axis={axis} tone="iris" />
+                  <ActivityColumns
+                    values={spent}
+                    axis={axis}
+                    tone="iris"
+                    ariaLabel={columnsAriaLabel("social credits spent per week, utc", spent, week, true)}
+                  />
                 </>
               ) : (
                 <Quiet>No credits changed hands in this period.</Quiet>

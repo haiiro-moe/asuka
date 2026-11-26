@@ -17,6 +17,13 @@ export interface ActivityHeatmapProps {
   cells: number[][];
   /** The largest count, which gets the brightest step. */
   max: number;
+  /**
+   * The chart's accessible name, specific to what it shows (`messages by weekday and hour, utc; busiest
+   * tue 21:00`; see `heatmapAriaLabel`). Required: every chart says what it is.
+   */
+  ariaLabel: string;
+  /** A longer reading for screen readers, rendered visually hidden under the chart. */
+  summary?: string;
 }
 
 /**
@@ -24,13 +31,13 @@ export interface ActivityHeatmapProps {
  *
  * @param props - See {@link ActivityHeatmapProps}.
  */
-export function ActivityHeatmap({ rowLabels, cells, max }: ActivityHeatmapProps) {
+export function ActivityHeatmap({ rowLabels, cells, max, ariaLabel, summary }: ActivityHeatmapProps) {
   const width = Math.max(0, ...cells.map((r) => r.length));
   const style: CSSProperties | undefined =
     width && width !== 24 ? { gridTemplateColumns: `4ch repeat(${width}, minmax(0, 1fr))` } : undefined;
   return (
     <div>
-      <div className="fx-heat" role="img" aria-label="activity heatmap" style={style}>
+      <div className="fx-heat" role="img" aria-label={ariaLabel} style={style}>
         {cells.map((row, r) => (
           <HeatRow key={r} label={rowLabels[r] ?? ""} row={row} max={max} />
         ))}
@@ -44,6 +51,7 @@ export function ActivityHeatmap({ rowLabels, cells, max }: ActivityHeatmapProps)
         <i className="h4" />
         <span>more</span>
       </div>
+      {summary && <p className="sr-only">{summary}</p>}
     </div>
   );
 }
@@ -70,6 +78,13 @@ export interface ActivityColumnsProps {
   tone?: "foam" | "iris";
   /** Index of the current bucket, drawn gold. */
   nowIndex?: number;
+  /**
+   * The chart's accessible name, specific to what it shows (`replies per week; highest week of 2 Nov at
+   * 40`; see `columnsAriaLabel`). Required: every chart says what it is.
+   */
+  ariaLabel: string;
+  /** A longer reading for screen readers, rendered visually hidden under the chart. */
+  summary?: string;
 }
 
 /**
@@ -77,11 +92,11 @@ export interface ActivityColumnsProps {
  *
  * @param props - See {@link ActivityColumnsProps}.
  */
-export function ActivityColumns({ values, axis, tone = "foam", nowIndex }: ActivityColumnsProps) {
+export function ActivityColumns({ values, axis, tone = "foam", nowIndex, ariaLabel, summary }: ActivityColumnsProps) {
   const heights = scaleToPercent(values);
   return (
     <div>
-      <div className={cx("fx-cols", tone === "iris" && "iris")} role="img" aria-label="activity columns">
+      <div className={cx("fx-cols", tone === "iris" && "iris")} role="img" aria-label={ariaLabel}>
         {heights.map((h, i) => (
           <i
             key={i}
@@ -98,6 +113,7 @@ export function ActivityColumns({ values, axis, tone = "foam", nowIndex }: Activ
           ))}
         </div>
       )}
+      {summary && <p className="sr-only">{summary}</p>}
     </div>
   );
 }

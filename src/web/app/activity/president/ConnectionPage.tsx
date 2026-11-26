@@ -11,7 +11,7 @@ import type { VoiceStatus } from "../../../../plugins/activity/types/user.ts";
 import { Badge, Empty, ErrorLine, Heading, Loading, Segmented, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityRank, ActivityTiles } from "../charts.tsx";
 import { useActivity } from "../useActivity.ts";
-import { voiceLockedLine } from "../format.ts";
+import { columnsAriaLabel, voiceLockedLine, weekName } from "../format.ts";
 import { countTile, groupBars, groupsLeftOut, seriesView, totalUnit, type Period } from "./render.ts";
 
 const PERIODS = [
@@ -106,7 +106,7 @@ function Numbers({ period, connection, weekly, groups, voice, voiceFailed }: Num
 
       <div>
         <Heading as="h3">replies per week</Heading>
-        <Series values={weekly.replies} tone="foam" unit="replies" />
+        <Series values={weekly.replies} subject="replies per week, utc" tone="foam" unit="replies" />
       </div>
 
       <div>
@@ -120,7 +120,7 @@ function Numbers({ period, connection, weekly, groups, voice, voiceFailed }: Num
                 : "voice hours are hidden for now."}
           </Empty>
         ) : (
-          <Series values={weekly.voiceHours} tone="iris" unit="hours" />
+          <Series values={weekly.voiceHours} subject="voice hours per week, utc" tone="iris" unit="hours" />
         )}
       </div>
 
@@ -145,17 +145,25 @@ function Numbers({ period, connection, weekly, groups, voice, voiceFailed }: Num
 /** Props of {@link Series}. */
 interface SeriesProps {
   values: number[];
+  /** What the columns count, lowercase, for the chart's accessible name (`replies per week, utc`). */
+  subject: string;
   tone: "foam" | "iris";
   unit: string;
 }
 
 /** One per-week column chart with the latest week in gold, or a narrator line when there are no weeks. */
-function Series({ values, tone, unit }: SeriesProps) {
+function Series({ values, subject, tone, unit }: SeriesProps) {
   const view = seriesView(values);
   if (view.kind !== "columns") return <Empty className="px-2">No weeks in this period yet.</Empty>;
   return (
     <div className="px-2">
-      <ActivityColumns values={view.values} tone={tone} nowIndex={view.values.length - 1} axis={["earlier", "latest week"]} />
+      <ActivityColumns
+        values={view.values}
+        tone={tone}
+        nowIndex={view.values.length - 1}
+        axis={["earlier", "latest week"]}
+        ariaLabel={columnsAriaLabel(subject, view.values, (i) => weekName(i, view.values.length), true)}
+      />
       <p className="text-subtle pt-2">
         latest week {view.latest.toLocaleString("en-GB")} {unit}. weeks run monday to monday, utc; the first and last can be partial.
       </p>

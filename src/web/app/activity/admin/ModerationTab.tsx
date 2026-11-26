@@ -9,7 +9,7 @@ import { Heading, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityTiles } from "../charts.tsx";
 import { useActivity } from "../useActivity.ts";
 import { axisLabels, formatCount, weekLabels, type PeriodKey } from "./format.ts";
-import { formatUtcDate } from "../format.ts";
+import { columnsAriaLabel, formatUtcDate } from "../format.ts";
 import { DataTable, Quiet, ViewState } from "./parts.tsx";
 
 /**
@@ -46,7 +46,11 @@ export function ModerationTab({ period }: { period: PeriodKey }) {
                   <Quiet>Nobody was warned, timed out, kicked or banned. A quiet stretch.</Quiet>
                 ) : (
                   <>
-                    <ActivityColumns values={d.weekly} axis={axisLabels(labels)} />
+                    <ActivityColumns
+                      values={d.weekly}
+                      axis={axisLabels(labels)}
+                      ariaLabel={columnsAriaLabel("moderation actions per week, utc", d.weekly, (i) => `week of ${labels[i] ?? ""}`, true)}
+                    />
                     <Heading>by kind</Heading>
                     <DataTable
                       head={

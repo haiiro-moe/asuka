@@ -39,12 +39,21 @@ not have 24 buckets). Nothing is eased.
 
 | Component | Props | Markup |
 |---|---|---|
-| `ActivityHeatmap` | `rowLabels`, `cells[row][bucket]`, `max` | `fx-heat` plus `fx-legend`, steps `h1` to `h4` |
-| `ActivityColumns` | `values`, `axis?`, `tone?` (`foam`, `iris`), `nowIndex?` | `fx-cols`, `fx-axis` |
+| `ActivityHeatmap` | `rowLabels`, `cells[row][bucket]`, `max`, `ariaLabel`, `summary?` | `fx-heat` plus `fx-legend`, steps `h1` to `h4` |
+| `ActivityColumns` | `values`, `axis?`, `tone?` (`foam`, `iris`), `nowIndex?`, `ariaLabel`, `summary?` | `fx-cols`, `fx-axis` |
 | `ActivityTiles` | `tiles[{ label, value, unit?, note?, off? }]` | `fx-grid fx-tiles` |
 | `ActivityRank` | `rows[{ label, value, sub? }]`, `max?` | `fx-rank`, top three gold, iris, foam |
 
 Charts bucketed by UTC should say so in the window heading's as-of line.
+
+The heatmap and the columns are `role="img"`, so `ariaLabel` is **required**: a specific accessible
+name per chart, never a generic one. Build it with the pure helpers in `format.ts`:
+`heatmapAriaLabel(subject, rowLabels, cells)` (`messages by weekday and hour, utc; busiest tue
+21:00`) and `columnsAriaLabel(subject, values, name, latest?)` (`replies per week, utc; highest week 3
+of 12 at 40, latest 12`), with `hourName` and `weekName` to name a column. Labels name what is
+counted and when, never a member or an id (president pages included). `summary` is an optional
+longer reading, rendered visually hidden (`sr-only`) under the chart. `charts.test.ts` renders both
+with `react-dom/server`.
 
 ## scale.ts
 

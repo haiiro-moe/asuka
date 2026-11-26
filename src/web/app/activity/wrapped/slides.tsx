@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { ServerWrapped, WrappedLinkResponse } from "../../../../plugins/activity/types/wrapped.ts";
 import { ActivityColumns, ActivityRank, type ActivityRankRow } from "../charts.tsx";
+import { hourName } from "../format.ts";
 import { Blobs, ErrorLine, InkButton, Loading, PromptLine, Saved, Window, cx, useReducedMotion } from "../../ui/index.ts";
 import {
   STEP_MS,
@@ -488,7 +489,14 @@ function Stats({ items }: { items: (Stat | false | null | undefined)[] }) {
 /** The 24 UTC hours as columns with only the busiest one drawn (gold), on the `fx-axis` line. */
 function HourColumns({ hour }: { hour: number }) {
   const values = Array.from({ length: 24 }, (_, i) => (i === hour ? 1 : 0));
-  return <ActivityColumns values={values} nowIndex={hour} axis={["00", "06", "12", "18", "23"]} />;
+  return (
+    <ActivityColumns
+      values={values}
+      nowIndex={hour}
+      axis={["00", "06", "12", "18", "23"]}
+      ariaLabel={`busiest hour of the day, utc: ${hourName(hour)}`}
+    />
+  );
 }
 
 /**

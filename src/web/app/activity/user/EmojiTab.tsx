@@ -7,6 +7,7 @@
 import type { EmojiRow, EmojiSeries } from "../../../../plugins/activity/types/user.ts";
 import { Empty, Heading, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityRank } from "../charts.tsx";
+import { columnsAriaLabel, weekName } from "../format.ts";
 import { useActivity } from "../useActivity.ts";
 import { View } from "./parts.tsx";
 import { activityPath, emojiLabel } from "./helpers.ts";
@@ -53,7 +54,12 @@ function EmojiTrend({ period }: { period: PagePeriod }) {
             {series.map((s, i) => (
               <div key={s.emoji}>
                 <p className="pb-1">{emojiLabel(s.emoji, s.name)}</p>
-                <ActivityColumns values={s.weekly} tone={i % 2 ? "iris" : "foam"} nowIndex={s.weekly.length - 1} />
+                <ActivityColumns
+                  values={s.weekly}
+                  tone={i % 2 ? "iris" : "foam"}
+                  nowIndex={s.weekly.length - 1}
+                  ariaLabel={columnsAriaLabel(`uses of ${emojiLabel(s.emoji, s.name)} per 7 days`, s.weekly, (w) => weekName(w, s.weekly.length), true)}
+                />
               </div>
             ))}
           </div>

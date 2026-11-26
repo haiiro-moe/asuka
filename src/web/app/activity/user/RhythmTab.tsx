@@ -6,6 +6,7 @@
 import type { Rhythm } from "../../../../plugins/activity/types/user.ts";
 import { Empty, Heading, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityHeatmap, ActivityTiles } from "../charts.tsx";
+import { columnsAriaLabel, heatmapAriaLabel, hourName } from "../format.ts";
 import { useActivity } from "../useActivity.ts";
 import { VoiceGate, View } from "./parts.tsx";
 import {
@@ -56,11 +57,21 @@ function RhythmView({ rhythm }: { rhythm: Rhythm }) {
               ]}
             />
             <div className="px-2 pt-4">
-              <ActivityHeatmap rowLabels={WEEKDAYS} cells={cells} max={max} />
+              <ActivityHeatmap
+                rowLabels={WEEKDAYS}
+                cells={cells}
+                max={max}
+                ariaLabel={heatmapAriaLabel("messages by weekday and hour, utc", WEEKDAYS, cells)}
+              />
             </div>
             <Heading>by hour of day</Heading>
             <div className="px-2">
-              <ActivityColumns values={hours} axis={HOUR_AXIS} nowIndex={hour ?? undefined} />
+              <ActivityColumns
+                values={hours}
+                axis={HOUR_AXIS}
+                nowIndex={hour ?? undefined}
+                ariaLabel={columnsAriaLabel("messages by hour of day, utc", hours, hourName)}
+              />
             </div>
           </>
         )}
@@ -73,7 +84,12 @@ function RhythmView({ rhythm }: { rhythm: Rhythm }) {
           ) : (
             <div className="px-2">
               <p className="pb-3 text-subtle">connected hours per cell.</p>
-              <ActivityHeatmap rowLabels={WEEKDAYS} cells={voice.cells} max={voice.max} />
+              <ActivityHeatmap
+                rowLabels={WEEKDAYS}
+                cells={voice.cells}
+                max={voice.max}
+                ariaLabel={heatmapAriaLabel("voice hours by weekday and hour, utc", WEEKDAYS, voice.cells)}
+              />
             </div>
           )
         ) : (
