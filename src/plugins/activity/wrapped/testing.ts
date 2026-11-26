@@ -10,6 +10,7 @@ import type { Client } from "discord.js";
 import { db, getConfig, schema } from "../../../db/index.ts";
 import type { BotContext } from "../../../core/plugin.ts";
 import type { MessageFacts } from "../facts.ts";
+import { clearWrappedSharedMemo } from "./data.ts";
 
 /** Every table the Wrapped tests write to. */
 const touchedTables = [
@@ -32,8 +33,9 @@ const touchedTables = [
   schema.elections,
 ];
 
-/** Empty every touched table and reset the config columns the tests change. */
+/** Empty every touched table, reset the config columns the tests change and drop the year-aggregates memo. */
 export function resetWrappedTables(): void {
+  clearWrappedSharedMemo();
   for (const table of touchedTables) db.delete(table).run();
   db.update(schema.president).set({ userId: null, termStart: null }).where(eq(schema.president.id, 1)).run();
   db.update(schema.guildConfig)

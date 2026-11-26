@@ -79,6 +79,70 @@ export function wrappedShared(year: number, voiceReady: boolean = voiceReadiness
   return { clubs, terms, awards: titleAwards(year, { clubs, terms, voiceReady }), voiceReady };
 }
 
+/** How long a memoised {@link WrappedShared} is reused, in milliseconds (10 minutes). */
+export const WRAPPED_SHARED_TTL_MS = 10 * 60 * 1000;
+
+/** The memo behind {@link sharedFor}, keyed by `year:voiceReady`. */
+const sharedMemo = new Map<string, { at: number; value: WrappedShared }>();
+
+/**
+ * The year aggregates, memoised: built at most once per year and voice
+ * readiness until a run starts ({@link clearWrappedSharedMemo}) or
+ * {@link WRAPPED_SHARED_TTL_MS} passes. A run stores the aggregates it built
+ * ({@link rememberWrappedShared}), so the on-demand paths (`/wrapped me`, the
+ * admin's open link) reuse them instead of spending seconds per member.
+ *
+ * @param year - The UTC calendar year.
+ * @param voiceReady - Whether voice figures may be shown.
+ * @returns The aggregates; the same object while the memo holds.
+ */
+export function sharedFor(year: number, voiceReady: boolean): WrappedShared {
+  const key = `${year}:${voiceReady}`;
+  const hit = sharedMemo.get(key);
+  if (hit && Date.now() - hit.at < WRAPPED_SHARED_TTL_MS) return hit.value;
+  return rememberWrappedShared(year, wrappedShared(year, voiceReady));
+}
+
+/**
+ * Store aggregates a run or preview has just built, for {@link sharedFor}.
+ *
+ * @param year - The year they are for.
+ * @param shared - The aggregates.
+ * @returns `shared`.
+ */
+export function rememberWrappedShared(year: number, shared: WrappedShared): WrappedShared {
+  sharedMemo.set(`${year}:${shared.voiceReady}`, { at: Date.now(), value: shared });
+  return shared;
+}
+
+/** Drop every memoised {@link WrappedShared}. Called when a run starts or resumes. */
+export function clearWrappedSharedMemo(): void {
+  sharedMemo.clear();
+}
+
+/**
+ * Whether a member has anything to show for a year: a message or a live
+ * reaction outside the excluded channels, or (once voice is ready) voice time.
+ * Cheap: two indexed counts and at most one voice sum, and no year aggregate.
+ *
+ * @param userId - The member.
+ * @param year - The UTC calendar year.
+ * @param voiceReady - Whether voice time counts.
+ * @returns True when {@link buildWrapped} would return a snapshot.
+ */
+export function memberHasActivity(userId: string, year: number, voiceReady: boolean): boolean {
+  const { from, to } = yearBounds(year);
+  const m = schema.activityMessages;
+  const messages =
+    db
+      .select({ n: count() })
+      .from(m)
+      .where(and(eq(m.userId, userId), gte(m.ts, from), lt(m.ts, to), notExcluded(m.channelId, m.parentChannelId)))
+      .get()?.n ?? 0;
+  if (messages > 0 || reactionCount(userId, from, to) > 0) return true;
+  return voiceReady && voiceSecondsOf(userId, from, to) > 0;
+}
+
 /**
  * The members a Wrapped run covers for a year: everyone with a message, a
  * reaction or voice time that year outside the excluded channels, minus the
@@ -169,13 +233,14 @@ export function leftMemberIds(): Set<string> {
  * left out; `voiceReady` records which applied.
  *
  * @param shared - The year aggregates, when the caller already has them (a run).
- *   Left out, they are computed here (which checks voice readiness once).
+ *   Left out, the memoised ones are used ({@link sharedFor}, which checks voice
+ *   readiness for the year once and builds them only when the memo is empty).
  * @returns The snapshot, or null when the member has no message, reaction or
  *   (counted) voice time that year.
  */
 export function buildWrapped(userId: string, year: number, shared?: WrappedShared): WrappedData | null {
   const { from, to } = yearBounds(year);
-  const agg = shared ?? wrappedShared(year);
+  const agg = shared ?? sharedFor(year, voiceReadinessForYear(year).ready);
   const voiceReady = agg.voiceReady;
   const m = schema.activityMessages;
 

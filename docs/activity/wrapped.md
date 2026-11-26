@@ -319,6 +319,13 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 `send`, `announce`, `signups`, `resume`, `preview`, `preview-discard`) defer first (ephemeral) and answer through `editReply`, so the
 3-second interaction deadline is never missed; `status` replies directly.
 
+`me` for a member without a link counts their own messages and reactions first (indexed, no year
+aggregate) and answers `me-empty` at once when there are none. Otherwise it defers, then builds
+the snapshot. The year aggregates (`WrappedShared`: clubs, terms, titles) come from a memo,
+`sharedFor(year, voiceReady)` in `data.ts`: a run stores the ones it built, the memo is dropped
+when a run starts or resumes, and an entry lives at most 10 minutes. So building a member on demand
+costs their own queries, not the five seconds of the aggregates.
+
 ## Routes
 
 | Route | Access | Response |

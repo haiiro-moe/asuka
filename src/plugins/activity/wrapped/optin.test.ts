@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { MessageFlags } from "discord.js";
 import { db, initDb, schema } from "../../../db/index.ts";
@@ -6,6 +6,8 @@ import { isValidComponentsPayload } from "../../../core/components.ts";
 import { MESSAGE_CATALOG, renderBotMessage } from "../../../core/messages.ts";
 import { recordMessage } from "../record.ts";
 import { wrappedCommands } from "./commands.ts";
+import * as extras from "./extras.ts";
+import { clearWrappedSharedMemo, sharedFor } from "./data.ts";
 import { wrappedListeners } from "./listeners.ts";
 import { linkUrl } from "./links.ts";
 import { isOptedIn, optedInCount, setOptIn, signupMessage } from "./optin.ts";
@@ -191,13 +193,56 @@ test("/wrapped me returns the link for a member who is not opted in", async () =
   expect(allButtons(replies[0]!.components).map((b) => b.url)).toEqual([linkUrl(token)]);
 });
 
-test("/wrapped me with no activity that year is an empty envelope", async () => {
+test("/wrapped me with no activity that year is an empty envelope, without building the year aggregates", async () => {
   recordMessage(msg("u1", at("2026-06-01T12:00:00Z")));
   const { client } = fakeClient();
   startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin" });
   await waitForWrappedRun();
-  const { replies } = await slash("me", "u9");
-  expect(textOf(replies[0]!)).toContain("you were not around in 2026");
+  clearWrappedSharedMemo();
+  const spy = spyOn(extras, "clubYearStats");
+  try {
+    const { replies, order } = await slash("me", "u9");
+    expect(textOf(replies[0]!)).toContain("you were not around in 2026");
+    expect(order).toEqual(["reply"]);
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("/wrapped me for an active member without a link defers before building, and reuses the year aggregates", async () => {
+  recordMessage(msg("u1", at("2026-06-01T12:00:00Z")));
+  const { client } = fakeClient();
+  startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin" });
+  await waitForWrappedRun();
+  // Two members who became active after the run, so neither has a link.
+  recordMessage(msg("u7", at("2026-06-02T12:00:00Z")));
+  recordMessage(msg("u8", at("2026-06-02T12:00:00Z")));
+  clearWrappedSharedMemo();
+  const spy = spyOn(extras, "clubYearStats");
+  try {
+    const a = await slash("me", "u7");
+    expect(a.order).toEqual(["deferReply", "editReply"]);
+    expect(textOf(a.replies[0]!)).toContain("your 2026 is waiting");
+    const b = await slash("me", "u8");
+    expect(textOf(b.replies[0]!)).toContain("your 2026 is waiting");
+    // The aggregates were built once for both members.
+    expect(spy).toHaveBeenCalledTimes(1);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("the year aggregates memo is dropped when a run starts", async () => {
+  recordMessage(msg("u1", at("2026-06-01T12:00:00Z")));
+  clearWrappedSharedMemo();
+  const first = sharedFor(2026, false);
+  expect(sharedFor(2026, false)).toBe(first);
+  const { client } = fakeClient();
+  startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin" });
+  await waitForWrappedRun();
+  // The run built and stored its own aggregates in place of the old ones.
+  expect(sharedFor(2026, false)).not.toBe(first);
 });
 
 test("admin subcommands are forbidden to members", async () => {

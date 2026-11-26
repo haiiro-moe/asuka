@@ -4,6 +4,8 @@ import { renderBotMessage } from "../../../core/messages.ts";
 import { isAdmin } from "../../../core/permissions.ts";
 import type { BotContext, Command } from "../../../core/plugin.ts";
 import type { WrappedRunStatus } from "../types/wrapped.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
+import { memberHasActivity } from "./data.ts";
 import { ensureWrappedLink, getWrappedLink, linkUrl } from "./links.ts";
 import { applyOptInChoice, currentUtcYear } from "./optin.ts";
 import { getWrappedStatus, latestRunPhase, postAnnouncement, resumeWrappedRun, startWrappedRun, startWrappedSend } from "./run.ts";
@@ -50,6 +52,7 @@ async function replyMessage(
   params: Record<string, string | number> = {},
 ) {
   const payload = await renderBotMessage(key, ctx, params);
+  if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
   return interaction.reply({ ...payload, flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
 }
 
@@ -259,6 +262,11 @@ function resume(interaction: ChatInputCommandInteraction, ctx: BotContext) {
  * `/wrapped me`: the member's own link, opted in or not. With no link yet it
  * makes one when a run for the year exists and the member had activity;
  * before any run it says the envelopes are not out yet.
+ *
+ * The member's own activity is counted first (cheap, indexed), so a member
+ * with nothing that year gets `wrapped.me-empty` at once and no year
+ * aggregate is built. Otherwise the reply is deferred before the snapshot is
+ * built, which reuses the memoised year aggregates (`sharedFor`).
  */
 async function me(interaction: ChatInputCommandInteraction, ctx: BotContext) {
   const userId = interaction.user.id;
@@ -267,6 +275,10 @@ async function me(interaction: ChatInputCommandInteraction, ctx: BotContext) {
   let token = getWrappedLink(userId, year)?.token ?? null;
   if (!token) {
     if (status.status === "idle") return replyMessage(interaction, ctx, "wrapped.me-not-ready");
+    if (!memberHasActivity(userId, year, voiceReadinessForYear(year).ready)) {
+      return replyMessage(interaction, ctx, "wrapped.me-empty", { year });
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     token = ensureWrappedLink(userId, year);
     if (!token) return replyMessage(interaction, ctx, "wrapped.me-empty", { year });
   }

@@ -44,7 +44,7 @@ import { db, getConfig, schema } from "../../../db/index.ts";
 import type { WrappedResendResult, WrappedRunStatus } from "../types/wrapped.ts";
 import { withWrappedBanner } from "./banner.ts";
 import { voiceReadinessForYear } from "../voice-ready.ts";
-import { activeMemberIds, buildWrapped, leftMemberIds, wrappedShared } from "./data.ts";
+import { activeMemberIds, buildWrapped, clearWrappedSharedMemo, leftMemberIds, rememberWrappedShared, wrappedShared } from "./data.ts";
 import type { WrappedShared } from "./data.ts";
 import { sendWrappedDmDetailed } from "./dm.ts";
 import { getWrappedLink, linkUrl, upsertWrappedLink } from "./links.ts";
@@ -200,6 +200,7 @@ export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy
       .run();
   }
 
+  clearWrappedSharedMemo();
   // Voice readiness is checked once per processing step and passed down.
   const voiceReady = voiceReadinessForYear(opts.year).ready;
   const members = activeMemberIds(opts.year, voiceReady);
@@ -279,6 +280,7 @@ export function resumeWrappedRun(ctx: BotContext): "resumed" | "nothing-to-resum
 
   updateRun(row.id, {});
   if (row.status === "processing") {
+    clearWrappedSharedMemo();
     const voiceReady = voiceReadinessForYear(row.year).ready;
     const members = activeMemberIds(row.year, voiceReady);
     launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members, voiceReady }) });
@@ -515,7 +517,7 @@ function processedByRun(id: number, year: number): Set<string> {
  * @returns The year aggregates, computed once for every member.
  */
 async function processMembers(job: { id: number; year: number; members: string[]; voiceReady: boolean }): Promise<WrappedShared> {
-  const shared = wrappedShared(job.year, job.voiceReady);
+  const shared = rememberWrappedShared(job.year, wrappedShared(job.year, job.voiceReady));
   const done = processedByRun(job.id, job.year);
   const todo = job.members.filter((userId) => !done.has(userId));
   let processed = done.size;
