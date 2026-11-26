@@ -1,7 +1,8 @@
 /**
  * Capture hooks called from core code rather than from gateway events: the
- * slash command router (`src/core/command-registry.ts`) and the Social Credits
- * service (`addCredits` in `src/core/members.ts`).
+ * slash command router (`src/core/command-registry.ts`) and the two places
+ * that change a Social Credits balance (`addCredits` in `src/core/members.ts`,
+ * `trySpend` in `src/plugins/store/service.ts`).
  *
  * Both are safe to call unconditionally. They do nothing while
  * `guild_config.activityEnabled` is 0, and they catch and log every error with
@@ -40,10 +41,16 @@ export function captureCommand(userId: string, name: string, ok: boolean): void 
 /**
  * Record one Social Credits change. Never throws.
  *
+ * Called from `addCredits` (src/core/members.ts) and `trySpend`
+ * (src/plugins/store/service.ts) with the actual change, the balance after
+ * minus the balance before, so a deduction clamped at zero records what was
+ * really taken.
+ *
  * @param userId - The member.
- * @param delta - The amount passed to `addCredits` (signed).
+ * @param delta - The actual signed change. Nothing is written when it is 0.
  * @param balanceAfter - The member's balance after the change.
  */
 export function captureCredit(userId: string, delta: number, balanceAfter: number): void {
+  if (delta === 0) return;
   safely("credit", () => record.recordCredit(userId, delta, balanceAfter));
 }

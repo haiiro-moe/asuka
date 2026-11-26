@@ -7,6 +7,7 @@ import { addCredits } from "../../../core/members.ts";
 import type { BotContext } from "../../../core/plugin.ts";
 import { db, getConfig, initDb, schema } from "../../../db/index.ts";
 import * as record from "../record.ts";
+import { trySpend } from "../../store/service.ts";
 
 /** Turn activity recording on or off on the singleton config row. */
 function setEnabled(enabled: boolean) {
@@ -138,5 +139,55 @@ describe("credit hook", () => {
       failing.mockRestore();
       error.mockRestore();
     }
+  });
+});
+
+describe("actual credit deltas", () => {
+  test("a deduction clamped at zero records what was taken", () => {
+    addCredits("hook-u1", 5);
+    expect(addCredits("hook-u1", -10)).toBe(0);
+    expect(credits().map((r) => [r.delta, r.balanceAfter])).toEqual([
+      [5, 5],
+      [-5, 0],
+    ]);
+  });
+
+  test("a change of zero writes no ledger row", () => {
+    expect(addCredits("hook-u1", -3)).toBe(0);
+    expect(addCredits("hook-u1", 0)).toBe(0);
+    expect(credits()).toHaveLength(0);
+  });
+});
+
+describe("store spend hook", () => {
+  test("a successful spend writes a negative ledger row", () => {
+    addCredits("hook-u1", 20);
+    expect(trySpend("hook-u1", 8)).toBe(true);
+    expect(credits().map((r) => [r.userId, r.delta, r.balanceAfter])).toEqual([
+      ["hook-u1", 20, 20],
+      ["hook-u1", -8, 12],
+    ]);
+  });
+
+  test("a failed spend writes no ledger row", () => {
+    addCredits("hook-u1", 5);
+    expect(trySpend("hook-u1", 8)).toBe(false);
+    expect(credits().map((r) => r.delta)).toEqual([5]);
+  });
+
+  test("a recording failure never breaks a purchase", () => {
+    addCredits("hook-u1", 10);
+    const failing = spyOn(record, "recordCredit").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(trySpend("hook-u1", 4)).toBe(true);
+      expect(String(error.mock.calls[0]?.[0])).toStartWith("[activity]");
+    } finally {
+      failing.mockRestore();
+      error.mockRestore();
+    }
+    expect(addCredits("hook-u1", 0)).toBe(6);
   });
 });

@@ -54,13 +54,14 @@ export function simulateActivity(userId: string, messages: number) {
 
 /** Add (or subtract) social credits, clamped at zero. */
 export function addCredits(userId: string, amount: number): number {
-  ensureMember(userId);
+  const before = ensureMember(userId).socialCredits;
   const row = db
     .update(schema.members)
     .set({ socialCredits: sql`max(0, ${schema.members.socialCredits} + ${amount})` })
     .where(eq(schema.members.userId, userId))
     .returning()
     .get();
-  captureCredit(userId, amount, row.socialCredits);
+  // Activity ledger: the actual change after clamping. Never throws.
+  captureCredit(userId, row.socialCredits - before, row.socialCredits);
   return row.socialCredits;
 }

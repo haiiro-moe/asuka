@@ -1,7 +1,7 @@
 # Activity analytics: live capture
 
 Live capture records activity as it happens: gateway listeners for messages, reactions,
-membership and voice, a once-a-minute voice heartbeat, and two hooks in core code for slash
+membership and voice, a once-a-minute voice heartbeat, and hooks outside the plugin for slash
 commands and Social Credits. Every row goes through the write API in `record.ts` (see
 [foundation.md](foundation.md)); capture only decides what to record and when.
 
@@ -10,7 +10,7 @@ src/plugins/activity/capture/
   index.ts        captureListeners (event bindings), captureSchedules (the heartbeat)
   listeners.ts    the gateway handlers, onMessageCreate ... onReady, reactionEmojiKey
   voice.ts        planVoice, snapshotOf, openSegmentOf, applyVoice
-  hooks.ts        captureCommand, captureCredit (called from core)
+  hooks.ts        captureCommand, captureCredit (called from core and the store)
   *.test.ts       voice, listeners (with the heartbeat), hooks
 ```
 
@@ -105,22 +105,23 @@ restart, whichever comes first.
 
 ## Core hooks
 
-Two calls in core code, each through a wrapper in `capture/hooks.ts` that checks
-`activityEnabled` and catches and logs every error, so the surrounding behaviour is exactly what
-it was before capture existed:
+Three calls outside the plugin, each through a wrapper in `capture/hooks.ts` that checks
+`activityEnabled` and catches and logs every error, so the surrounding behaviour and return values
+are exactly what they were before capture existed:
 
 | Where | Call | Records |
 |---|---|---|
 | `handleInteraction` in `src/core/command-registry.ts` | `captureCommand(user.id, commandName, ok)` in a `finally` after `execute` | One `activity_commands` row per run. `ok` is true when `execute` resolved, false when it threw. The error reply to the member is sent first, unchanged. A run refused by the permission check is not recorded. |
-| `addCredits` in `src/core/members.ts` | `captureCredit(userId, amount, row.socialCredits)` after the update | One `activity_credits` row: the `amount` passed in and the balance afterwards. |
+| `addCredits` in `src/core/members.ts` | `captureCredit(userId, after - before, after)` after the update | One `activity_credits` row with the actual change and the balance afterwards. |
+| `trySpend` in `src/plugins/store/service.ts` | `captureCredit(userId, after - before, after)` when the update returned a row | One negative row per store purchase. A spend refused for lack of credits writes nothing. |
 
-Known gaps of the credit ledger:
+Every balance change goes through one of the last two, so the ledger holds credits coming in
+(rewards, payouts, admin gifts, refunds) and going out (purchases, admin deductions) alike.
 
-- `delta` is the amount requested. `addCredits` clamps the balance at zero, so a deduction larger
-  than the balance records more than was actually taken (balance 5, `-10` records `-10`, balance
-  after `0`).
-- Store purchases deduct through `trySpend` in `src/plugins/store/service.ts`, not `addCredits`,
-  so they are not recorded, while refunds (which use `addCredits`) are.
+**`delta` is the actual change**, the balance after minus the balance before, not the amount
+asked for. `addCredits` clamps the balance at zero, so taking 10 from a balance of 5 records
+`-5` with a balance after of `0`. **A change of 0 writes no row** (`addCredits(id, 0)`, or a
+deduction from a balance that is already 0).
 
 ## Not captured
 
