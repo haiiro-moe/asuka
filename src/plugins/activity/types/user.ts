@@ -39,10 +39,28 @@ export interface ReactedRow {
   messageId: string;
   /** The channel, or thread, it is in. */
   channelId: string;
+  /** The thread's parent channel when `channelId` is a thread; null otherwise. */
+  parentChannelId: string | null;
   /** Its author; null when unknown. */
   authorId: string | null;
   /** Reactions added minus reactions removed. */
   net: number;
+}
+
+/** A {@link ReactedRow} as `/api/activity/user/reacted` returns it, with names from the guild cache. */
+export interface NamedReactedRow extends ReactedRow {
+  /** The channel's (or thread's) name; null when unknown or gone. */
+  channelName: string | null;
+  /** The thread parent's name; null for a normal channel, or when unknown. */
+  parentChannelName: string | null;
+}
+
+/** A custom emoji of the guild that was never used (`/api/activity/user/emoji-graveyard`). */
+export interface GraveyardEmoji {
+  /** The custom emoji's id. */
+  id: string;
+  /** Its name from the guild cache; null when unknown. */
+  name: string | null;
 }
 
 /** A channel and a count (messages for text channels and threads, seconds for voice). */

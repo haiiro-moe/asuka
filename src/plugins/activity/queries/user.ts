@@ -220,7 +220,13 @@ export function mostReacted(p: Period, limit = 10): ReactedRow[] {
   const r = schema.activityReactions;
   const net = sql<number>`count(*)`;
   return db
-    .select({ messageId: r.messageId, channelId: r.channelId, authorId: sql<string | null>`max(${r.messageAuthorId})`, net })
+    .select({
+      messageId: r.messageId,
+      channelId: r.channelId,
+      parentChannelId: sql<string | null>`max(${r.parentChannelId})`,
+      authorId: sql<string | null>`max(${r.messageAuthorId})`,
+      net,
+    })
     .from(r)
     .where(and(gte(r.addedAt, p.from), lt(r.addedAt, p.to), isNull(r.removedAt), notExcluded(r.channelId, r.parentChannelId)))
     .groupBy(r.messageId, r.channelId)

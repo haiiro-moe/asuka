@@ -13,8 +13,8 @@ empty arrays and a zero heatmap.
 | `/api/activity/user/rhythm` | `rhythm` | Two 7x24 heatmaps: messages per cell, and connected voice hours per cell (a segment is spread over the hours it covers); `voice` is `null` until voice is ready. `max` is the largest cell. |
 | `/emoji` | `emojiLeaderboard` | Top emoji (20): text uses plus reactions still standing. Keys are the stored form: a unicode character or `custom:<id>`. |
 | `/emoji-trend` | `emojiTrend` | Weekly uses of the top 5 emoji, 7-day buckets from the period start (from the first use for `all`). |
-| `/emoji-graveyard` | `emojiGraveyard` | The guild's custom emoji ids never used in text or as a reaction, all time. The route reads the ids from the guild cache. |
-| `/reacted` | `mostReacted` | Top 10 messages by net reactions (added minus removed), with channel and author id. |
+| `/emoji-graveyard` | `emojiGraveyard` | The guild's custom emoji never used in text or as a reaction, all time, as `GraveyardEmoji` `{ id, name }`. The route reads the ids from the guild cache and adds `name` from it (null when unknown). |
+| `/reacted` | `mostReacted` | Top 10 messages by net reactions (added minus removed), with channel, thread parent (`parentChannelId`) and author id. The route returns `NamedReactedRow`: it adds `channelName` and `parentChannelName` from the guild channel cache (null when unknown, `parentChannelName` null for a normal channel), the same way `/channels` names its rows. |
 | `/channels` | `channelFavourites` | Channels by messages. A thread ranks as a channel of its own (`parentChannelId` set); a thread under an excluded channel is hidden. The route adds `name` and `parentName` from the guild channel cache (null when unknown). |
 | `/voice` | `voiceFavourites` | Empty until voice is ready. Voice channels (names added like `/channels`) by connected seconds inside the period; an open segment runs to its last heartbeat. |
 | `/voice-status` | `voiceReadiness` | `{ ready, readyAt }`: whether the voice views are unlocked and, if not, when (null with no voice recorded). Takes no period. Pages use it to say "voice stats unlock on <date>". |
@@ -42,3 +42,14 @@ Everything derived from voice is withheld until the voice log holds two whole UT
 returns `[]` and `awards` leaves out `longest-voice`; nothing is zero-filled. Message views are not
 affected. The routes check readiness once per request; the query functions take it as a `voiceOk`
 argument (default: a fresh check) so a caller can reuse one result.
+
+## Memo
+
+The heavy views (`awards`, `emoji`, `emoji-trend`, `emoji-graveyard`, `channels`, `sharing`,
+`rhythm`, `reacted`, `voice`) keep their query result in a small in-memory memo (`api/memo.ts`),
+keyed by route, `?period=`, the ten-minute window the request falls in and, for the voice views,
+whether voice is ready (for `emoji-graveyard`, the guild's emoji ids). A burst of page loads runs
+each query once per window, so the numbers can be up to ten minutes stale. Names from the guild
+cache are added on every call, outside the memo. None of these views depends on who asks, so none
+is keyed by user id (`userMemo` takes a `userId` for a view that would). The memo holds at most
+256 results and drops the least recently used first.

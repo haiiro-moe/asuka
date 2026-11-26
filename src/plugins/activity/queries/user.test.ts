@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import type { ApiContext } from "../../../core/plugin.ts";
 import { userRoutes } from "../api/user.ts";
+import { clearUserMemo } from "../api/memo.ts";
 import { db, initDb, schema } from "../../../db/index.ts";
 import type { MessageFacts } from "../facts.ts";
 import {
@@ -45,6 +46,7 @@ function setExcluded(list: string) {
 }
 
 function reset() {
+  clearUserMemo();
   for (const t of tables) db.delete(t).run();
   setExcluded("");
 }
@@ -168,8 +170,8 @@ test("mostReacted uses net reactions", () => {
   react({ messageId: "r2", userId: "a" });
   react({ messageId: "r2", userId: "b" });
   expect(mostReacted(ALL)).toEqual([
-    { messageId: "r2", channelId: "c1", authorId: "u1", net: 2 },
-    { messageId: "r1", channelId: "c1", authorId: "u1", net: 1 },
+    { messageId: "r2", channelId: "c1", parentChannelId: null, authorId: "u1", net: 2 },
+    { messageId: "r1", channelId: "c1", parentChannelId: null, authorId: "u1", net: 1 },
   ]);
 });
 
