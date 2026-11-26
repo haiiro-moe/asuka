@@ -7,6 +7,7 @@ import {
 } from "discord.js";
 import { env } from "../config/env.ts";
 import { getConfig } from "../db/index.ts";
+import { captureCommand } from "../plugins/activity/capture/hooks.ts";
 import { checkCommandAccess } from "./permissions.ts";
 import type { BotContext, Command } from "./plugin.ts";
 
@@ -63,8 +64,10 @@ export async function handleInteraction(interaction: Interaction, ctx: BotContex
     return;
   }
 
+  let ok = false;
   try {
     await command.execute(interaction, ctx);
+    ok = true;
   } catch (err) {
     console.error(`[commands] "${interaction.commandName}" failed:`, err);
     const payload = {
@@ -76,5 +79,8 @@ export async function handleInteraction(interaction: Interaction, ctx: BotContex
     } else {
       await interaction.reply(payload).catch(() => {});
     }
+  } finally {
+    // Activity analytics; never throws, so the command's outcome is unchanged.
+    captureCommand(interaction.user.id, interaction.commandName, ok);
   }
 }
