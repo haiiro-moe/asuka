@@ -26,7 +26,8 @@ means every member).
 ## Controls
 
 - Tabs: `rhythm`, `emoji`, `places`, `awards`, `sharing` (the `Tabs` primitive).
-- Period: `30d | term | year` (`Segmented`), sent as `?period=`. Every tab refetches when it changes.
+- Period: `last 30 days | this term | last 365 days` (`Segmented`, words from `PERIOD_LABELS`), sent
+  as `?period=` `30d`, `term`, `year`; the server reads `year` as the last 365 days. Every tab refetches when it changes.
   The emoji graveyard (all time) and `voice-status` take no period.
 
 ## Routes used
@@ -65,8 +66,12 @@ Voice stays hidden until two whole months of voice data exist. The page never dr
 - Threads are channels. `/channels` and `/voice` rows show the thread's own name and a muted
   `thread in #parent` line. A name the bot has not seen falls back to the channel id.
 - Emoji keys are a unicode character (drawn as is) or `custom:<id>` (drawn `:name:`, or `custom <id>`
-  when the name is unknown). The graveyard lists custom emoji ids by number, with a `never used` note and
-  a count of 0, first 20 and then a count of the rest.
+  when the name is unknown). The graveyard (`GraveyardEmoji`: `id`, `name`) is a plain table of
+  `:name:` rows (`graveyardLabel`; `a custom emoji` when the name is unknown, never the id) with a
+  subtle `never used`, no rank colour, position or 0, first 20 and then a count of the rest.
+- The most reacted table (`NamedReactedRow`) shows `#channelName`, and for a thread a subtle
+  `thread in #parentChannelName` line under it (`reactedChannel`); an unknown name reads `a channel`
+  (`thread in a channel`), never `#<id>`.
 
 ## UTC
 
@@ -76,7 +81,7 @@ hours with one decimal and the line under each channel gives the exact time.
 
 ## Tests
 
-`helpers.test.ts` covers the period path, durations, emoji and
+`helpers.test.ts` covers the period path and labels, durations, emoji, graveyard, reacted and
 channel labels, sharing totals, heatmap sums and the award wording:
 
 ```sh

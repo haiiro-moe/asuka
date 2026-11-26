@@ -4,13 +4,13 @@
  *
  * @module
  */
-import type { EmojiRow, EmojiSeries } from "../../../../plugins/activity/types/user.ts";
+import type { EmojiRow, EmojiSeries, GraveyardEmoji } from "../../../../plugins/activity/types/user.ts";
 import { Empty, Heading, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityRank } from "../charts.tsx";
 import { columnsAriaLabel, weekName } from "../format.ts";
 import { useActivity } from "../useActivity.ts";
 import { View } from "./parts.tsx";
-import { activityPath, emojiLabel } from "./helpers.ts";
+import { activityPath, emojiLabel, graveyardLabel } from "./helpers.ts";
 import type { PagePeriod } from "./helpers.ts";
 
 /** How many graveyard rows to list before saying how many more there are. */
@@ -70,7 +70,7 @@ function EmojiTrend({ period }: { period: PagePeriod }) {
 }
 
 function Graveyard() {
-  const state = useActivity<{ id: string }[]>(activityPath("emoji-graveyard"));
+  const state = useActivity<GraveyardEmoji[]>(activityPath("emoji-graveyard"));
   return (
     <Window label="fish: ~/activity/graveyard" foot={<span>custom emoji never used, all time</span>}>
       <Heading first>graveyard</Heading>
@@ -80,10 +80,24 @@ function Graveyard() {
             <Empty>Every custom emoji has been used at least once. Nothing rests here.</Empty>
           ) : (
             <>
-              <ActivityRank
-                max={1}
-                rows={rows.slice(0, GRAVE_ROWS).map((r) => ({ label: `custom ${r.id}`, value: 0, sub: "never used" }))}
-              />
+              <div className="fx-scroll">
+                <table className="fx-table">
+                  <thead>
+                    <tr>
+                      <th>emoji</th>
+                      <th className="r">uses</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.slice(0, GRAVE_ROWS).map((r) => (
+                      <tr key={r.id}>
+                        <td>{graveyardLabel(r)}</td>
+                        <td className="r text-subtle">never used</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               {rows.length > GRAVE_ROWS && (
                 <p className="nar px-2 pt-3">{`${rows.length - GRAVE_ROWS} more rest unlisted.`}</p>
               )}

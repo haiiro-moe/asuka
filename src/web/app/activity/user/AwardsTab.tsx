@@ -4,12 +4,12 @@
  *
  * @module
  */
-import type { Award, ReactedRow } from "../../../../plugins/activity/types/user.ts";
+import type { Award, NamedReactedRow } from "../../../../plugins/activity/types/user.ts";
 import { Heading, Window } from "../../ui/index.ts";
 import { UserName } from "../../names.tsx";
 import { useActivity } from "../useActivity.ts";
 import { View } from "./parts.tsx";
-import { activityPath, awardText } from "./helpers.ts";
+import { activityPath, awardText, reactedChannel } from "./helpers.ts";
 import type { PagePeriod } from "./helpers.ts";
 
 /**
@@ -49,8 +49,19 @@ function AwardLines({ period }: { period: PagePeriod }) {
   );
 }
 
+/** The channel of a most-reacted row: `#name`, a thread with its parent on a muted line. */
+function ChannelCell({ row }: { row: NamedReactedRow }) {
+  const { label, sub } = reactedChannel(row);
+  return (
+    <>
+      {label}
+      {sub && <span className="block text-subtle">{sub}</span>}
+    </>
+  );
+}
+
 function MostReacted({ period }: { period: PagePeriod }) {
-  const state = useActivity<ReactedRow[]>(activityPath("reacted", period));
+  const state = useActivity<NamedReactedRow[]>(activityPath("reacted", period));
   return (
     <Window label="fish: ~/activity/reacted" foot={<span>reactions added minus removed</span>}>
       <Heading first>most reacted messages</Heading>
@@ -71,7 +82,9 @@ function MostReacted({ period }: { period: PagePeriod }) {
                   <tr key={`${r.channelId}-${r.messageId}`}>
                     <td>{i + 1}</td>
                     <td>{r.authorId ? <UserName id={r.authorId} /> : "unknown"}</td>
-                    <td>{`#${r.channelId}`}</td>
+                    <td>
+                      <ChannelCell row={r} />
+                    </td>
                     <td className="r">{r.net.toLocaleString("en-GB")}</td>
                   </tr>
                 ))}

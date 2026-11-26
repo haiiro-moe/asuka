@@ -11,7 +11,7 @@ import { EmojiTab } from "./EmojiTab.tsx";
 import { PlacesTab } from "./PlacesTab.tsx";
 import { RhythmTab } from "./RhythmTab.tsx";
 import { SharingTab } from "./SharingTab.tsx";
-import { PERIODS } from "./helpers.ts";
+import { PERIODS, PERIOD_LABELS } from "./helpers.ts";
 import type { PagePeriod } from "./helpers.ts";
 
 /** The tabs of the page, in order. */
@@ -21,10 +21,10 @@ export const ACTIVITY_TABS = ["rhythm", "emoji", "places", "awards", "sharing"] 
 export type ActivityTab = (typeof ACTIVITY_TABS)[number];
 
 const TAB_ITEMS = ACTIVITY_TABS.map((t) => ({ value: t, label: t }));
-const PERIOD_OPTIONS = PERIODS.map((p) => ({ value: p, label: p }));
+const PERIOD_OPTIONS = PERIODS.map((p) => ({ value: p, label: PERIOD_LABELS[p] }));
 
 /**
- * The activity page: a control window with the tabs and the `30d | term | year` period, and the
+ * The activity page: a control window with the tabs and the `last 30 days | this term | last 365 days` period, and the
  * selected tab under it. Each tab fetches its own routes with the selected period.
  */
 export function ActivityPage() {

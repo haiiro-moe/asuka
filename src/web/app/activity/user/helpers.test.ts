@@ -12,6 +12,10 @@ import {
   heatmapIsEmpty,
   summariseSharing,
   toHours,
+  PERIODS,
+  PERIOD_LABELS,
+  graveyardLabel,
+  reactedChannel,
 } from "./helpers.ts";
 
 test("activityPath adds the period only when given", () => {
@@ -86,4 +90,29 @@ test("awardText words every award", () => {
   expect(awardText({ key: "fastest-replier", userId: "1", value: 42 }).tail).toContain("42s");
   expect(awardText({ key: "most-replied-to", userId: "1", value: 3 }).title).toBe("most replied to");
   expect(awardText({ key: "earliest-bird", userId: "1", value: 3 }).title).toBe("earliest bird");
+});
+
+test("graveyardLabel shows the name, never the id", () => {
+  expect(graveyardLabel({ id: "123456789012345678", name: "blobwave" })).toBe(":blobwave:");
+  expect(graveyardLabel({ id: "123456789012345678", name: null })).toBe("a custom emoji");
+});
+
+test("reactedChannel names the channel and a thread's parent, never an id", () => {
+  const base = { messageId: "1", channelId: "222222222222222222", parentChannelId: null, authorId: null, net: 3 };
+  expect(reactedChannel({ ...base, channelName: "general", parentChannelName: null })).toEqual({ label: "#general" });
+  expect(reactedChannel({ ...base, channelName: null, parentChannelName: null })).toEqual({ label: "a channel" });
+  const thread = { ...base, parentChannelId: "333333333333333333" };
+  expect(reactedChannel({ ...thread, channelName: "movie night", parentChannelName: "events" })).toEqual({
+    label: "#movie night",
+    sub: "thread in #events",
+  });
+  expect(reactedChannel({ ...thread, channelName: null, parentChannelName: null })).toEqual({
+    label: "a channel",
+    sub: "thread in a channel",
+  });
+});
+
+test("the period control says last 365 days for year", () => {
+  expect(PERIOD_LABELS.year).toBe("last 365 days");
+  expect(PERIODS.map((p) => PERIOD_LABELS[p])).toEqual(["last 30 days", "this term", "last 365 days"]);
 });

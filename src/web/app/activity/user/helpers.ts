@@ -4,13 +4,29 @@
  *
  * @module
  */
-import type { Award, NamedChannelRow, SharingRow } from "../../../../plugins/activity/types/user.ts";
+import type {
+  Award,
+  GraveyardEmoji,
+  NamedChannelRow,
+  NamedReactedRow,
+  SharingRow,
+} from "../../../../plugins/activity/types/user.ts";
 
-/** The periods the page offers. The server also accepts `7d`, `week` and `all`. */
+/**
+ * The periods the page offers. The server also accepts `7d`, `week` and `all`. `year` is the last 365
+ * days, not the calendar year (see {@link PERIOD_LABELS}).
+ */
 export const PERIODS = ["30d", "term", "year"] as const;
 
 /** One of {@link PERIODS}. */
 export type PagePeriod = (typeof PERIODS)[number];
+
+/** The words on the period control, saying what the server counts (`time.ts` `parsePeriodParam`). */
+export const PERIOD_LABELS: Record<PagePeriod, string> = {
+  "30d": "last 30 days",
+  term: "this term",
+  year: "last 365 days",
+};
 
 /** Weekday row labels of the heatmaps, Monday first (the server's weekday 0). */
 export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -175,4 +191,26 @@ export function awardText(award: Award): AwardText {
     case "most-replied-to":
       return { title: "most replied to", tail: `drew ${n} replies from other members.` };
   }
+}
+
+/**
+ * The label of a graveyard row: the custom emoji's `:name:`, or `a custom emoji` when the guild cache
+ * does not know it. Never its id.
+ *
+ * @param row - An item of `/emoji-graveyard`.
+ */
+export function graveyardLabel(row: GraveyardEmoji): string {
+  return row.name ? `:${row.name}:` : "a custom emoji";
+}
+
+/**
+ * The channel cell of a most-reacted row: `#name`, and for a thread a muted `thread in #parent`. A
+ * name the bot does not know reads `a channel` (`thread in a channel` for the parent), never an id.
+ *
+ * @param row - A row of `/reacted`.
+ */
+export function reactedChannel(row: NamedReactedRow): { label: string; sub?: string } {
+  const label = row.channelName ? `#${row.channelName}` : "a channel";
+  if (!row.parentChannelId) return { label };
+  return { label, sub: row.parentChannelName ? `thread in #${row.parentChannelName}` : "thread in a channel" };
 }
