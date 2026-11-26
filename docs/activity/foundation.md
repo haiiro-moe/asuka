@@ -202,7 +202,7 @@ if (facts) recordMessage(facts);
 | `replyToUserId`, `replyToMessageId` | The reply target. `replyToUserId` is null when Discord did not send the replied-to message (it was deleted). A reply to yourself is kept. |
 | `mentionedUserIds` | The users Discord lists as mentioned, each once, without the author. **The ping of a reply is not a mention**: a reply pings its target by default and Discord then lists the target as mentioned, so the target is taken out again unless the text names them with `<@id>` (or `<@!id>`). The reply itself stays in `replyToUserId`. Another user mentioned in a reply is kept. |
 | `attachmentKinds` | One of `image`, `video`, `audio` per attachment, by the first part of its MIME type; `other` for anything else and for an unknown type. |
-| `linkDomains` | The hostname of every `http://` or `https://` link: lowercase, no port, each once, in order of first appearance. `www.` is kept, so `www.youtube.com` and `youtube.com` are two domains. |
+| `linkDomains` | The hostname of every `http://` or `https://` link: lowercase, no port, each once, in order of first appearance. Punctuation after a link (`.,;:!?*_~\|`, as in `https://example.com,` or `**https://example.com**`) is trimmed first, and a hostname with anything but letters, digits, dots and hyphens is dropped, so a domain is never stored with punctuation in it. An international domain is stored as punycode (`xn--...`). `www.` is kept, so `www.youtube.com` and `youtube.com` are two domains. |
 | `length` | Characters (code points) of the text, so an emoji counts once. |
 | `emoji` | `parseEmoji(content)`. |
 

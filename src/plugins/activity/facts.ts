@@ -106,27 +106,44 @@ export interface MessageFacts {
  */
 const LINK = /https?:\/\/[^\s<>()[\]"'`]+/gi;
 
+/**
+ * Punctuation at the end of a link match that belongs to the sentence or to
+ * markdown, not to the link: `https://example.com,`, `**https://example.com**`.
+ */
+const TRAILING_PUNCTUATION = /[.,;:!?*_~|]+$/;
+
 /** Trailing dots of a hostname: `example.com.` is the same host as `example.com`. */
 const TRAILING_DOTS = /\.+$/;
 
 /**
+ * What a stored domain may consist of. `URL` has already turned an
+ * international name into punycode (`xn--...`), so anything else in a hostname
+ * is punctuation that `URL` let through (`a.com!b`, `x.com**bold`).
+ */
+const DOMAIN = /^[a-z0-9.-]+$/;
+
+/**
  * The domains a text links to.
+ *
+ * Punctuation after a link is trimmed before the link is parsed, so the same
+ * site is one domain however the sentence around it is written.
  *
  * @param text - The raw message content.
  * @returns Lowercase hostnames (no port, no credentials), each once, in order
- *   of first appearance. A link `URL` cannot parse is skipped.
+ *   of first appearance. A link is skipped when `URL` cannot parse it or when
+ *   its hostname holds anything but letters, digits, dots and hyphens.
  */
 function linkDomains(text: string): string[] {
   const domains = new Set<string>();
   for (const match of text.matchAll(LINK)) {
     let hostname: string;
     try {
-      hostname = new URL(match[0]).hostname;
+      hostname = new URL(match[0].replace(TRAILING_PUNCTUATION, "")).hostname;
     } catch {
       continue;
     }
     const domain = hostname.toLowerCase().replace(TRAILING_DOTS, "");
-    if (domain !== "") domains.add(domain);
+    if (DOMAIN.test(domain)) domains.add(domain);
   }
   return [...domains];
 }

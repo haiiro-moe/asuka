@@ -163,6 +163,50 @@ test("link domains are lowercase hostnames, de-duplicated, in order", () => {
   ]);
 });
 
+/** The link domains of a message with this text. */
+function domainsOf(content: string): string[] | undefined {
+  return extractMessageFacts(raw({ content }), "live")?.linkDomains;
+}
+
+test("punctuation after a link is not part of its domain", () => {
+  expect(domainsOf("look at https://example.com, it is good")).toEqual(["example.com"]);
+  expect(domainsOf("wow https://a.com!")).toEqual(["a.com"]);
+  expect(domainsOf("first https://b.com; then the rest")).toEqual(["b.com"]);
+  expect(domainsOf("**https://x.com**")).toEqual(["x.com"]);
+  expect(domainsOf("~~https://e.com~~")).toEqual(["e.com"]);
+  expect(domainsOf("is it https://q.com?")).toEqual(["q.com"]);
+  expect(domainsOf("this one: https://c.com:")).toEqual(["c.com"]);
+  expect(domainsOf("__https://u.com__ ||https://s.com||")).toEqual(["u.com", "s.com"]);
+  expect(domainsOf("really https://m.com?!...")).toEqual(["m.com"]);
+});
+
+test("a clean link is left as it is", () => {
+  expect(domainsOf("https://clean.test")).toEqual(["clean.test"]);
+  expect(domainsOf("https://clean.test/a_b/c~d?e=1;f=2#g!")).toEqual(["clean.test"]);
+  expect(domainsOf("https://sub-1.clean.test:8443/")).toEqual(["sub-1.clean.test"]);
+  expect(domainsOf("http://192.168.0.1/admin")).toEqual(["192.168.0.1"]);
+});
+
+test("punctuation after a link with a path does not change its domain", () => {
+  expect(domainsOf("see https://example.com/a, https://example.com/b! and https://other.test/c.")).toEqual([
+    "example.com",
+    "other.test",
+  ]);
+});
+
+test("the same domain with and without trailing punctuation is one domain", () => {
+  expect(domainsOf("https://example.com, https://example.com! https://example.com")).toEqual(["example.com"]);
+});
+
+test("a hostname with characters no domain has is dropped", () => {
+  expect(domainsOf("https://bad,host.test/x https://a.com!b/ https://under_score.test/")).toEqual([]);
+  expect(domainsOf("https://x.com**bold https://ok.test/")).toEqual(["ok.test"]);
+});
+
+test("an international domain is stored in its punycode form", () => {
+  expect(domainsOf("https://bücher.example/")).toEqual(["xn--bcher-kva.example"]);
+});
+
 test("a message without links, attachments or emoji has empty lists", () => {
   expect(extractMessageFacts(raw(), "live")).toMatchObject({
     replyToUserId: null,
