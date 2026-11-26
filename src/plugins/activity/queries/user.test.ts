@@ -241,3 +241,35 @@ test("every query ignores an excluded channel and the threads under it", () => {
   expect(sharing(ALL)).toEqual([]);
   expect(awards(ALL)).toEqual([]);
 });
+
+test("rhythm buckets the Sunday/Monday boundary exactly", () => {
+  recordMessage(msg({ ts: MON - 1 })); // Sunday 23:59:59
+  recordMessage(msg({ ts: MON })); // Monday 00:00:00
+  const c = rhythm(ALL).messages.cells;
+  expect(c[6]![23]).toBe(1);
+  expect(c[0]![0]).toBe(1);
+  expect(c.flat().reduce((a, b) => a + b, 0)).toBe(2);
+});
+
+test("awards split the owl and bird buckets at 05:00:00 and 08:00:00 UTC", () => {
+  recordMessage(msg({ userId: "late", ts: MON + 5 * H - 1 })); // 04:59:59: owl
+  recordMessage(msg({ userId: "early", ts: MON + 5 * H })); // 05:00:00: bird
+  recordMessage(msg({ userId: "early", ts: MON + 8 * H - 1 })); // 07:59:59: bird
+  recordMessage(msg({ userId: "day", ts: MON + 8 * H })); // 08:00:00: neither
+  recordMessage(msg({ userId: "day", ts: MON + 8 * H + 1 }));
+  const by = Object.fromEntries(awards(ALL).map((x) => [x.key, x]));
+  expect(by["night-owl"]).toEqual({ key: "night-owl", userId: "late", value: 1 });
+  expect(by["earliest-bird"]).toEqual({ key: "earliest-bird", userId: "early", value: 2 });
+});
+
+test("sharing and emoji totals count per occurrence across messages", () => {
+  recordMessage(msg({ attachmentKinds: ["image", "other", "image"], linkDomains: ["a.com", "b.com"] }));
+  recordMessage(msg({ attachmentKinds: ["audio"], linkDomains: ["a.com", "b.com"], emoji: [{ emoji: "🙂", name: null, count: 3 }] }));
+  const rows = sharing(ALL);
+  const get = (k: string, l: string) => rows.find((r) => r.kind === k && r.label === l)?.count;
+  expect(get("image", "image")).toBe(2);
+  expect(get("audio", "audio")).toBe(1);
+  expect(get("link", "a.com")).toBe(2);
+  expect(get("link", "b.com")).toBe(2);
+  expect(emojiLeaderboard(ALL)).toEqual([{ emoji: "🙂", name: null, count: 3 }]);
+});

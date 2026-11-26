@@ -1,6 +1,7 @@
 /**
  * Shapes returned by the everyone-tier activity views (`queries/user.ts`).
- * User ids appear only in leaderboards and awards; every other view is
+ * User ids appear only in the member rankings (the most-reacted leaderboard and
+ * the awards); every other view is
  * aggregate.
  */
 

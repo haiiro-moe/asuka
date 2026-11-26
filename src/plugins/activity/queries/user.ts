@@ -7,7 +7,9 @@
  * each call, so call them only after `initDb()`. An empty log gives empty
  * arrays and a zero heatmap. See docs/activity/queries-user.md.
  */
-import { and, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import { weekdayHour } from "../time.ts";
@@ -66,51 +68,69 @@ function voiceSegments(p: Period) {
 /**
  * When members talk and are in voice, by UTC weekday and hour.
  *
+ * Messages are counted in SQL (`GROUP BY` weekday and hour). Voice segments
+ * are few, so they are read and spread over their hours in code.
+ *
  * @param p - The period.
  * @returns `messages`: messages per cell. `voice`: connected hours per cell
  *   (a segment is spread over the hours it covers).
  */
 export function rhythm(p: Period): { messages: Heatmap; voice: Heatmap } {
+  const m = schema.activityMessages;
+  // Unix day 0 was a Thursday, so +3 makes Monday 0.
+  const weekday = sql<number>`((${m.ts} / 86400) + 3) % 7`;
+  const hour = sql<number>`(${m.ts} % 86400) / 3600`;
+  const rows = db
+    .select({ weekday, hour, n: sql<number>`count(*)` })
+    .from(m)
+    .where(messagesIn(p))
+    .groupBy(weekday, hour)
+    .all();
   const msgGrid = emptyGrid();
-  const rows = db.select({ ts: schema.activityMessages.ts }).from(schema.activityMessages).where(messagesIn(p)).all();
-  for (const { ts } of rows) {
-    const { weekday, hour } = weekdayHour(ts);
-    msgGrid[weekday]![hour]! += 1;
-  }
+  for (const r of rows) msgGrid[r.weekday]![r.hour]! += r.n;
 
   const voiceGrid = emptyGrid();
   for (const s of voiceSegments(p)) {
     for (let t = s.start - (s.start % HOUR); t < s.end; t += HOUR) {
       const overlap = Math.min(s.end, t + HOUR) - Math.max(s.start, t);
       if (overlap <= 0) continue;
-      const { weekday, hour } = weekdayHour(t);
-      voiceGrid[weekday]![hour]! += overlap / HOUR;
+      const { weekday: wd, hour: h } = weekdayHour(t);
+      voiceGrid[wd]![h]! += overlap / HOUR;
     }
   }
   return { messages: heatmap(msgGrid), voice: heatmap(voiceGrid) };
 }
 
-/** Emoji uses in the period: text rows and net reaction rows, one entry per use batch. */
-function emojiUses(p: Period): { emoji: string; name: string | null; ts: number; n: number }[] {
+/** Condition: text-emoji rows of the period outside excluded channels. */
+function textEmojiIn(p: Period) {
+  const e = schema.activityEmoji;
+  return and(gte(e.ts, p.from), lt(e.ts, p.to), notExcluded(e.channelId, e.parentChannelId));
+}
+
+/** Condition: reactions of the period that were not removed, outside excluded channels. */
+function liveReactionsIn(p: Period) {
+  const r = schema.activityReactions;
+  return and(gte(r.addedAt, p.from), lt(r.addedAt, p.to), isNull(r.removedAt), notExcluded(r.channelId, r.parentChannelId));
+}
+
+/** Total uses per emoji, most used first, ties by key. One grouped scan per table. */
+function emojiTotals(p: Period): EmojiRow[] {
   const e = schema.activityEmoji;
   const r = schema.activityReactions;
   const text = db
-    .select({ emoji: e.emoji, name: e.name, ts: e.ts, n: e.count })
+    .select({ emoji: e.emoji, name: sql<string | null>`max(${e.name})`, n: sql<number>`sum(${e.count})` })
     .from(e)
-    .where(and(gte(e.ts, p.from), lt(e.ts, p.to), notExcluded(e.channelId, e.parentChannelId)))
+    .where(textEmojiIn(p))
+    .groupBy(e.emoji)
     .all();
   const reacts = db
-    .select({ emoji: r.emoji, name: r.name, ts: r.addedAt })
+    .select({ emoji: r.emoji, name: sql<string | null>`max(${r.name})`, n: sql<number>`count(*)` })
     .from(r)
-    .where(and(gte(r.addedAt, p.from), lt(r.addedAt, p.to), isNull(r.removedAt), notExcluded(r.channelId, r.parentChannelId)))
+    .where(liveReactionsIn(p))
+    .groupBy(r.emoji)
     .all();
-  return [...text, ...reacts.map((x) => ({ ...x, n: 1 }))];
-}
-
-/** Total uses per emoji, most used first, ties by key. */
-function emojiTotals(p: Period): EmojiRow[] {
   const totals = new Map<string, EmojiRow>();
-  for (const u of emojiUses(p)) {
+  for (const u of [...text, ...reacts]) {
     const row = totals.get(u.emoji) ?? { emoji: u.emoji, name: null, count: 0 };
     row.count += u.n;
     row.name ??= u.name;
@@ -132,25 +152,43 @@ export function emojiLeaderboard(p: Period, limit = 20): EmojiRow[] {
 /**
  * Weekly use of the top emoji. Buckets are 7 days long, counted from the start
  * of the period (or, for an open-ended period, from the first recorded use).
+ * The totals are computed once, then one grouped query per table buckets only
+ * the chosen emoji.
  *
  * @param p - The period.
  * @param top - How many emoji to follow. Defaults to 5.
  */
 export function emojiTrend(p: Period, top = 5): EmojiSeries[] {
-  const uses = emojiUses(p);
-  if (uses.length === 0) return [];
-  const names = emojiTotals(p).slice(0, top);
-  const start = p.from === 0 ? Math.min(...uses.map((u) => u.ts)) : p.from;
+  const rows = emojiTotals(p).slice(0, top);
+  if (rows.length === 0) return [];
+  const e = schema.activityEmoji;
+  const r = schema.activityReactions;
+  const keys = rows.map((x) => x.emoji);
+
+  let start = p.from;
+  if (p.from === 0) {
+    const t = db.select({ v: sql<number | null>`min(${e.ts})` }).from(e).where(and(textEmojiIn(p), inArray(e.emoji, keys))).get();
+    const a = db.select({ v: sql<number | null>`min(${r.addedAt})` }).from(r).where(and(liveReactionsIn(p), inArray(r.emoji, keys))).get();
+    start = Math.min(t?.v ?? Infinity, a?.v ?? Infinity);
+  }
   const weeks = Math.max(1, Math.ceil((p.to - start) / WEEK));
-  return names.map((row) => {
-    const weekly = new Array<number>(weeks).fill(0);
-    for (const u of uses) {
-      if (u.emoji !== row.emoji) continue;
-      const i = Math.min(weeks - 1, Math.floor((u.ts - start) / WEEK));
-      weekly[i]! += u.n;
-    }
-    return { emoji: row.emoji, name: row.name, weekly };
-  });
+  const textWeek = sql<number>`(${e.ts} - ${start}) / ${WEEK}`;
+  const reactWeek = sql<number>`(${r.addedAt} - ${start}) / ${WEEK}`;
+  const text = db
+    .select({ emoji: e.emoji, w: textWeek, n: sql<number>`sum(${e.count})` })
+    .from(e)
+    .where(and(textEmojiIn(p), inArray(e.emoji, keys)))
+    .groupBy(e.emoji, textWeek)
+    .all();
+  const reacts = db
+    .select({ emoji: r.emoji, w: reactWeek, n: sql<number>`count(*)` })
+    .from(r)
+    .where(and(liveReactionsIn(p), inArray(r.emoji, keys)))
+    .groupBy(r.emoji, reactWeek)
+    .all();
+  const series = new Map(rows.map((x) => [x.emoji, new Array<number>(weeks).fill(0)]));
+  for (const u of [...text, ...reacts]) series.get(u.emoji)![Math.min(weeks - 1, Math.max(0, u.w))]! += u.n;
+  return rows.map((x) => ({ emoji: x.emoji, name: x.name, weekly: series.get(x.emoji)! }));
 }
 
 /**
@@ -227,11 +265,27 @@ export function voiceFavourites(p: Period): ChannelRow[] {
  */
 export function sharing(p: Period): SharingRow[] {
   const m = schema.activityMessages;
-  const rows = db
-    .select({ kinds: m.attachmentKinds, domains: m.linkDomains, stickers: m.stickerCount })
+  /** Occurrences of a kind in the comma list; the kinds never contain one another. */
+  const occurrences = (kind: string) =>
+    sql<number>`coalesce(sum((length(${m.attachmentKinds}) - length(replace(${m.attachmentKinds}, ${kind}, ''))) / ${kind.length}), 0)`;
+  const media = db
+    .select({
+      image: occurrences("image"),
+      video: occurrences("video"),
+      audio: occurrences("audio"),
+      stickers: sql<number>`coalesce(sum(${m.stickerCount}), 0)`,
+    })
     .from(m)
     .where(messagesIn(p))
+    .get();
+  // Identical domain lists are grouped in SQL; only the distinct lists are split here.
+  const lists = db
+    .select({ domains: m.linkDomains, n: sql<number>`count(*)` })
+    .from(m)
+    .where(and(messagesIn(p), sql`${m.linkDomains} != ''`))
+    .groupBy(m.linkDomains)
     .all();
+
   const counts = new Map<string, SharingRow>();
   const add = (kind: SharingRow["kind"], label: string, n: number) => {
     if (n <= 0) return;
@@ -240,13 +294,15 @@ export function sharing(p: Period): SharingRow[] {
     row.count += n;
     counts.set(key, row);
   };
-  for (const r of rows) {
-    for (const k of r.kinds.split(",")) if (k === "image" || k === "video" || k === "audio") add(k, k, 1);
-    add("sticker", "sticker", r.stickers);
-    for (const d of r.domains.split(",")) {
+  add("image", "image", media?.image ?? 0);
+  add("video", "video", media?.video ?? 0);
+  add("audio", "audio", media?.audio ?? 0);
+  add("sticker", "sticker", media?.stickers ?? 0);
+  for (const l of lists) {
+    for (const d of l.domains.split(",")) {
       if (d === "") continue;
       const gif = GIF_DOMAINS.some((g) => d === g || d.endsWith(`.${g}`));
-      add(gif ? "gif" : "link", d, 1);
+      add(gif ? "gif" : "link", d, l.n);
     }
   }
   return [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
@@ -285,58 +341,66 @@ const MIN_REPLIES = 10;
  */
 export function awards(p: Period): Award[] {
   const m = schema.activityMessages;
-  const rows = db
-    .select({ userId: m.userId, ts: m.ts, parent: m.replyToMessageId, to: m.replyToUserId })
-    .from(m)
-    .where(messagesIn(p))
-    .all();
+  const hour = sql<number>`(${m.ts} % 86400) / 3600`;
+  const tally = (key: Award["key"], range: SQL) => {
+    const rows = db
+      .select({ userId: m.userId, n: sql<number>`count(*)` })
+      .from(m)
+      .where(and(messagesIn(p), range))
+      .groupBy(m.userId)
+      .all();
+    return top(key, new Map(rows.map((r) => [r.userId, r.n])));
+  };
+  const owl = tally("night-owl", sql`${hour} < 5`);
+  const bird = tally("earliest-bird", sql`${hour} >= 5 and ${hour} < 8`);
 
-  const owl = new Map<string, number>();
-  const bird = new Map<string, number>();
-  const replied = new Map<string, number>();
-  const replies: { userId: string; parent: string; ts: number }[] = [];
-  for (const r of rows) {
-    const { hour } = weekdayHour(r.ts);
-    const bucket = hour < 5 ? owl : hour < 8 ? bird : null;
-    bucket?.set(r.userId, (bucket.get(r.userId) ?? 0) + 1);
-    if (r.to && r.to !== r.userId) replied.set(r.to, (replied.get(r.to) ?? 0) + 1);
-    if (r.parent) replies.push({ userId: r.userId, parent: r.parent, ts: r.ts });
-  }
+  const replyRows = db
+    .select({ userId: m.replyToUserId, n: sql<number>`count(*)` })
+    .from(m)
+    .where(and(messagesIn(p), isNotNull(m.replyToUserId), sql`${m.replyToUserId} != ${m.userId}`))
+    .groupBy(m.replyToUserId)
+    .all();
+  const replied = top("most-replied-to", new Map(replyRows.map((r) => [r.userId!, r.n])));
 
   const voice = new Map<string, number>();
   for (const s of voiceSegments(p)) {
     if (s.closed) voice.set(s.userId, Math.max(voice.get(s.userId) ?? 0, s.full));
   }
 
-  const parents = new Map<string, number>();
-  if (replies.length > 0) {
-    const ids = [...new Set(replies.map((r) => r.parent))];
-    for (let i = 0; i < ids.length; i += 500) {
-      const chunk = ids.slice(i, i + 500);
-      const found = db
-        .select({ id: m.messageId, ts: m.ts })
-        .from(m)
-        .where(and(sql`${m.messageId} in (${sql.join(chunk.map((c) => sql`${c}`), sql`, `)})`, notExcluded(m.channelId, m.parentChannelId)))
-        .all();
-      for (const f of found) parents.set(f.id, f.ts);
-    }
-  }
-  const delays = new Map<string, number[]>();
-  for (const r of replies) {
-    const parentTs = parents.get(r.parent);
-    if (parentTs === undefined) continue;
-    const list = delays.get(r.userId) ?? [];
-    list.push(Math.max(0, r.ts - parentTs));
-    delays.set(r.userId, list);
-  }
+  // Replies whose parent was recorded and is not in an excluded channel.
+  const parent = alias(schema.activityMessages, "parent");
+  const joined = and(
+    messagesIn(p),
+    isNotNull(m.replyToMessageId),
+    notExcluded(parent.channelId, parent.parentChannelId),
+  );
+  const qualifying = db
+    .select({ userId: m.userId })
+    .from(m)
+    .innerJoin(parent, eq(parent.messageId, m.replyToMessageId))
+    .where(joined)
+    .groupBy(m.userId)
+    .having(sql`count(*) >= ${MIN_REPLIES}`)
+    .all()
+    .map((r) => r.userId);
   const fastest = new Map<string, number>();
-  for (const [userId, list] of delays) if (list.length >= MIN_REPLIES) fastest.set(userId, median(list));
+  if (qualifying.length > 0) {
+    const delays = new Map<string, number[]>();
+    const rows = db
+      .select({ userId: m.userId, delay: sql<number>`max(0, ${m.ts} - ${parent.ts})` })
+      .from(m)
+      .innerJoin(parent, eq(parent.messageId, m.replyToMessageId))
+      .where(and(joined, inArray(m.userId, qualifying)))
+      .all();
+    for (const r of rows) {
+      const list = delays.get(r.userId) ?? [];
+      list.push(r.delay);
+      delays.set(r.userId, list);
+    }
+    for (const [userId, list] of delays) fastest.set(userId, median(list));
+  }
 
-  return [
-    top("night-owl", owl),
-    top("earliest-bird", bird),
-    top("longest-voice", voice),
-    top("fastest-replier", fastest, true),
-    top("most-replied-to", replied),
-  ].filter((a): a is Award => a !== null);
+  return [owl, bird, top("longest-voice", voice), top("fastest-replier", fastest, true), replied].filter(
+    (a): a is Award => a !== null,
+  );
 }

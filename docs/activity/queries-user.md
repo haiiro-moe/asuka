@@ -22,7 +22,7 @@ empty arrays and a zero heatmap.
 
 ## Awards
 
-Only here and in the leaderboards may a view name a member (user ids only). An award nobody
+Awards and the most-reacted leaderboard (`/reacted`, author ids) are the only views that name a member (user ids only). An award nobody
 qualifies for is omitted.
 
 - `night-owl`: most messages 00:00 to 04:59 UTC.
