@@ -347,9 +347,9 @@ test("activityMessages.messageId is unique", () => {
   expect(rows[0]).toMatchObject({ userId: "u1", source: "backfill" });
 });
 
-test('guild_config exposes activityEnabled=1 and activityExcludedChannelIds=""', () => {
+test('guild_config exposes activityEnabled=0 (off until configured) and activityExcludedChannelIds=""', () => {
   const config = getConfig();
-  expect(config.activityEnabled).toBe(1);
+  expect(config.activityEnabled).toBe(0);
   expect(config.activityExcludedChannelIds).toBe("");
 });
 

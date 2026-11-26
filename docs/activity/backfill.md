@@ -22,7 +22,11 @@ so poll `GET` for progress.
 
 The text, announcement and forum channels of the locked guild, and their active and archived
 public threads (a forum has no messages of its own, only posts, which are threads). Private
-threads and voice channels are not read.
+threads (`isPrivateThread`, shared with live capture) and voice channels are not read.
+
+The backfill is **not** gated on `guild_config.activityEnabled`: it can run while live recording
+is off. It still applies the exclusion list, so set the excluded channels before starting it (see
+the first-run checklist in [activity.md](../activity.md#first-run)).
 
 - **Excluded channels are skipped**, and so are threads under an excluded parent. They are marked
   done without a single request. See `guild_config.activityExcludedChannelIds`.

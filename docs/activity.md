@@ -37,7 +37,22 @@ Raw event tables, one row per event (tables and columns in [foundation.md](activ
 
 **No message content is stored.** The text is read to take its length, its emoji and the domains it
 links to, then dropped. Bots are never recorded as actors. Events from other guilds, and DMs, are
-ignored. Capture is gated on `guild_config.activityEnabled`; see [capture.md](activity/capture.md).
+ignored, and so are private threads. Capture is gated on `guild_config.activityEnabled`, which is **off
+by default** (and was turned off on existing installs by migration 0023); see
+[capture.md](activity/capture.md).
+
+## First run
+
+Recording starts off, so nothing is captured before an admin has decided what to leave out:
+
+1. **Set the excluded channels first** (settings tab): staff channels and any private channels the
+   members would not expect to be counted. Private threads are always skipped.
+2. **Then turn recording on** (`activityEnabled`, same tab). Live capture starts from that moment.
+3. **Then run the backfill** (data tab) to read the history from before that moment.
+
+The backfill is **not** gated on `activityEnabled`: an admin can start it while recording is off,
+and it still applies the exclusion list and skips private threads. Run it after step 1 so excluded
+channels are never read.
 
 ## Channel exclusion
 

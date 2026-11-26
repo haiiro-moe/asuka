@@ -12,6 +12,8 @@
  * - **No bots, no other guilds.** A bot is never recorded, as an actor or as
  *   the author of a reacted-to message, and events from a guild other than the
  *   locked one are ignored.
+ * - **No private threads.** Messages and reactions in a private thread are
+ *   skipped, the same rule the backfill applies (`isPrivateThread`).
  *
  * The handlers take plain arguments so tests can call them with fakes;
  * `index.ts` binds them to their events. See docs/activity/capture.md.
@@ -30,7 +32,7 @@ import type {
 import type { BotContext } from "../../../core/plugin.ts";
 import { nowSec } from "../../../core/util.ts";
 import { getConfig } from "../../../db/index.ts";
-import { isExcluded } from "../exclusion.ts";
+import { isExcluded, isPrivateThread } from "../exclusion.ts";
 import { extractMessageFacts, toRawMessage } from "../facts.ts";
 import {
   closeDanglingVoiceSegments,
@@ -105,9 +107,19 @@ function parentOf(message: Message | PartialMessage): string | null {
 }
 
 /**
+ * Whether a message sits in a private thread, which is never recorded.
+ *
+ * @param message - The message, possibly partial.
+ * @returns True when its channel is cached and is a private thread.
+ */
+function inPrivateThread(message: Message | PartialMessage): boolean {
+  return isPrivateThread(message.channel as Message["channel"] | null);
+}
+
+/**
  * `MessageCreate`: record a message's facts.
  *
- * Bots, webhooks, system messages, DMs and excluded channels write nothing
+ * Bots, webhooks, system messages, DMs, private threads and excluded channels write nothing
  * (`extractMessageFacts` returns null for them). A message seen twice is
  * written once.
  *
@@ -118,6 +130,7 @@ export async function onMessageCreate(ctx: BotContext, message: Message): Promis
   await guarded("message", () => {
     if (message.author?.bot) return;
     if (message.guildId !== ctx.guildId) return;
+    if (inPrivateThread(message)) return;
     const facts = extractMessageFacts(toRawMessage(message), "live");
     if (facts) recordMessage(facts);
   });
@@ -129,7 +142,7 @@ export async function onMessageCreate(ctx: BotContext, message: Message): Promis
  * A partial reaction, its message and a partial user are fetched first; when a
  * fetch fails the handler goes on with what it has. The reaction is skipped
  * when the member who reacted is a bot (or unknown), in a DM, in another guild,
- * or in an excluded channel or a thread under one. The message author is
+ * in a private thread, or in an excluded channel or a thread under one. The message author is
  * stored as null when it is a bot or could not be read.
  *
  * @param ctx - The bot context; only `guildId` is read.
@@ -150,6 +163,7 @@ export async function onReactionAdd(
     if (message.partial) message = await message.fetch().catch(() => message);
 
     if (message.guildId !== ctx.guildId) return;
+    if (inPrivateThread(message)) return;
     const key = reactionEmojiKey(reaction.emoji);
     if (!key) return;
 

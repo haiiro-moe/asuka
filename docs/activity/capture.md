@@ -17,7 +17,7 @@ src/plugins/activity/capture/
 
 ## Rules every handler follows
 
-- **Gated on `guild_config.activityEnabled`.** While it is 0 nothing is recorded. The config is
+- **Gated on `guild_config.activityEnabled`.** While it is 0 (the default) nothing is recorded. The config is
   read inside the handler on each event, never at module top level (plugin modules load before
   `initDb()`). The `record*` functions do not check the flag themselves.
 - **Never throws.** Each handler and hook catches its own errors and logs them as
@@ -27,6 +27,8 @@ src/plugins/activity/capture/
   partial user that could not be fetched, a voice state without a member) the user is skipped as
   well: no table records which ids are bots, so one that got in could not be filtered out later.
 - **Locked guild only.** Events whose guild is not `ctx.guildId` are ignored, as are DMs.
+- **No private threads.** Messages and reactions in a private thread write nothing. The check is
+  `isPrivateThread` in `exclusion.ts`, the same predicate the backfill uses to leave them out.
 - **Excluded channels** write nothing: `isExcluded(channelId, parentChannelId)` covers a channel
   and every thread under it.
 

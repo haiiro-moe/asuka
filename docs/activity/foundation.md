@@ -105,7 +105,7 @@ Two columns on the singleton `guild_config` row, both editable from the dashboar
 
 | Column | Type | Default | Meaning |
 |---|---|---|---|
-| `activityEnabled` | integer, 1 or 0 | `1` | Whether activity is recorded at all. |
+| `activityEnabled` | integer, 1 or 0 | `0` | Whether activity is recorded at all. Off until an admin turns it on; migration 0023 also set existing installs to 0. |
 | `activityExcludedChannelIds` | text | `""` | Comma-separated channel ids that are excluded. |
 
 Read them with `getConfig()` inside a handler, never at module top level: plugin modules are

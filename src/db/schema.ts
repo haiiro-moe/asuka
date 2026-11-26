@@ -80,8 +80,8 @@ export const guildConfig = sqliteTable("guild_config", {
     .default(sql`'["youtube"]'`),
 
   // Activity analytics (see docs/activity/foundation.md)
-  /** 1 = record activity facts, 0 = record nothing. */
-  activityEnabled: integer("activity_enabled").notNull().default(1),
+  /** 1 = record activity facts, 0 = record nothing (the default: off until an admin turns it on). */
+  activityEnabled: integer("activity_enabled").notNull().default(0),
   /** Comma-separated channel ids that are never recorded, backfilled or queried. */
   activityExcludedChannelIds: text("activity_excluded_channel_ids").notNull().default(""),
 

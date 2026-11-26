@@ -8,6 +8,7 @@
  * The list is read from the config on each call, never at module top level:
  * plugin modules are loaded before `initDb()` has run.
  */
+import { ChannelType } from "discord.js";
 import { and, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
@@ -69,4 +70,17 @@ export function notExcluded(channelColumn: SQLiteColumn, parentColumn?: SQLiteCo
   if (ids.length === 0) return sql`1 = 1`;
   if (!parentColumn) return holdsNone(channelColumn, ids);
   return and(holdsNone(channelColumn, ids), holdsNone(parentColumn, ids))!;
+}
+
+/**
+ * Whether a channel is a private thread, which activity never records.
+ *
+ * Private threads are invite-only, so their activity is left out of capture
+ * and of the backfill alike. Both paths call this one predicate.
+ *
+ * @param channel - The channel, possibly missing or uncached.
+ * @returns True only when the channel is known to be a private thread.
+ */
+export function isPrivateThread(channel: { type?: ChannelType } | null | undefined): boolean {
+  return channel?.type === ChannelType.PrivateThread;
 }
