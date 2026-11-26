@@ -13,7 +13,15 @@ server's story at `/wrapped/s/<token>`. The data, links, runs and routes are in
   (`This link opens nothing. ...`), never a blank page. Any other failure shows a narrator line with a
   `retry` button.
 - **Generic title.** Both pages set `document.title` to `wrapped · asuka`. The token and names never
-  go into the title.
+  go into the title, and neither does the preview marker.
+- **Previews are marked.** Both public responses carry `preview: boolean`. It is true for an admin's
+  private preview link (R-P5 in the plan's DECISIONS.md). Then the window label gets ` (preview)`
+  (`storyLabel(year, preview, kind)`: `fish: ~/wrapped/2026 (preview)`,
+  `fish: ~/wrapped/server/2026 (preview)`), and the intro slide adds the narrator line
+  `A preview for the admin, not sent to anyone.` (`previewLine`) in small subtle text (subtle, not
+  muted, which fails contrast at 12px). Everything else is the same: the same slides and navigation,
+  and `save image` and `copy link` work as usual. The copied link is the preview link itself. A
+  response without the field counts as not a preview.
 - **Always a phone column.** A tall Window (`fish: ~/wrapped/<year>`, `fish: ~/wrapped/server/<year>`)
   on the blob backdrop: the full viewport height below 721px, and from 721px up centred with a 9:19.5
   shape, at most 420px wide and at most `min(100dvh - 48px, 910px)` tall. It is never stretched wide.
@@ -38,12 +46,14 @@ server's story at `/wrapped/s/<token>`. The data, links, runs and routes are in
 ```
 src/web/app/activity/wrapped/
   story.ts               pure: StoryState, tick, go, veilFrame, segmentFill, keyAction, classifyTap,
+                         storyLabel, previewLine,
                          personalSlides, serverSlides, titlesShown, label helpers (hourLabel, ordinal,
                          emojiLabel, emojiKeyLabel, readoutSize, formatNumber, capitalise)
   story.test.ts          bun test for all of the above
   slides.tsx             StoryShell, StoryFrame (the player), usePublicJson, StoryNotice,
                          PersonalSlideView, ServerSlideView
   slides.test.ts         server-side render checks: the scroll container, the prev / next buttons,
+                         the preview label and intro line,
                          the capped titles list
   WrappedStory.tsx       /wrapped/:token
   WrappedServerStory.tsx /wrapped/s/:token
@@ -117,7 +127,7 @@ true to show:
 
 | Slide | Shown when | Shows |
 |---|---|---|
-| `intro` | always | the year, the member's name |
+| `intro` | always | the year, the member's name; on a preview, the preview line |
 | `messages` | `messages > 0` | messages; level, busiest day and top channel in a stat panel (a thread as its name with `thread in #parent`) |
 | `hour` | `busiestHour` not null | the UTC hour, 24 `fx-cols` with only that hour drawn, `fx-axis` |
 | `emoji` | a top emoji | the top emoji, the top three as an `fx-rank` list |
@@ -134,7 +144,7 @@ true to show:
 
 | Slide | Shows |
 |---|---|
-| `intro` | the year |
+| `intro` | the year; on a preview, the preview line |
 | `totals` | messages, speakers, voice hours (only when not null) |
 | `emoji` | the top three, and how many custom emoji went unused |
 | `channels` | the top five as rank bars; a thread as its name with `thread in #parent` |

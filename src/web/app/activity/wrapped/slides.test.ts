@@ -3,9 +3,9 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { WrappedLinkResponse } from "../../../../plugins/activity/types/wrapped.ts";
-import { PersonalSlideView, StoryFrame } from "./slides.tsx";
-import { personalSlides } from "./story.ts";
+import type { ServerWrapped, WrappedLinkResponse } from "../../../../plugins/activity/types/wrapped.ts";
+import { PersonalSlideView, ServerSlideView, StoryFrame } from "./slides.tsx";
+import { personalSlides, storyLabel } from "./story.ts";
 
 // useReducedMotion reads matchMedia during render; give the server render a quiet one.
 (globalThis as { matchMedia?: unknown }).matchMedia = () => ({
@@ -41,17 +41,34 @@ const res: WrappedLinkResponse = {
     voiceReady: true,
   },
   voiceReady: true,
+  preview: false,
   displayName: "cakes",
   soulmateName: null,
   mostRepliedToName: null,
   topChannelName: null,
   topChannelParentName: null,
 };
+const server: ServerWrapped = {
+  year: 2026,
+  voiceReady: true,
+  messages: 10,
+  speakers: 2,
+  voiceHours: null,
+  topEmoji: [],
+  unusedCustomEmoji: 0,
+  topChannels: [],
+  busiestHour: null,
+  busiestWeekday: null,
+  bestPair: null,
+  bestClub: null,
+  president: null,
+};
 
-function frame(): string {
+
+function frame(preview = false): string {
   return renderToStaticMarkup(
     createElement(StoryFrame<string>, {
-      label: "fish: ~/wrapped/2026",
+      label: storyLabel(2026, preview),
       who: "cakes",
       slides: personalSlides(res.data),
       render: (slide: string) => createElement(PersonalSlideView, { slide, res, cardUrl: "/card.png" }),
@@ -79,4 +96,25 @@ test("a tall titles slide shows four titles and an `and n more` line", () => {
   const html = renderToStaticMarkup(createElement(PersonalSlideView, { slide: "titles", res, cardUrl: "/card.png" }));
   expect(html.match(/★/g)?.length).toBe(4);
   expect(html).toContain("and 3 more");
+});
+
+test("a preview's intro carries the preview line in subtle text, a real link's does not", () => {
+  const intro = (preview: boolean) =>
+    renderToStaticMarkup(createElement(PersonalSlideView, { slide: "intro", res: { ...res, preview }, cardUrl: "/card.png" }));
+  expect(intro(true)).toMatch(/<p class="[^"]*text-subtle[^"]*">A preview for the admin, not sent to anyone\.<\/p>/);
+  expect(intro(true)).not.toMatch(/class="[^"]*c1[^"]*">A preview/);
+  expect(intro(false)).not.toContain("A preview for the admin");
+});
+
+test("a preview's server intro carries the preview line", () => {
+  const html = renderToStaticMarkup(
+    createElement(ServerSlideView, { slide: "intro", data: server, preview: true, cardUrl: "/card.png" }),
+  );
+  expect(html).toContain("A preview for the admin, not sent to anyone.");
+});
+
+test("the window label of a preview says so", () => {
+  const html = frame(true);
+  expect(html).toContain("fish: ~/wrapped/2026 (preview)");
+  expect(frame(false)).not.toContain("(preview)");
 });

@@ -265,3 +265,27 @@ export function emojiKeyLabel(key: string, known: readonly Pick<WrappedEmoji, "e
 export function readoutSize(text: string): 86 | 64 {
   return [...text].length <= 7 ? 86 : 64;
 }
+
+/* ------------------------------------------------------------------------------------------------ */
+
+/**
+ * The story window's label, written like a prompt: `fish: ~/wrapped/2026`, `fish: ~/wrapped/server/2026`,
+ * with ` (preview)` after it for an admin's private preview link.
+ *
+ * @param year - The story's UTC year.
+ * @param preview - The response's `preview` flag.
+ * @param kind - `member` (default) for `/wrapped/:token`, `server` for `/wrapped/s/:token`.
+ */
+export function storyLabel(year: number, preview: boolean, kind: "member" | "server" = "member"): string {
+  const path = kind === "server" ? `~/wrapped/server/${year}` : `~/wrapped/${year}`;
+  return `fish: ${path}${preview ? " (preview)" : ""}`;
+}
+
+/**
+ * The narrator line the intro slide adds for an admin's private preview, or null for a real link.
+ *
+ * @param preview - The response's `preview` flag.
+ */
+export function previewLine(preview: boolean): string | null {
+  return preview ? "A preview for the admin, not sent to anyone." : null;
+}

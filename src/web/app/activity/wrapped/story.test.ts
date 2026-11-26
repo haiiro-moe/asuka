@@ -5,6 +5,8 @@ import {
   TITLES_SHOWN,
   classifyTap,
   emojiKeyLabel,
+  previewLine,
+  storyLabel,
   titlesShown,
   emojiLabel,
   go,
@@ -305,5 +307,19 @@ describe("titlesShown", () => {
     expect(titlesShown(3)).toEqual({ shown: 3, more: 0 });
     expect(titlesShown(4)).toEqual({ shown: 4, more: 0 });
     expect(titlesShown(7)).toEqual({ shown: 4, more: 3 });
+  });
+});
+
+describe("preview marker", () => {
+  test("storyLabel names the year, the server story, and a preview", () => {
+    expect(storyLabel(2026, false)).toBe("fish: ~/wrapped/2026");
+    expect(storyLabel(2026, true)).toBe("fish: ~/wrapped/2026 (preview)");
+    expect(storyLabel(2026, false, "server")).toBe("fish: ~/wrapped/server/2026");
+    expect(storyLabel(2026, true, "server")).toBe("fish: ~/wrapped/server/2026 (preview)");
+  });
+
+  test("previewLine is a narrator line only for a preview", () => {
+    expect(previewLine(true)).toBe("A preview for the admin, not sent to anyone.");
+    expect(previewLine(false)).toBeNull();
   });
 });

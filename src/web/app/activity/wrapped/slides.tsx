@@ -25,6 +25,7 @@ import {
   hourLabel,
   keyAction,
   ordinal,
+  previewLine,
   readoutSize,
   segmentFill,
   tick,
@@ -451,6 +452,15 @@ function Nar({ children }: { children: ReactNode }) {
   return <p className="nar">{children}</p>;
 }
 
+/**
+ * The intro's marker for an admin's private preview ({@link previewLine}): a small narrator line in
+ * subtle (not muted, which is too faint for 12px text). Nothing for a real link.
+ */
+function PreviewNote({ preview }: { preview: boolean }) {
+  const line = previewLine(preview);
+  return line ? <p className="text-label text-subtle">{line}</p> : null;
+}
+
 /** One cell of {@link Stats}. */
 interface Stat {
   label: string;
@@ -619,7 +629,8 @@ export interface PersonalSlideViewProps {
 
 /**
  * One slide of a member's story. The voice slide never appears while `voiceHours` is null, and the
- * soulmate slide then leaves out the shared-call part.
+ * soulmate slide then leaves out the shared-call part. When `res.preview` is true (an admin's private
+ * preview) the intro carries the preview line.
  */
 export function PersonalSlideView({ slide, res, cardUrl }: PersonalSlideViewProps) {
   const d = res.data;
@@ -630,6 +641,7 @@ export function PersonalSlideView({ slide, res, cardUrl }: PersonalSlideViewProp
           <Readout value={String(d.year)} />
           <Big>{res.displayName}</Big>
           <Nar>This is your year on the server, as the bot saw it. Tap the right side to go on.</Nar>
+          <PreviewNote preview={res.preview === true} />
         </Slide>
       );
     case "messages": {
@@ -794,15 +806,18 @@ export interface ServerSlideViewProps {
   slide: string;
   /** The server snapshot. */
   data: ServerWrapped;
+  /** True for an admin's private preview (the response's `preview`); the intro then says so. */
+  preview?: boolean;
   /** The server card PNG URL for the outro. */
   cardUrl: string;
 }
 
 /**
  * One slide of the server story. Only the best pair (both opted in), the best club's founder and the
- * president are named; voice figures are left out while they are null.
+ * president are named; voice figures are left out while they are null. A preview's intro carries the
+ * preview line.
  */
-export function ServerSlideView({ slide, data: d, cardUrl }: ServerSlideViewProps) {
+export function ServerSlideView({ slide, data: d, preview = false, cardUrl }: ServerSlideViewProps) {
   switch (slide) {
     case "intro":
       return (
@@ -810,6 +825,7 @@ export function ServerSlideView({ slide, data: d, cardUrl }: ServerSlideViewProp
           <Readout value={String(d.year)} />
           <Big>the server</Big>
           <Nar>This is the server's year, all of it, as the bot saw it. Tap the right side to go on.</Nar>
+          <PreviewNote preview={preview} />
         </Slide>
       );
     case "totals":

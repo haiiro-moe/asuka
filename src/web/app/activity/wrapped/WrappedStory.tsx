@@ -2,13 +2,14 @@
  * The personal Wrapped story at `/wrapped/:token`: a member's year as a phone-shaped story of slides.
  * Public: no cookie session, the token is the authorisation. Reads `GET /api/activity/wrapped/t/:token`
  * (the holder's own snapshot plus resolved names) and offers the card from
- * `GET /api/activity/wrapped/t/:token/card.png`. See docs/activity/web-wrapped.md.
+ * `GET /api/activity/wrapped/t/:token/card.png`. An admin's private preview (`preview: true`) gets
+ * ` (preview)` in the window label and a preview line on the intro. See docs/activity/web-wrapped.md.
  *
  * @module
  */
 import type { WrappedLinkResponse } from "../../../../plugins/activity/types/wrapped.ts";
 import { PersonalSlideView, StoryFrame, StoryNotice, usePublicJson } from "./slides.tsx";
-import { personalSlides } from "./story.ts";
+import { personalSlides, storyLabel } from "./story.ts";
 
 /** True when `v` looks like a {@link WrappedLinkResponse}. */
 function isLinkResponse(v: unknown): v is WrappedLinkResponse {
@@ -38,7 +39,7 @@ export function WrappedStory({ token }: { token: string }) {
   const cardUrl = `${base}/card.png`;
   return (
     <StoryFrame
-      label={`fish: ~/wrapped/${res.data.year}`}
+      label={storyLabel(res.data.year, res.preview === true)}
       who={res.displayName}
       slides={personalSlides(res.data)}
       render={(slide) => <PersonalSlideView slide={slide} res={res} cardUrl={cardUrl} />}
