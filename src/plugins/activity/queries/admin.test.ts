@@ -253,6 +253,59 @@ describe("economy", () => {
   });
 });
 
+describe("weekly series start", () => {
+  const WEEK = 7 * DAY;
+  const ALL = { from: 0, to: NOW };
+
+  test("a bounded period starts at p.from even with older data", () => {
+    msg({ ts: NOW - 200 * DAY });
+    recordCredit("30", 5, 5, NOW - 200 * DAY);
+    expect(moderationSeries(P).start).toBe(P.from);
+    expect(economy(P).start).toBe(P.from);
+    expect(economy(P).weekly).toHaveLength(5);
+  });
+
+  test("all starts at the week of the earliest data, a few buckets, not thousands", () => {
+    // The earliest row is a message; the series start there even though it is not theirs.
+    msg({ ts: NOW - 14 * DAY });
+    recordCredit("30", 7, 7, NOW - 13 * DAY);
+    db.insert(schema.modLog).values({ action: "warn", userId: "40", moderatorId: "99", createdAt: NOW - DAY }).run();
+
+    const start = Math.floor((NOW - 14 * DAY) / WEEK) * WEEK;
+    expect(start).toBe(1_798_675_200);
+    const m = moderationSeries(ALL);
+    const e = economy(ALL);
+    expect(m).toEqual({ start, weekly: [0, 0, 1], byAction: [{ action: "warn", count: 1 }] });
+    expect(e.start).toBe(start);
+    expect(e.weekly).toEqual([
+      { in: 7, out: 0 },
+      { in: 0, out: 0 },
+      { in: 0, out: 0 },
+    ]);
+  });
+
+  test("all takes the earliest of messages, mod log and credits", () => {
+    msg({ ts: NOW - DAY });
+    db.insert(schema.modLog).values({ action: "credits_grant", userId: "40", moderatorId: "99", createdAt: NOW - 20 * DAY }).run();
+    recordCredit("30", 7, 7, NOW - 5 * DAY);
+    const start = Math.floor((NOW - 20 * DAY) / WEEK) * WEEK;
+    expect(moderationSeries(ALL).start).toBe(start);
+    expect(economy(ALL).start).toBe(start);
+    expect(economy(ALL).weekly).toHaveLength(Math.ceil((NOW - start) / WEEK));
+  });
+
+  test("all on an empty database is a small bounded array", () => {
+    const start = Math.floor(NOW / WEEK) * WEEK - WEEK;
+    expect(moderationSeries(ALL)).toEqual({ start, weekly: [0, 0], byAction: [] });
+    const e = economy(ALL);
+    expect(e.start).toBe(start);
+    expect(e.weekly).toEqual([
+      { in: 0, out: 0 },
+      { in: 0, out: 0 },
+    ]);
+  });
+});
+
 describe("relations", () => {
   test("replies: A to B and B to A merge into one pair, sorted by weight", () => {
     msg({ userId: "1", replyToUserId: "3", replyToMessageId: "x" });

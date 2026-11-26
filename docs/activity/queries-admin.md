@@ -33,12 +33,18 @@ All are `GET`, `access: "admin"`, and take `?period=7d|week|30d|term|year|all` (
   (voice, which has no parent). A channel excluded today drops out of the next request, threads
   under it included, although its rows stay in the log.
 - **Periods are `from` inclusive, `to` exclusive**, in unix seconds; all buckets are UTC.
-- **Weekly series** (`moderationSeries().weekly`, `economy().weekly`) are 7-day UTC buckets that
-  always start at `p.from`. Each series comes with `start` (unix seconds, the start of its first
-  bucket, equal to `p.from`), so the page can label the weeks, and two series for one period line
-  up bucket by bucket. Bucket `i` covers `start + i * 7 days` up to the next one, the last may be
-  partial, and weeks without rows are zeros. For `all` (`from` 0) that means one bucket per week
-  since 1970.
+- **Weekly series** (`moderationSeries().weekly`, `economy().weekly`) are 7-day UTC buckets. Each
+  series comes with `start` (unix seconds, the start of its first bucket) so the page can label
+  the weeks. Both series of one period always get the same `start` (`seriesStart(p)`), so they
+  line up bucket by bucket. Bucket `i` covers `start + i * 7 days` up to the next one, the last
+  may be partial, and weeks without rows are zeros.
+  - A bounded period (`7d`, `week`, `30d`, `term`, `year`) starts at `p.from`.
+  - `all` (`from` 0) starts at the week of the earliest row any series covers (the earliest
+    `activity_messages.ts`, `mod_log.created_at` or `activity_credits.ts`), rounded down to a
+    multiple of 7 days since the epoch, which is the same grid `all`'s buckets would use. Data from
+    two weeks ago gives about 3 buckets, not one per week since 1970. With no data at all it
+    starts one week before the week that contains `p.to`, so the arrays are short (2 buckets) but
+    never empty.
 - **Aggregation happens in SQL.** These queries run synchronously in the bot's process, next to the
   Discord gateway, so they never load a period's rows into JavaScript: counts, sums, weekly buckets
   and top lists are `GROUP BY`s, and only grouped rows come back (the one exception is the list of

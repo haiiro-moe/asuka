@@ -15,8 +15,11 @@ export interface ActionCount {
 /** Moderation over time: `GET /api/activity/admin/moderation`. */
 export interface ModerationSeries {
   /**
-   * Start of the first bucket of `weekly`, in unix seconds (UTC): the period's
-   * start. Bucket `i` covers `start + i * 7 days` up to the next one.
+   * Start of the first bucket of `weekly`, in unix seconds (UTC). Bucket `i`
+   * covers `start + i * 7 days` up to the next one. For a bounded period it is
+   * the period's start. For `all` it is the 7-day boundary (counted from the
+   * epoch) at or before the earliest message, mod-log or credits row, or the
+   * week before the current one when there is no data.
    */
   start: number;
   /** Moderation actions per 7-day bucket, oldest first; empty weeks are 0. */
@@ -88,8 +91,9 @@ export interface Economy {
   /** Credits spent in the period, as a positive number. */
   creditsOut: number;
   /**
-   * Start of the first bucket of `weekly`, in unix seconds (UTC): the period's
-   * start, the same as {@link ModerationSeries.start} for the same period.
+   * Start of the first bucket of `weekly`, in unix seconds (UTC). Always the
+   * same as {@link ModerationSeries.start} for the same period, so the two
+   * series line up; see it for the rule.
    */
   start: number;
   /** Earned and spent per 7-day bucket, oldest first; empty weeks are zeros. */

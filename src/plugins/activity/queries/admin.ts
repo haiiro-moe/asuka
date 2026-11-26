@@ -85,20 +85,42 @@ function inPeriod(column: Parameters<typeof gte>[0], p: Period) {
 }
 
 /**
- * Number of 7-day buckets in a weekly series. Every series starts at `p.from`,
- * so two series for one period line up; the last bucket may be partial.
+ * Where every weekly series of a period starts, shared by
+ * {@link moderationSeries} and {@link economy} so their buckets line up.
+ *
+ * - A bounded period starts at `p.from`.
+ * - The `all` period (`p.from` is 0) starts at the week of the earliest row any
+ *   series covers (`activity_messages.ts`, `mod_log.created_at`,
+ *   `activity_credits.ts`), rounded down to a multiple of 7 days since the
+ *   epoch, the same grid as `all`'s buckets. Without any data it is the week
+ *   before the one containing `p.to`, so the arrays stay short but not empty.
+ *
+ * @param p - The period.
+ * @returns The start of the first bucket, in unix seconds.
  */
-function weekCount(p: Period): number {
-  return Math.max(0, Math.ceil((p.to - p.from) / WEEK));
+export function seriesStart(p: Period): number {
+  if (p.from !== 0) return p.from;
+  const firsts = [
+    db.select({ ts: min(activityMessages.ts) }).from(activityMessages).get()?.ts,
+    db.select({ ts: min(modLog.createdAt) }).from(modLog).get()?.ts,
+    db.select({ ts: min(activityCredits.ts) }).from(activityCredits).get()?.ts,
+  ].filter((ts): ts is number => ts != null);
+  if (firsts.length === 0) return Math.floor(p.to / WEEK) * WEEK - WEEK;
+  return Math.floor(Math.min(...firsts) / WEEK) * WEEK;
+}
+
+/** Number of 7-day buckets from `start` to the end of the period; the last one may be partial. */
+function weekCount(p: Period, start: number): number {
+  return Math.max(0, Math.ceil((p.to - start) / WEEK));
 }
 
 /**
  * SQL for the weekly bucket index of a timestamp column, counted from
- * `p.from`. The cast keeps the division whole even if a bound value arrives
- * as a real; rows are in the period, so the index is never negative.
+ * `start`. The cast keeps the division whole even if a bound value arrives as
+ * a real.
  */
-function weekIndex(column: Parameters<typeof gte>[0], p: Period) {
-  return sql<number>`cast((${column} - ${p.from}) / ${WEEK} as integer)`;
+function weekIndex(column: Parameters<typeof gte>[0], start: number) {
+  return sql<number>`cast((${column} - ${start}) / ${WEEK} as integer)`;
 }
 
 /** Round to one decimal. */
@@ -118,8 +140,8 @@ function median(values: number[]): number {
  * Moderation over time.
  *
  * Counts the {@link MOD_ACTIONS} rows of `mod_log` in the period, grouped in
- * SQL. Weekly buckets start at `p.from` (returned as `start`), and weeks
- * without actions are 0.
+ * SQL. Weekly buckets start at {@link seriesStart} (returned as `start`), and
+ * weeks without actions are 0.
  *
  * @param p - The period.
  * @returns Actions per week and per kind (most frequent first, ties by name).
@@ -127,10 +149,11 @@ function median(values: number[]): number {
 export function moderationSeries(p: Period): ModerationSeries {
   const where = and(inArray(modLog.action, [...MOD_ACTIONS]), inPeriod(modLog.createdAt, p));
 
-  const weekly = new Array<number>(weekCount(p)).fill(0);
-  const week = weekIndex(modLog.createdAt, p);
+  const start = seriesStart(p);
+  const weekly = new Array<number>(weekCount(p, start)).fill(0);
+  const week = weekIndex(modLog.createdAt, start);
   for (const r of db.select({ week, n: count() }).from(modLog).where(where).groupBy(week).all()) {
-    if (r.week < weekly.length) weekly[r.week] = r.n;
+    if (r.week >= 0 && r.week < weekly.length) weekly[r.week] = r.n;
   }
 
   const byAction: ActionCount[] = db
@@ -140,7 +163,7 @@ export function moderationSeries(p: Period): ModerationSeries {
     .groupBy(modLog.action)
     .all()
     .sort((x, y) => y.count - x.count || x.action.localeCompare(y.action));
-  return { start: p.from, weekly, byAction };
+  return { start, weekly, byAction };
 }
 
 /**
@@ -360,8 +383,8 @@ export function channelHealth(p: Period): ChannelHealthRow[] {
  *
  * Positive deltas are credits in, negative deltas credits out (returned as a
  * positive amount); a zero delta counts as neither. Everything is summed in
- * SQL. Weekly buckets start at `p.from` (returned as `start`), and weeks
- * without changes are zeros.
+ * SQL. Weekly buckets start at {@link seriesStart} (returned as `start`), and
+ * weeks without changes are zeros.
  *
  * @param p - The period.
  * @returns Totals, the weekly series, the top earners by positive net and the number of store purchases.
@@ -375,10 +398,11 @@ export function economy(p: Period): Economy {
 
   const totals = db.select(sums).from(activityCredits).where(where).get();
 
-  const weekly: EconomyWeek[] = Array.from({ length: weekCount(p) }, () => ({ in: 0, out: 0 }));
-  const week = weekIndex(activityCredits.ts, p);
+  const start = seriesStart(p);
+  const weekly: EconomyWeek[] = Array.from({ length: weekCount(p, start) }, () => ({ in: 0, out: 0 }));
+  const week = weekIndex(activityCredits.ts, start);
   for (const r of db.select({ week, ...sums }).from(activityCredits).where(where).groupBy(week).all()) {
-    if (r.week < weekly.length) weekly[r.week] = { in: r.in, out: r.out };
+    if (r.week >= 0 && r.week < weekly.length) weekly[r.week] = { in: r.in, out: r.out };
   }
 
   const net = sql<number>`sum(${activityCredits.delta})`;
@@ -396,7 +420,7 @@ export function economy(p: Period): Economy {
   return {
     creditsIn: totals?.in ?? 0,
     creditsOut: totals?.out ?? 0,
-    start: p.from,
+    start,
     weekly,
     topEarners,
     storeSales: sales?.n ?? 0,
