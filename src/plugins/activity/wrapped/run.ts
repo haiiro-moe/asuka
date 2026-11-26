@@ -74,9 +74,13 @@ let active: { id: number; promise: Promise<void> } | null = null;
 
 type RunRow = typeof schema.activityWrappedRuns.$inferSelect;
 
-/** The newest run row, or undefined when none exists. */
+/**
+ * The newest real run row, or undefined when none exists. Private preview runs
+ * (`kind = "private"`) are never seen by the real run.
+ */
 function latestRun(): RunRow | undefined {
-  return db.select().from(schema.activityWrappedRuns).orderBy(desc(schema.activityWrappedRuns.id)).limit(1).get();
+  const r = schema.activityWrappedRuns;
+  return db.select().from(r).where(eq(r.kind, "real")).orderBy(desc(r.id)).limit(1).get();
 }
 
 /** A run that is processing or sending. */
@@ -96,7 +100,7 @@ function linkCount(year: number, dmStatus?: "pending" | "sent" | "failed" | "ski
     db
       .select({ n: count() })
       .from(l)
-      .where(and(eq(l.year, year), dmStatus ? eq(l.dmStatus, dmStatus) : undefined))
+      .where(and(eq(l.year, year), eq(l.private, 0), dmStatus ? eq(l.dmStatus, dmStatus) : undefined))
       .get()?.n ?? 0
   );
 }
@@ -309,7 +313,7 @@ export async function postAnnouncement(
   const run = db
     .select({ status: schema.activityWrappedRuns.status })
     .from(schema.activityWrappedRuns)
-    .where(eq(schema.activityWrappedRuns.year, year))
+    .where(and(eq(schema.activityWrappedRuns.year, year), eq(schema.activityWrappedRuns.kind, "real")))
     .orderBy(desc(schema.activityWrappedRuns.id))
     .limit(1)
     .get();
@@ -369,7 +373,7 @@ export async function resendWrappedDm(ctx: BotContext, userId: string, year: num
   const run = db
     .select({ id: schema.activityWrappedRuns.id })
     .from(schema.activityWrappedRuns)
-    .where(eq(schema.activityWrappedRuns.year, year))
+    .where(and(eq(schema.activityWrappedRuns.year, year), eq(schema.activityWrappedRuns.kind, "real")))
     .orderBy(desc(schema.activityWrappedRuns.id))
     .limit(1)
     .get();
@@ -450,7 +454,13 @@ function processedByRun(id: number, year: number): Set<string> {
   const rows = db
     .select({ userId: schema.activityWrappedLinks.userId })
     .from(schema.activityWrappedLinks)
-    .where(and(eq(schema.activityWrappedLinks.year, year), eq(schema.activityWrappedLinks.processedRunId, id)))
+    .where(
+      and(
+        eq(schema.activityWrappedLinks.year, year),
+        eq(schema.activityWrappedLinks.private, 0),
+        eq(schema.activityWrappedLinks.processedRunId, id),
+      ),
+    )
     .all();
   return new Set(rows.map((r) => r.userId));
 }
@@ -525,7 +535,13 @@ async function notifyStarter(ctx: BotContext, userId: string, year: number): Pro
 function resetForSending(year: number): void {
   db.update(schema.activityWrappedLinks)
     .set({ dmStatus: "pending" })
-    .where(and(eq(schema.activityWrappedLinks.year, year), inArray(schema.activityWrappedLinks.dmStatus, ["failed", "skipped"])))
+    .where(
+      and(
+        eq(schema.activityWrappedLinks.year, year),
+        eq(schema.activityWrappedLinks.private, 0),
+        inArray(schema.activityWrappedLinks.dmStatus, ["failed", "skipped"]),
+      ),
+    )
     .run();
 }
 
@@ -538,7 +554,13 @@ async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Pr
   const pending = db
     .select({ userId: schema.activityWrappedLinks.userId, token: schema.activityWrappedLinks.token })
     .from(schema.activityWrappedLinks)
-    .where(and(eq(schema.activityWrappedLinks.year, job.year), eq(schema.activityWrappedLinks.dmStatus, "pending")))
+    .where(
+      and(
+        eq(schema.activityWrappedLinks.year, job.year),
+        eq(schema.activityWrappedLinks.private, 0),
+        eq(schema.activityWrappedLinks.dmStatus, "pending"),
+      ),
+    )
     .orderBy(schema.activityWrappedLinks.userId)
     .all();
 
@@ -563,7 +585,13 @@ async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Pr
 function setDmStatus(userId: string, year: number, dmStatus: "pending" | "sent" | "failed" | "skipped"): void {
   db.update(schema.activityWrappedLinks)
     .set({ dmStatus })
-    .where(and(eq(schema.activityWrappedLinks.userId, userId), eq(schema.activityWrappedLinks.year, year)))
+    .where(
+      and(
+        eq(schema.activityWrappedLinks.userId, userId),
+        eq(schema.activityWrappedLinks.year, year),
+        eq(schema.activityWrappedLinks.private, 0),
+      ),
+    )
     .run();
 }
 

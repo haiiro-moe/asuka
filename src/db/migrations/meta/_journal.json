@@ -141,6 +141,20 @@
       "when": 1795690167233,
       "tag": "0019_natural_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1795695401321,
+      "tag": "0020_nice_hiroim",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1795695410711,
+      "tag": "0021_zippy_spitfire",
+      "breakpoints": true
     }
   ]
 }

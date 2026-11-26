@@ -7,6 +7,9 @@ import type {
   WrappedResumeResponse,
   WrappedRunStartResponse,
   WrappedSendResponse,
+  WrappedFailedList,
+  PreviewDiscardResponse,
+  PreviewStartResponse,
   ServerWrappedResponse,
 } from "../types/wrapped.ts";
 import {
@@ -18,7 +21,7 @@ import {
   serverWrappedUrl,
   storeServerWrapped,
 } from "../wrapped/server.ts";
-import { ensureWrappedLink, getLinkByToken, linkUrl, peekLinkByToken } from "../wrapped/links.ts";
+import { ensureWrappedLink, getLinkByToken, linkUrl, listFailedDms, peekLinkByToken } from "../wrapped/links.ts";
 import { currentUtcYear, optedInCount } from "../wrapped/optin.ts";
 import {
   getWrappedStatus,
@@ -29,6 +32,7 @@ import {
   startWrappedSend,
 } from "../wrapped/run.ts";
 import { closeSignups, getSignupState, postSignupMessage, reopenSignups } from "../wrapped/signup.ts";
+import { discardWrappedPreview, getPreviewStatus, startWrappedPreview } from "../wrapped/preview.ts";
 
 /** Lowest and highest year a run or link may be asked for. */
 const MIN_YEAR = 2015;
@@ -98,7 +102,7 @@ async function channelNames(
 }
 
 /** The public response for a link: the snapshot plus display names resolved now. */
-async function linkResponse(ctx: BotContext, userId: string, data: WrappedData): Promise<WrappedLinkResponse> {
+async function linkResponse(ctx: BotContext, userId: string, data: WrappedData, preview: boolean): Promise<WrappedLinkResponse> {
   const [self, soulmate, repliedTo, channel] = await Promise.all([
     memberInfo(ctx, userId),
     data.soulmateId ? memberInfo(ctx, data.soulmateId) : null,
@@ -107,6 +111,7 @@ async function linkResponse(ctx: BotContext, userId: string, data: WrappedData):
   ]);
   return {
     data,
+    preview,
     voiceReady: data.voiceReady === true,
     displayName: self.name ?? "you",
     soulmateName: soulmate?.name ?? null,
@@ -265,6 +270,23 @@ const reopenSignup: ApiRoute = {
   },
 };
 
+/**
+ * `GET /api/activity/wrapped/failed?year=` (admin): the {@link WrappedFailedList}
+ * of members whose DM failed and who are still opted in, for resending. Year
+ * defaults to the latest run's, else the current UTC year; 400 for a bad year.
+ */
+const getFailed: ApiRoute = {
+  method: "GET",
+  path: "/api/activity/wrapped/failed",
+  access: "admin",
+  handle(req) {
+    const year = yearParam(req);
+    if (year === null) return error(400, "bad year");
+    const out: WrappedFailedList = listFailedDms(year);
+    return Response.json(out);
+  },
+};
+
 /** `GET /api/activity/wrapped/optins` (admin): `{ count }` of members opted in to the DM. */
 const getOptins: ApiRoute = {
   method: "GET",
@@ -303,7 +325,7 @@ const getByToken: ApiRoute = {
   async handle(_req, ctx) {
     const link = getLinkByToken(ctx.params.token ?? "");
     if (!link) return error(404, "not found");
-    return Response.json(await linkResponse(ctx, link.userId, link.data));
+    return Response.json(await linkResponse(ctx, link.userId, link.data, link.preview));
   },
 };
 
@@ -321,7 +343,7 @@ const getCard: ApiRoute = {
     if (!link) return error(404, "not found");
     const self = await memberInfo(ctx, link.userId);
     const png = await renderWrappedCardPng(link.data, self.name ?? "you", self.avatarUrl);
-    if (!png) return Response.json(await linkResponse(ctx, link.userId, link.data));
+    if (!png) return Response.json(await linkResponse(ctx, link.userId, link.data, link.preview));
     return new Response(new Uint8Array(png), {
       headers: { "content-type": "image/png", "cache-control": "private, max-age=300" },
     });
@@ -361,7 +383,7 @@ const getServerByToken: ApiRoute = {
   handle(_req, ctx) {
     const found = getServerWrappedByToken(ctx.params.token ?? "");
     if (!found) return error(404, "not found");
-    const out: ServerWrappedResponse = { data: found.data, voiceReady: found.data.voiceReady === true };
+    const out: ServerWrappedResponse = { data: found.data, preview: found.preview, voiceReady: found.data.voiceReady === true };
     return Response.json(out);
   },
 };
@@ -379,10 +401,64 @@ const getServerCard: ApiRoute = {
     const found = getServerWrappedByToken(ctx.params.token ?? "");
     if (!found) return error(404, "not found");
     const png = await renderWrappedServerCardPng(found.data);
-    if (!png) return Response.json({ data: found.data, voiceReady: found.data.voiceReady === true } satisfies ServerWrappedResponse);
+    if (!png) {
+      return Response.json({
+        data: found.data,
+        preview: found.preview,
+        voiceReady: found.data.voiceReady === true,
+      } satisfies ServerWrappedResponse);
+    }
     return new Response(new Uint8Array(png), {
       headers: { "content-type": "image/png", "cache-control": "public, max-age=300" },
     });
+  },
+};
+
+/**
+ * `POST /api/activity/wrapped/preview` (admin): start the session admin's private
+ * preview (body `{ year?: number; members?: string[]; all?: boolean }`). The
+ * owner is always the session's user, never a body field. Responds 202, 409
+ * (already running) or 400 (invalid) {@link PreviewStartResponse}.
+ */
+const postPreview: ApiRoute = {
+  method: "POST",
+  path: "/api/activity/wrapped/preview",
+  access: "admin",
+  async handle(req, ctx: ApiContext) {
+    const owner = ctx.session!.userId;
+    const body = await jsonBody(req);
+    if (!body) return error(400, "body must be a JSON object");
+    const year = body.year === undefined ? currentUtcYear() : parseYear(body.year);
+    if (year === null) return error(400, `year must be a whole number from ${MIN_YEAR} to ${MAX_YEAR}`);
+    if (body.all !== undefined && typeof body.all !== "boolean") return error(400, "all must be a boolean");
+    const members = body.members === undefined ? undefined : (body.members as string[]);
+    const { result, error: reason } = startWrappedPreview(ctx, {
+      ownerUserId: owner,
+      year,
+      members,
+      all: body.all as boolean | undefined,
+    });
+    const out: PreviewStartResponse = { result, ...(reason ? { error: reason } : {}), status: getPreviewStatus(owner) };
+    return Response.json(out, { status: result === "started" ? 202 : result === "invalid" ? 400 : 409 });
+  },
+};
+
+/** `GET /api/activity/wrapped/preview` (admin): the session admin's own {@link PreviewStatus} (`idle` when none). */
+const getPreview: ApiRoute = {
+  method: "GET",
+  path: "/api/activity/wrapped/preview",
+  access: "admin",
+  handle: (_req, ctx) => Response.json(getPreviewStatus(ctx.session!.userId)),
+};
+
+/** `POST /api/activity/wrapped/preview/discard` (admin): discard the session admin's preview, {@link PreviewDiscardResponse}. */
+const discardPreview: ApiRoute = {
+  method: "POST",
+  path: "/api/activity/wrapped/preview/discard",
+  access: "admin",
+  handle(_req, ctx) {
+    const out: PreviewDiscardResponse = { result: discardWrappedPreview(ctx.session!.userId) };
+    return Response.json(out, { status: out.result === "running" ? 409 : 200 });
   },
 };
 
@@ -402,10 +478,14 @@ export const wrappedRoutes: ApiRoute[] = [
   closeSignup,
   reopenSignup,
   getOptins,
+  getFailed,
   getLink,
   getByToken,
   getCard,
   getServerLink,
   getServerByToken,
   getServerCard,
+  postPreview,
+  getPreview,
+  discardPreview,
 ];
