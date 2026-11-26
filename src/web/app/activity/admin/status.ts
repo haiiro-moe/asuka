@@ -61,10 +61,18 @@ export function sendProgress(s: WrappedRunStatus): [number, number] {
  * - failed: `failed at 12 of 40` (processing incomplete) or `failed while sending`
  * - interrupted: `interrupted at 12 of 40, resume it from the data tab`
  *
+ * Once a snapshot has failed (`buildFailed`), every state but idle adds `; 2 could not be built`.
+ *
  * @param s - The run, as `GET /api/activity/wrapped/run` returns it.
  * @returns The line.
  */
 export function wrappedStatusLine(s: WrappedRunStatus): StatusLine {
+  const line = wrappedBaseLine(s);
+  return s.status === "idle" ? line : { ...line, text: line.text + buildFailedTail(s) };
+}
+
+/** {@link wrappedStatusLine} without the build-failure tail. */
+function wrappedBaseLine(s: WrappedRunStatus): StatusLine {
   const subject = s.year != null ? `wrapped ${s.year}` : "wrapped";
   const of = (n: number, total: number) => `${formatCount(n)} of ${formatCount(total)}`;
   switch (s.status) {
@@ -153,4 +161,49 @@ export function pollInterval(
   preview: PreviewStatus | null | undefined = null,
 ): number {
   return fast || wrappedRunning(wrapped) || backfillRunning(backfill) || previewRunning(preview) ? FAST_POLL_MS : SLOW_POLL_MS;
+}
+
+/** A Discord id (snowflake) as it could appear in a server error text. */
+const SNOWFLAKE_IN_PARENS = /\s*\(\d{15,25}\)/g;
+const SNOWFLAKE = /\b\d{15,25}\b/g;
+
+/**
+ * The run's `error` text made safe to show: a member id in it (the server writes
+ * `a snapshot failed (<id>): <cause>`) is dropped, a bare one becomes `a member`. Null when there is none.
+ *
+ * @param error - `WrappedRunStatus.error`.
+ */
+export function runErrorText(error: string | null | undefined): string | null {
+  if (error == null || !error.trim()) return null;
+  return error.replace(SNOWFLAKE_IN_PARENS, "").replace(SNOWFLAKE, "a member").trim();
+}
+
+/** What the page says about members whose snapshot could not be built, and the run's error. */
+export interface BuildSummary {
+  /** `2 members could not be built. Processing went on without them.`; null when none failed. */
+  line: string | null;
+  /** The run's first error, without ids, for a subtle line; null when there is none. */
+  note: string | null;
+}
+
+/**
+ * The processed summary's extra lines from `buildFailed` and `error` (both optional in the status).
+ *
+ * @param s - The run status.
+ */
+export function buildSummary(s: WrappedRunStatus): BuildSummary {
+  const n = s.buildFailed ?? 0;
+  const line = n > 0 ? `${formatCount(n)} ${n === 1 ? "member" : "members"} could not be built. Processing went on without them.` : null;
+  return { line, note: runErrorText(s.error) };
+}
+
+/**
+ * The status line's tail for members whose snapshot could not be built: `; 2 could not be built`, or
+ * an empty string when none failed.
+ *
+ * @param s - The run status.
+ */
+export function buildFailedTail(s: WrappedRunStatus): string {
+  const n = s.buildFailed ?? 0;
+  return n > 0 ? `; ${formatCount(n)} could not be built` : "";
 }

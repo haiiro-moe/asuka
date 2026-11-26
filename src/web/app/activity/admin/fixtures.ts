@@ -27,6 +27,8 @@ export function run(over: Partial<WrappedRunStatus> = {}): WrappedRunStatus {
     finishedAt: null,
     announce: true,
     announcedAt: null,
+    buildFailed: 0,
+    error: null,
     ...over,
   };
 }

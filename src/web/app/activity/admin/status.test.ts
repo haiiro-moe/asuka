@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
 import { backfill, run } from "./fixtures.ts";
-import { FAST_POLL_MS, SLOW_POLL_MS, backfillStatusLine, pollInterval, sendProgress, wrappedStatusLine } from "./status.ts";
+import {
+  FAST_POLL_MS,
+  SLOW_POLL_MS,
+  backfillStatusLine,
+  buildSummary,
+  pollInterval,
+  runErrorText,
+  sendProgress,
+  wrappedStatusLine,
+} from "./status.ts";
 
 test("wrappedStatusLine covers every run state", () => {
   expect(wrappedStatusLine(run({ id: null, year: null, status: "idle", total: 0 }))).toEqual({
@@ -55,4 +64,33 @@ test("pollInterval is fast while anything runs or when forced", () => {
   expect(pollInterval(null, backfill({ status: "running" }))).toBe(FAST_POLL_MS);
   expect(pollInterval(run(), backfill(), true)).toBe(FAST_POLL_MS);
   expect(pollInterval(run({ status: "interrupted" }), backfill({ status: "stopped" }))).toBe(SLOW_POLL_MS);
+});
+
+test("runErrorText drops member ids from the run's error", () => {
+  expect(runErrorText("a snapshot failed (123456789012345678): no such table")).toBe("a snapshot failed: no such table");
+  expect(runErrorText("could not DM 123456789012345678")).toBe("could not DM a member");
+  expect(runErrorText("the live member list could not be fetched")).toBe("the live member list could not be fetched");
+  expect(runErrorText(null)).toBeNull();
+  expect(runErrorText(undefined)).toBeNull();
+  expect(runErrorText("  ")).toBeNull();
+});
+
+test("buildSummary counts the members that could not be built", () => {
+  expect(buildSummary(run({ status: "processed" }))).toEqual({ line: null, note: null });
+  expect(buildSummary(run({ status: "processed", buildFailed: 0, error: null }))).toEqual({ line: null, note: null });
+  expect(buildSummary(run({ status: "processed", buildFailed: 1 })).line).toBe(
+    "1 member could not be built. Processing went on without them.",
+  );
+  const s = buildSummary(run({ status: "done", buildFailed: 3, error: "a snapshot failed (123456789012345678): boom" }));
+  expect(s.line).toBe("3 members could not be built. Processing went on without them.");
+  expect(s.note).toBe("a snapshot failed: boom");
+});
+
+test("the status line adds the build failures, never on idle", () => {
+  expect(wrappedStatusLine(run({ status: "processed", buildFailed: 2 })).text).toBe("processed, ready to send; 2 could not be built");
+  expect(wrappedStatusLine(run({ status: "processing", processed: 12, buildFailed: 1 })).text).toBe(
+    "processing 12 of 40; 1 could not be built",
+  );
+  expect(wrappedStatusLine(run({ status: "processed" })).text).toBe("processed, ready to send");
+  expect(wrappedStatusLine(run({ status: "idle", buildFailed: 2 })).text).toBe("idle, no run yet");
 });

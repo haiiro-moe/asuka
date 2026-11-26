@@ -14,7 +14,7 @@ import { formatUtcDate } from "../format.ts";
 import { call } from "./http.ts";
 import { LinkActions } from "./LinkActions.tsx";
 import { Quiet, STATUS_GLYPH, STATUS_INK, Sheet } from "./parts.tsx";
-import { wrappedStatusLine } from "./status.ts";
+import { runErrorText, wrappedStatusLine } from "./status.ts";
 import { resumeGate, serverLinkReady } from "./steps.ts";
 import type { OpsStatus } from "./useOpsStatus.ts";
 
@@ -60,6 +60,7 @@ export function WrappedOverview({ ops }: { ops: OpsStatus }) {
     );
   }
   const line = wrappedStatusLine(s);
+  const note = runErrorText(s.error);
   const resume = resumeGate(s);
 
   const doResume = async () => {
@@ -99,6 +100,7 @@ export function WrappedOverview({ ops }: { ops: OpsStatus }) {
             : []),
         ]}
       />
+      {note && <Quiet>{note}</Quiet>}
       {s.status === "interrupted" && (
         <>
           <p className="nar px-2">The run stopped answering, likely a restart. Resume picks it up where it was.</p>

@@ -12,6 +12,7 @@ import { formatCount } from "./format.ts";
 import { call } from "./http.ts";
 import { ProgressBar, Quiet } from "./parts.tsx";
 import { MAX_YEAR, MIN_YEAR, parseYearInput, processConfirm, processGate } from "./steps.ts";
+import { buildSummary } from "./status.ts";
 import type { OpsStatus } from "./useOpsStatus.ts";
 
 /** The narrator line of step 1 for the run's state. */
@@ -45,6 +46,7 @@ export function ProcessStep({ ops }: { ops: OpsStatus }) {
   const year = parseYearInput(yearText);
   const gate = processGate(s, year);
   const line = s ? processLine(s) : null;
+  const built = s && s.status !== "idle" ? buildSummary(s) : null;
   const { confirm, dialog } = useConfirm();
 
   const run = async () => {
@@ -80,6 +82,8 @@ export function ProcessStep({ ops }: { ops: OpsStatus }) {
       />
       {s && s.status === "processing" && <ProgressBar label="members processed" done={s.processed} total={s.total} />}
       {line && <p className={s?.status === "failed" ? "nar love px-2" : "nar px-2"}>{line}</p>}
+      {built?.line && <p className="nar px-2">{built.line}</p>}
+      {built?.note && <Quiet>{built.note}</Quiet>}
       {error && <ErrorLine className="px-2">That did not start: {error}.</ErrorLine>}
       <div className="btns">
         <InkButton tone="gold" onClick={run} disabled={!gate.enabled} busy={busy} busyLabel="starting">
