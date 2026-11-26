@@ -7,6 +7,7 @@
  *
  * @module
  */
+import type { PresidentClubEventHealth, PresidentEngagement } from "../../../../plugins/activity/types/president.ts";
 import type { ActivityTile } from "../charts.tsx";
 
 /** The two periods a president view can be asked for. */
@@ -52,16 +53,6 @@ export function countTile(label: string, value: number | null, options: CountTil
     return { label, value: OFF_VALUE, note: hiddenNote(options.period), off: true };
   }
   return { label, value: value.toLocaleString("en-GB"), unit: options.unit, note: options.note };
-}
-
-/**
- * The unit after the "in groups" count: `of N` when the total is shown, nothing when it is hidden.
- *
- * @param total - Active members, or `null` when hidden.
- * @returns `"of 14"` or `undefined`.
- */
-export function totalUnit(total: number | null): string | undefined {
-  return total === null || !Number.isFinite(total) ? undefined : `of ${total.toLocaleString("en-GB")}`;
 }
 
 /** What the column chart for one weekly series shows. */
@@ -117,3 +108,95 @@ export function groupsLeftOut(groups: number | null, listed: number): boolean {
   return groups !== null && groups > listed;
 }
 
+
+/** The note under a figure the server hides for privacy in the club and event health view. */
+export const CLUB_HIDDEN_NOTE = "hidden: small counts are not shown";
+
+/** The note under a hidden average attendance. */
+export const ATTENDANCE_HIDDEN_NOTE = "hidden for privacy: too few sign-ups to show";
+
+/**
+ * The lowercase label of a period, for headings and narrator lines.
+ *
+ * @param period - The period on screen.
+ * @returns `"the last 7 days"` or `"this term"`.
+ */
+export function periodLabel(period: Period): string {
+  return period === "week" ? "the last 7 days" : "this term";
+}
+
+/**
+ * Formats a figure with at most one decimal (hours and averages), in the page's English grouping.
+ *
+ * @param value - A finite number.
+ * @returns The number as text; `0` is `"0"`.
+ */
+export function oneDecimal(value: number): string {
+  return value.toLocaleString("en-GB", { maximumFractionDigits: 1 });
+}
+
+/** The engagement section as tiles, plus whether the voice figure is withheld. */
+export interface EngagementView {
+  /** `messages`, `active members` and, only when it is a number, `voice hours`. */
+  tiles: ActivityTile[];
+  /** `true` when `voiceHours` is `null`: the page says when voice unlocks instead of drawing a tile. */
+  voiceLocked: boolean;
+}
+
+/**
+ * Builds the engagement section.
+ *
+ * @param data - The `engagement` response.
+ * @param period - The period on screen.
+ * @returns The tiles. A `null` `activeMembers` is an `off` tile (the same figure as the connection total, hidden
+ *   with it), never `0`; a `null` `voiceHours` is no tile and `voiceLocked: true`. A real `0` stays `0`.
+ */
+export function engagementView(data: PresidentEngagement, period: Period): EngagementView {
+  const tiles: ActivityTile[] = [
+    countTile("messages", data.messages, { period, note: `written in ${periodLabel(period)}` }),
+    countTile("active members", data.activeMembers, {
+      period,
+      note: "wrote a message or were in voice. hidden together with the connection total",
+    }),
+  ];
+  const voiceLocked = data.voiceHours === null || !Number.isFinite(data.voiceHours);
+  if (!voiceLocked) {
+    tiles.push({
+      label: "voice hours",
+      value: oneDecimal(data.voiceHours as number),
+      unit: "hours",
+      note: "added up over members",
+    });
+  }
+  return { tiles, voiceLocked };
+}
+
+/**
+ * Builds the club and event health tiles.
+ *
+ * @param data - The `clubs` response.
+ * @param period - The period on screen.
+ * @returns Four tiles. `clubsActive` and `clubsQuiet` are `off` tiles with {@link CLUB_HIDDEN_NOTE} when
+ *   `null` (the server hides them together); `avgAttendance` is an `off` tile with
+ *   {@link ATTENDANCE_HIDDEN_NOTE} when `null`, and a real `0` is `0` with the unit `per event`.
+ */
+export function clubTiles(data: PresidentClubEventHealth, period: Period): ActivityTile[] {
+  const hidden = (v: number | null) => v === null || !Number.isFinite(v);
+  const club = (label: string, v: number | null, note: string): ActivityTile =>
+    hidden(v)
+      ? { label, value: OFF_VALUE, note: CLUB_HIDDEN_NOTE, off: true }
+      : countTile(label, v, { period, note });
+  return [
+    club("clubs active", data.clubsActive, "approved clubs with a message or voice time"),
+    club("clubs quiet", data.clubsQuiet, "approved clubs with nothing in their channels"),
+    countTile("events held", data.eventsHeld, { period, note: "occurrences that started in the period" }),
+    hidden(data.avgAttendance)
+      ? { label: "average attendance", value: OFF_VALUE, note: ATTENDANCE_HIDDEN_NOTE, off: true }
+      : {
+          label: "average attendance",
+          value: oneDecimal(data.avgAttendance as number),
+          unit: "per event",
+          note: "members signed up per held occurrence",
+        },
+  ];
+}

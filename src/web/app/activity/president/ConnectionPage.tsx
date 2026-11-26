@@ -5,14 +5,20 @@
  *
  * @module
  */
-import { useState } from "react";
-import type { PresidentConnection, PresidentGroupSizes, PresidentWeeklySeries } from "../../../../plugins/activity/types/president.ts";
+import { useState, type ReactNode } from "react";
+import type {
+  PresidentClubEventHealth,
+  PresidentConnection,
+  PresidentEngagement,
+  PresidentGroupSizes,
+  PresidentWeeklySeries,
+} from "../../../../plugins/activity/types/president.ts";
 import type { VoiceStatus } from "../../../../plugins/activity/types/user.ts";
 import { Badge, Empty, ErrorLine, Heading, Loading, Segmented, Window } from "../../ui/index.ts";
 import { ActivityColumns, ActivityRank, ActivityTiles } from "../charts.tsx";
 import { useActivity } from "../useActivity.ts";
 import { columnsAriaLabel, voiceLockedLine, weekName } from "../format.ts";
-import { countTile, groupBars, groupsLeftOut, seriesView, totalUnit, type Period } from "./render.ts";
+import { clubTiles, countTile, engagementView, groupBars, groupsLeftOut, seriesView, type Period } from "./render.ts";
 
 const PERIODS = [
   { value: "week" as const, label: "week" },
@@ -35,6 +41,8 @@ export function ConnectionPage() {
   const connection = useActivity<PresidentConnection>(`${base}/connection${q}`);
   const weekly = useActivity<PresidentWeeklySeries>(`${base}/weekly${q}`);
   const groups = useActivity<PresidentGroupSizes>(`${base}/groups${q}`);
+  const engagement = useActivity<PresidentEngagement>(`${base}/engagement${q}`);
+  const clubs = useActivity<PresidentClubEventHealth>(`${base}/clubs${q}`);
   const voice = useActivity<VoiceStatus>("/api/activity/user/voice-status");
 
   const reads = [connection, weekly, groups];
@@ -72,7 +80,63 @@ export function ConnectionPage() {
           voiceFailed={voice.error !== null}
         />
       )}
+      <Heading as="h2">engagement</Heading>
+      <Section state={engagement}>
+        {(data) => (
+          <EngagementBody period={period} data={data} voice={voice.data} voiceFailed={voice.error !== null} />
+        )}
+      </Section>
+      <Heading as="h2">clubs and events</Heading>
+      <Section state={clubs}>{(data) => <ClubsBody period={period} data={data} />}</Section>
     </Window>
+  );
+}
+
+/** Props of {@link Section}. */
+interface SectionProps<T> {
+  state: { data: T | null; loading: boolean; error: string | null; reload: () => void };
+  children: (data: T) => ReactNode;
+}
+
+/** One section with its own loading and failure lines, so one failed read never blanks the others. */
+function Section<T>({ state, children }: SectionProps<T>) {
+  return (
+    <div className="px-2 pb-3">
+      {state.error !== null ? (
+        <ErrorLine onRetry={state.reload}>{failure(state.error)}</ErrorLine>
+      ) : state.loading || !state.data ? (
+        <Loading>Counting</Loading>
+      ) : (
+        children(state.data)
+      )}
+    </div>
+  );
+}
+
+/** Props of {@link EngagementBody}. */
+export interface EngagementBodyProps {
+  period: Period;
+  data: PresidentEngagement;
+  voice: VoiceStatus | null;
+  voiceFailed: boolean;
+}
+
+/** The engagement tiles, and the voice-unlock line while voice hours are withheld. */
+export function EngagementBody({ period, data, voice, voiceFailed }: EngagementBodyProps) {
+  const view = engagementView(data, period);
+  return (
+    <div className="flex flex-col gap-2">
+      <ActivityTiles tiles={view.tiles} />
+      {view.voiceLocked && (
+        <Empty>
+          {voice && !voice.ready
+            ? voiceLockedLine(voice.readyAt)
+            : voiceFailed || voice === null
+              ? "voice hours are not available yet."
+              : "voice hours are hidden for now."}
+        </Empty>
+      )}
+    </div>
   );
 }
 
@@ -91,8 +155,7 @@ function Numbers({ period, connection, weekly, groups, voice, voiceFailed }: Num
   const tiles = [
     countTile("in groups", connection.connected, {
       period,
-      unit: totalUnit(connection.total),
-      note: "members in a group of three or more. pairs and loners are never shown.",
+      note: "members in a group of three or more. pairs and loners are never shown. the total is under engagement.",
     }),
     countTile("groups", connection.groups, { period, note: "groups of three or more" }),
     countTile("bridges", connection.bridges, { period, note: "pairs tied across two groups" }),
@@ -169,4 +232,13 @@ function Series({ values, subject, tone, unit }: SeriesProps) {
       </p>
     </div>
   );
+}
+
+/**
+ * The club and event health tiles of one response, numbers only.
+ *
+ * @param props - The period on screen and the `clubs` response.
+ */
+export function ClubsBody({ period, data }: { period: Period; data: PresidentClubEventHealth }) {
+  return <ActivityTiles tiles={clubTiles(data, period)} />;
 }
