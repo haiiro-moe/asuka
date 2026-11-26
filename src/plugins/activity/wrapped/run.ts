@@ -22,7 +22,9 @@
  *    send step calls it when `announce` is on; an admin can also call it alone.
  *
  * Voice readiness (`voice-ready.ts`) is checked once when processing starts
- * (or resumes) and passed down, so every snapshot of a run agrees on it.
+ * (or resumes), at the year's last second when the year is over
+ * (`voiceReadinessForYear`), and passed down, so every snapshot of a run
+ * agrees on it.
  *
  * Counters are persisted after every member so the dashboard can poll them. A
  * processing or sending run not updated for 120 seconds (the bot restarted,
@@ -41,7 +43,7 @@ import { nowSec } from "../../../core/util.ts";
 import { db, getConfig, schema } from "../../../db/index.ts";
 import type { WrappedRunStatus } from "../types/wrapped.ts";
 import { withWrappedBanner } from "./banner.ts";
-import { voiceReadiness } from "../voice-ready.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
 import { activeMemberIds, buildWrapped, leftMemberIds, wrappedShared } from "./data.ts";
 import type { WrappedShared } from "./data.ts";
 import { sendWrappedDm } from "./dm.ts";
@@ -199,7 +201,7 @@ export function startWrappedRun(ctx: BotContext, opts: { year: number; startedBy
   }
 
   // Voice readiness is checked once per processing step and passed down.
-  const voiceReady = voiceReadiness().ready;
+  const voiceReady = voiceReadinessForYear(opts.year).ready;
   const members = activeMemberIds(opts.year, voiceReady);
   const now = nowSec();
   const id = db
@@ -277,7 +279,7 @@ export function resumeWrappedRun(ctx: BotContext): "resumed" | "nothing-to-resum
 
   updateRun(row.id, {});
   if (row.status === "processing") {
-    const voiceReady = voiceReadiness().ready;
+    const voiceReady = voiceReadinessForYear(row.year).ready;
     const members = activeMemberIds(row.year, voiceReady);
     launch({ id: row.id, work: () => processWork(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, members, voiceReady }) });
   } else {

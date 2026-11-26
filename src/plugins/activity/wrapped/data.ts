@@ -21,7 +21,7 @@ import { clubFor, clubYearStats, presidencyFor, presidencyTermsIn, yearPeriod } 
 import type { ClubYearStats, TermInYear } from "./extras.ts";
 import { titleAwards, titlesFor } from "./titles.ts";
 import type { TitleAward } from "./titles.ts";
-import { voiceReadiness } from "../voice-ready.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
 import { memberVoiceOverlaps } from "../queries/voice-overlap.ts";
 
 /** How many emoji a snapshot lists. */
@@ -59,7 +59,7 @@ export interface WrappedShared {
   /** {@link titleAwards} for the year. */
   awards: TitleAward[];
   /**
-   * Whether voice figures may be shown (`voiceReadiness().ready`, checked once
+   * Whether voice figures may be shown (`voiceReadinessForYear(year).ready`, checked once
    * per run). When false every voice-derived figure is left out.
    */
   voiceReady: boolean;
@@ -70,9 +70,10 @@ export interface WrappedShared {
  *
  * @param year - The UTC calendar year.
  * @param voiceReady - Whether voice figures may be shown; a run checks
- *   `voiceReadiness()` once and passes it. Left out, it is checked here.
+ *   `voiceReadinessForYear(year)` once and passes it. Left out, it is checked
+ *   here, at the year's last second when the year is over.
  */
-export function wrappedShared(year: number, voiceReady: boolean = voiceReadiness().ready): WrappedShared {
+export function wrappedShared(year: number, voiceReady: boolean = voiceReadinessForYear(year).ready): WrappedShared {
   const clubs = clubYearStats(year, voiceReady);
   const terms = presidencyTermsIn(year);
   return { clubs, terms, awards: titleAwards(year, { clubs, terms, voiceReady }), voiceReady };

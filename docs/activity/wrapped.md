@@ -70,11 +70,17 @@ src/core/images/components/wrapped-server-card.tsx   the server card (renderWrap
 
 ## Voice readiness
 
-`voiceReadiness()` (`voice-ready.ts`) says whether the voice log is old enough. Processing checks it
+`voiceReadiness(now)` (`voice-ready.ts`) says whether the voice log is old enough. Processing checks it
 **once** when it starts (or resumes) and passes the answer down through `wrappedShared(year,
 voiceReady)` and `buildServerWrapped(year, { voiceReady })`; the on-demand paths (`ensureWrappedLink`,
 the server-link route) check it once per request. Both snapshots store the answer as `voiceReady`,
 so a story never changes after it is sent, and the public responses repeat it at the top level.
+
+The Wrapped paths (processing, the private preview, `wrappedShared`, `buildServerWrapped`, the
+titles and club stats) ask `voiceReadinessForYear(year)`, which judges readiness at
+`min(now, the year's last second)`. Processing 2026 after 1 Feb 2027 therefore does not show
+voice when the log only became ready in 2027: a log that started on 15 Nov 2026 holds six weeks
+of 2026, not two whole months.
 
 While voice is **not** ready:
 

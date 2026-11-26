@@ -18,7 +18,7 @@ import { nowSec } from "../../../core/util.ts";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import { voicePairs, voiceSpansIn } from "../queries/voice-overlap.ts";
-import { voiceReadiness } from "../voice-ready.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
 import type { ServerWrapped } from "../types/wrapped.ts";
 import {
   clubYearStats,
@@ -54,7 +54,7 @@ export interface ServerWrappedDeps {
   names?: ServerNameLookup;
   /** Opt-in check for the best pair (default: the opt-in table). */
   isOptedIn?: (userId: string) => boolean;
-  /** Whether voice figures may be shown (default: `voiceReadiness()`, checked once). */
+  /** Whether voice figures may be shown (default: `voiceReadinessForYear(year)`, checked once). */
   voiceReady?: boolean;
   /** Year aggregates already computed by a run. */
   clubs?: ClubYearStats[];
@@ -91,7 +91,7 @@ export function buildServerWrapped(year: number, deps: ServerWrappedDeps = {}): 
   const { from, to } = yearPeriod(year);
   const names = deps.names ?? NO_NAMES;
   const optedIn = deps.isOptedIn ?? isOptedIn;
-  const voiceReady = deps.voiceReady ?? voiceReadiness().ready;
+  const voiceReady = deps.voiceReady ?? voiceReadinessForYear(year).ready;
   const m = schema.activityMessages;
   const v = schema.activityVoice;
   const msgYear = and(gte(m.ts, from), lt(m.ts, to), notExcluded(m.channelId, m.parentChannelId));

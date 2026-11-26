@@ -15,7 +15,7 @@ import { nowSec } from "../../../core/util.ts";
 import { db, schema } from "../../../db/index.ts";
 import { getPresidencyHistory } from "../../elections/service.ts";
 import { notExcluded } from "../exclusion.ts";
-import { voiceReadiness } from "../voice-ready.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
 import type { Period } from "../time.ts";
 import type { WrappedClub, WrappedEmoji, WrappedPresidency } from "../types/wrapped.ts";
 
@@ -80,7 +80,7 @@ export interface ClubYearStats {
  *   query is skipped and `voiceSeconds` is null. Left out, it is checked here.
  * @returns One row per approved club, by id.
  */
-export function clubYearStats(year: number, voiceReady: boolean = voiceReadiness().ready): ClubYearStats[] {
+export function clubYearStats(year: number, voiceReady: boolean = voiceReadinessForYear(year).ready): ClubYearStats[] {
   const { from, to } = yearPeriod(year);
   const c = schema.clubs;
   const m = schema.activityMessages;

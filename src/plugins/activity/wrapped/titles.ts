@@ -21,7 +21,7 @@ import type { SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
-import { voiceReadiness } from "../voice-ready.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
 import type { WrappedTitle } from "../types/wrapped.ts";
 import { clubYearStats, presidencyTermsIn, yearPeriod } from "./extras.ts";
 import type { ClubYearStats, TermInYear } from "./extras.ts";
@@ -91,7 +91,7 @@ export function titleAwards(
   shared: { clubs?: ClubYearStats[]; terms?: TermInYear[]; voiceReady?: boolean } = {},
 ): TitleAward[] {
   // Voice titles need two whole months of voice data (voice-ready.ts).
-  const voiceReady = shared.voiceReady ?? voiceReadiness().ready;
+  const voiceReady = shared.voiceReady ?? voiceReadinessForYear(year).ready;
   const { from, to } = yearPeriod(year);
   const m = schema.activityMessages;
   const v = schema.activityVoice;

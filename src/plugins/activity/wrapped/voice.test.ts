@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { db, initDb, schema } from "../../../db/index.ts";
 import { nowSec } from "../../../core/util.ts";
 import { WrappedCard } from "../../../core/images/components/wrapped-card.tsx";
@@ -10,6 +10,8 @@ import { buildWrapped } from "./data.ts";
 import { setOptIn } from "./optin.ts";
 import { startWrappedRun, waitForWrappedRun, wrappedRunTiming } from "./run.ts";
 import { buildServerWrapped } from "./server.ts";
+import { startWrappedPreview, waitForWrappedPreviews } from "./preview.ts";
+import { getWrappedLink } from "./links.ts";
 import { allStrings, fakeClient, fakeCtx, msg, resetWrappedTables } from "./testing.ts";
 
 const DAY = 86400;
@@ -107,7 +109,7 @@ test("with an earliest segment three months old everything is normal", () => {
 test("a run checks voice readiness once, not once per member", async () => {
   seed();
   for (let i = 0; i < 5; i++) recordMessage(msg(`m${i}`, T + 100 + i));
-  const spy = spyOn(voiceReadyModule, "voiceReadiness");
+  const spy = spyOn(voiceReadyModule, "voiceReadinessForYear");
   try {
     const { client } = fakeClient();
     startWrappedRun(fakeCtx(client), { year: YEAR, startedBy: "admin" });
@@ -133,4 +135,51 @@ test("the cards render without voice figures when voice is not ready", async () 
   oldVoice();
   const ready = buildWrapped("u1", YEAR)!;
   expect(allStrings(WrappedCard({ data: ready, displayName: "u1", avatarDataUri: null }))).toContain("in voice");
+});
+
+describe("voice readiness at the year's end", () => {
+  /** Voice from 15 Nov 2026: ready on 1 Feb 2027, so never ready inside 2026. */
+  function lateVoice(a = "u1", b = "u2") {
+    voice(a, "v1", Date.UTC(2026, 10, 15) / 1000, Date.UTC(2026, 10, 15, 20) / 1000);
+    voice(b, "v1", Date.UTC(2026, 10, 15) / 1000, Date.UTC(2026, 10, 15, 20) / 1000);
+    recordMessage(msg(a, Date.UTC(2026, 10, 16) / 1000));
+  }
+
+  afterEach(() => {
+    setSystemTime();
+  });
+
+  test("voiceReadinessForYear judges a finished year at its last second", () => {
+    lateVoice();
+    setSystemTime(new Date("2027-03-01T00:00:00Z"));
+    expect(voiceReadyModule.voiceReadiness().ready).toBe(true);
+    expect(voiceReadyModule.voiceReadinessForYear(2026).ready).toBe(false);
+    expect(voiceReadyModule.voiceReadinessForYear(2027).ready).toBe(true);
+  });
+
+  test("processing 2026 in March 2027 shows no voice in the member, server and run snapshots", async () => {
+    lateVoice();
+    setSystemTime(new Date("2027-03-01T00:00:00Z"));
+    const data = buildWrapped("u1", 2026)!;
+    expect(data.voiceReady).toBe(false);
+    expect(data.voiceHours).toBeNull();
+    expect(buildServerWrapped(2026)!.voiceHours).toBeNull();
+
+    const { client } = fakeClient();
+    startWrappedRun(fakeCtx(client), { year: 2026, startedBy: "admin" });
+    await waitForWrappedRun();
+    const row = db.select().from(schema.activityWrappedLinks).all().find((l) => l.userId === "u1" && l.private === 0)!;
+    expect(JSON.parse(row.data).voiceReady).toBe(false);
+    expect(getWrappedLink("u2", 2026)).toBeNull();
+  });
+
+  test("the private preview of 2026 in March 2027 shows no voice either", async () => {
+    lateVoice("11", "12");
+    setSystemTime(new Date("2027-03-01T00:00:00Z"));
+    const { client } = fakeClient();
+    expect(startWrappedPreview(fakeCtx(client), { ownerUserId: "11", year: 2026, members: ["11"] }).result).toBe("started");
+    await waitForWrappedPreviews();
+    const run = db.select().from(schema.activityWrappedRuns).all().find((r) => r.kind === "private")!;
+    expect(JSON.parse(run.preview!).voiceReady).toBe(false);
+  });
 });

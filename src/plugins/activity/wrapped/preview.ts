@@ -36,7 +36,7 @@ import { nowSec } from "../../../core/util.ts";
 import { db, schema } from "../../../db/index.ts";
 import { notExcluded } from "../exclusion.ts";
 import type { PreviewRunState, PreviewStatus, ServerWrapped } from "../types/wrapped.ts";
-import { voiceReadiness } from "../voice-ready.ts";
+import { voiceReadinessForYear } from "../voice-ready.ts";
 import { withWrappedBanner } from "./banner.ts";
 import { activeMemberIds, buildWrapped, leftMemberIds, wrappedShared, yearBounds } from "./data.ts";
 import { wrappedDmPayload } from "./dm.ts";
@@ -233,7 +233,7 @@ export function startWrappedPreview(
   deletePreviews(mine);
 
   const year = opts.year ?? currentUtcYear();
-  const voiceReady = voiceReadiness().ready;
+  const voiceReady = voiceReadinessForYear(year).ready;
   const size = Math.min(PREVIEW_MAX_MEMBERS, Math.max(1, Math.floor(opts.sample ?? PREVIEW_DEFAULT_SAMPLE)));
   const sample =
     opts.members && opts.members.length > 0 ? [...new Set(opts.members)] : [owner, ...mostActive(year, size, owner)];
