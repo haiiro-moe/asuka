@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { db, schema, getConfig } from "../db/index.ts";
+import { captureCredit } from "../plugins/activity/capture/hooks.ts";
 import { levelFromXp } from "../plugins/xp/leveling.ts";
 import { randomInt } from "./util.ts";
 
@@ -60,5 +61,6 @@ export function addCredits(userId: string, amount: number): number {
     .where(eq(schema.members.userId, userId))
     .returning()
     .get();
+  captureCredit(userId, amount, row.socialCredits);
   return row.socialCredits;
 }
