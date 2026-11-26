@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { db, initDb, schema } from "../../db/index.ts";
+import { notExcluded } from "./exclusion.ts";
 import { extractMessageFacts } from "./facts.ts";
 import type { MessageFacts } from "./facts.ts";
 import {
@@ -320,6 +321,110 @@ test("a reaction in an excluded channel is not recorded", () => {
   setExcluded("c1");
   recordReactionAdd(reaction({ channelId: "c1" }));
   expect(reactions()).toHaveLength(0);
+});
+
+test("a reaction in a thread whose parent channel is excluded is not recorded", () => {
+  setExcluded("c1");
+  recordReactionAdd(reaction({ channelId: "t1", parentChannelId: "c1" }));
+  expect(reactions()).toHaveLength(0);
+});
+
+test("a reaction row carries the parent channel of its thread", () => {
+  recordReactionAdd(reaction({ channelId: "t1", parentChannelId: "c2" }));
+  recordReactionAdd(reaction({ messageId: "m2", channelId: "c2", parentChannelId: null }));
+  recordReactionAdd(reaction({ messageId: "m3", channelId: "c2" }));
+  expect(reactions()).toMatchObject([
+    { messageId: "m1", channelId: "t1", parentChannelId: "c2" },
+    { messageId: "m2", channelId: "c2", parentChannelId: null },
+    { messageId: "m3", channelId: "c2", parentChannelId: null },
+  ]);
+});
+
+test("a later add fills in a parent channel that was unknown", () => {
+  recordReactionAdd(reaction({ channelId: "t1" }));
+  expect(reactions()[0]?.parentChannelId).toBeNull();
+  recordReactionAdd(reaction({ channelId: "t1", parentChannelId: "c2" }));
+  expect(reactions()[0]?.parentChannelId).toBe("c2");
+  recordReactionAdd(reaction({ channelId: "t1" }));
+  expect(reactions()[0]?.parentChannelId).toBe("c2");
+});
+
+// --- threads under a channel that is excluded later ---------------------------
+
+test("mention and emoji rows of a thread message carry its parent channel", () => {
+  recordMessage(
+    facts({
+      channelId: "t1",
+      parentChannelId: "c1",
+      mentionedUserIds: ["u2", "u3"],
+      emoji: [
+        { emoji: "🙂", name: null, count: 1 },
+        { emoji: "custom:123", name: "pog", count: 2 },
+      ],
+    }),
+  );
+  recordMessage(
+    facts({
+      messageId: "m2",
+      mentionedUserIds: ["u2"],
+      emoji: [{ emoji: "🙂", name: null, count: 1 }],
+    }),
+  );
+
+  expect(mentions()).toMatchObject([
+    { messageId: "m1", toUserId: "u2", channelId: "t1", parentChannelId: "c1" },
+    { messageId: "m1", toUserId: "u3", channelId: "t1", parentChannelId: "c1" },
+    { messageId: "m2", toUserId: "u2", channelId: "c2", parentChannelId: null },
+  ]);
+  expect(emoji()).toMatchObject([
+    { messageId: "m1", emoji: "🙂", channelId: "t1", parentChannelId: "c1" },
+    { messageId: "m1", emoji: "custom:123", channelId: "t1", parentChannelId: "c1" },
+    { messageId: "m2", emoji: "🙂", channelId: "c2", parentChannelId: null },
+  ]);
+});
+
+test("excluding a parent channel later hides the mention, emoji and reaction rows of its threads", () => {
+  const busy = { mentionedUserIds: ["u2"], emoji: [{ emoji: "🙂", name: null, count: 1 }] };
+  // m-thread is in thread t1 under c1; m-open is in thread t2 under c2; m-plain is in c2 itself.
+  recordMessage(facts({ ...busy, messageId: "m-thread", channelId: "t1", parentChannelId: "c1" }));
+  recordMessage(facts({ ...busy, messageId: "m-open", channelId: "t2", parentChannelId: "c2" }));
+  recordMessage(facts({ ...busy, messageId: "m-plain" }));
+  recordReactionAdd(reaction({ messageId: "m-thread", channelId: "t1", parentChannelId: "c1" }));
+  recordReactionAdd(reaction({ messageId: "m-open", channelId: "t2", parentChannelId: "c2" }));
+  recordReactionAdd(reaction({ messageId: "m-plain" }));
+
+  /** The message ids each table still shows through `notExcluded`, sorted. */
+  const visible = () => ({
+    mentions: db
+      .select({ messageId: schema.activityMentions.messageId })
+      .from(schema.activityMentions)
+      .where(notExcluded(schema.activityMentions.channelId, schema.activityMentions.parentChannelId))
+      .all()
+      .map((row) => row.messageId)
+      .sort(),
+    emoji: db
+      .select({ messageId: schema.activityEmoji.messageId })
+      .from(schema.activityEmoji)
+      .where(notExcluded(schema.activityEmoji.channelId, schema.activityEmoji.parentChannelId))
+      .all()
+      .map((row) => row.messageId)
+      .sort(),
+    reactions: db
+      .select({ messageId: schema.activityReactions.messageId })
+      .from(schema.activityReactions)
+      .where(notExcluded(schema.activityReactions.channelId, schema.activityReactions.parentChannelId))
+      .all()
+      .map((row) => row.messageId)
+      .sort(),
+  });
+
+  const all = ["m-open", "m-plain", "m-thread"];
+  expect(visible()).toEqual({ mentions: all, emoji: all, reactions: all });
+
+  // The rows are already written. Excluding the parent must still hide them.
+  setExcluded("c1");
+  const open = ["m-open", "m-plain"];
+  expect(visible()).toEqual({ mentions: open, emoji: open, reactions: open });
 });
 
 // --- voice -------------------------------------------------------------------

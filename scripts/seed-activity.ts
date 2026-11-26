@@ -395,6 +395,7 @@ function seedMessages(): void {
           emoji: emoji!.emoji,
           name: emoji!.name,
           channelId: channel.id,
+          parentChannelId: channel.parentId,
           messageAuthorId: user.id,
           ts: addedAt,
         });

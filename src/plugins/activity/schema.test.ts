@@ -78,7 +78,7 @@ test("schema inserts and reads back one row per activity table", () => {
     })
     .run();
   expect(db.select().from(schema.activityMentions).all()).toMatchObject([
-    { messageId: "m-roundtrip", fromUserId: "u1", toUserId: "u2", channelId: "c1" },
+    { messageId: "m-roundtrip", fromUserId: "u1", toUserId: "u2", channelId: "c1", parentChannelId: null },
   ]);
 
   db.insert(schema.activityEmoji)
@@ -93,7 +93,13 @@ test("schema inserts and reads back one row per activity table", () => {
     })
     .run();
   expect(db.select().from(schema.activityEmoji).all()).toMatchObject([
-    { messageId: "m-roundtrip", emoji: "custom:123456789012345678", name: "blobwave", count: 2 },
+    {
+      messageId: "m-roundtrip",
+      parentChannelId: null,
+      emoji: "custom:123456789012345678",
+      name: "blobwave",
+      count: 2,
+    },
   ]);
 
   db.insert(schema.activityReactions)
@@ -114,6 +120,7 @@ test("schema inserts and reads back one row per activity table", () => {
       userId: "u2",
       emoji: "★",
       name: null,
+      parentChannelId: null,
       messageAuthorId: "u1",
       addedAt: 1_800_000_100,
       removedAt: null,
@@ -245,6 +252,49 @@ test("schema inserts and reads back one row per activity table", () => {
   expect(db.select().from(schema.activityWrappedOptins).all()).toMatchObject([
     { userId: "u1", optedInAt: 1_800_000_000 },
   ]);
+});
+
+test("mention, emoji and reaction rows of a thread message keep its parent channel", () => {
+  // Thread t1 under channel c1.
+  db.insert(schema.activityMentions)
+    .values({
+      messageId: "m-thread",
+      ts: 1_800_000_000,
+      fromUserId: "u1",
+      toUserId: "u2",
+      channelId: "t1",
+      parentChannelId: "c1",
+    })
+    .run();
+  db.insert(schema.activityEmoji)
+    .values({
+      messageId: "m-thread",
+      ts: 1_800_000_000,
+      userId: "u1",
+      channelId: "t1",
+      parentChannelId: "c1",
+      emoji: "custom:123",
+      name: "pog",
+      count: 1,
+    })
+    .run();
+  db.insert(schema.activityReactions)
+    .values({
+      messageId: "m-thread",
+      userId: "u2",
+      emoji: "custom:123",
+      name: "pog",
+      channelId: "t1",
+      parentChannelId: "c1",
+      messageAuthorId: "u1",
+      addedAt: 1_800_000_100,
+    })
+    .run();
+
+  const thread = { messageId: "m-thread", channelId: "t1", parentChannelId: "c1" };
+  expect(db.select().from(schema.activityMentions).all()).toMatchObject([thread]);
+  expect(db.select().from(schema.activityEmoji).all()).toMatchObject([thread]);
+  expect(db.select().from(schema.activityReactions).all()).toMatchObject([thread]);
 });
 
 test("activityMessages.messageId is unique", () => {

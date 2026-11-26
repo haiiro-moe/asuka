@@ -27,6 +27,10 @@ import type { MessageFacts } from "./facts.ts";
  * distinct emoji, in a single transaction, so a message is stored whole or not
  * at all.
  *
+ * The mention and emoji rows carry the message's `channelId` and
+ * `parentChannelId`, so a query on those tables can filter excluded channels
+ * (`notExcluded(channelId, parentChannelId)`) without joining the message.
+ *
  * @param f - The facts, from `extractMessageFacts`.
  * @returns True when the message was written. False, with nothing written, when
  *   the message is already recorded (same `messageId`) or its channel, or the
@@ -70,6 +74,7 @@ export function recordMessage(f: MessageFacts): boolean {
             fromUserId: f.userId,
             toUserId,
             channelId: f.channelId,
+            parentChannelId: f.parentChannelId,
           })),
         )
         .onConflictDoNothing()
@@ -84,6 +89,7 @@ export function recordMessage(f: MessageFacts): boolean {
             ts: f.ts,
             userId: f.userId,
             channelId: f.channelId,
+            parentChannelId: f.parentChannelId,
             emoji: e.emoji,
             name: e.name,
             count: e.count,
@@ -103,11 +109,13 @@ export function recordMessage(f: MessageFacts): boolean {
  * There is one row per (`messageId`, `userId`, `emoji`). Adding a reaction that
  * is already recorded keeps that row: `removedAt` is cleared, so re-adding after
  * a removal makes the reaction count again, and `addedAt` stays the time of the
- * first add. A message author that was unknown before is filled in.
+ * first add. A message author or a parent channel that was unknown before is
+ * filled in.
  *
- * Nothing is written when `channelId` is excluded. For a reaction in a thread
- * the caller must also check the parent channel (`isExcluded(threadId,
- * parentId)`), which this function is not given.
+ * Nothing is written when the channel, or the parent channel of its thread, is
+ * excluded. Pass `parentChannelId` for a reaction in a thread: without it a
+ * thread under an excluded channel is not recognised, now or when the channel
+ * is excluded later.
  *
  * @param r - The reaction.
  * @param r.messageId - The message reacted to.
@@ -116,6 +124,8 @@ export function recordMessage(f: MessageFacts): boolean {
  *   itself (without U+FE0F) or `custom:<id>`.
  * @param r.name - The custom emoji's name; null for a unicode emoji.
  * @param r.channelId - The channel, or the thread, the message is in.
+ * @param r.parentChannelId - The parent channel when `channelId` is a thread;
+ *   null or left out otherwise.
  * @param r.messageAuthorId - Author of the message reacted to; null when unknown.
  * @param r.ts - When the reaction was added, in unix seconds.
  */
@@ -125,10 +135,12 @@ export function recordReactionAdd(r: {
   emoji: string;
   name: string | null;
   channelId: string;
+  parentChannelId?: string | null;
   messageAuthorId: string | null;
   ts: number;
 }): void {
-  if (isExcluded(r.channelId)) return;
+  const parentChannelId = r.parentChannelId ?? null;
+  if (isExcluded(r.channelId, parentChannelId)) return;
 
   db.insert(schema.activityReactions)
     .values({
@@ -137,6 +149,7 @@ export function recordReactionAdd(r: {
       emoji: r.emoji,
       name: r.name,
       channelId: r.channelId,
+      parentChannelId,
       messageAuthorId: r.messageAuthorId,
       addedAt: r.ts,
       removedAt: null,
@@ -149,6 +162,7 @@ export function recordReactionAdd(r: {
       ],
       set: {
         removedAt: null,
+        parentChannelId: sql`coalesce(${schema.activityReactions.parentChannelId}, excluded.parent_channel_id)`,
         messageAuthorId: sql`coalesce(${schema.activityReactions.messageAuthorId}, excluded.message_author_id)`,
       },
     })

@@ -17,7 +17,8 @@ write API that every row goes through, the seed script and how the plugin is lai
 
 ## Tables
 
-All are defined in `src/db/schema.ts` and created by migration `0016`.
+All are defined in `src/db/schema.ts` and created by migration `0016`. Migration `0017` adds
+`parent_channel_id` to `activity_mentions`, `activity_emoji` and `activity_reactions`.
 
 ### Event log
 
@@ -65,6 +66,11 @@ same message, so they insert with `onConflictDoNothing()` and a message is never
   session). They are the time the thing happened, which for a backfilled row is not now.
   Bookkeeping timestamps (`updatedAt`, `createdAt`, `optedInAt`, a run's `startedAt`) default to
   the current time. `updatedAt` is not maintained by SQLite: set it on every update.
+- **Rows that belong to a message carry its channel and its parent channel.** `activityMessages`,
+  `activityMentions`, `activityEmoji` and `activityReactions` all have `channelId` and a nullable
+  `parentChannelId`, which is the parent of the thread the message is in and null outside a
+  thread. A query on any of them filters with `notExcluded(channelId, parentChannelId)` and needs
+  no join, and a thread under a channel that is excluded later disappears with it.
 - **`emoji` identifies the emoji**: the unicode emoji itself, or `custom:<id>` for a custom emoji.
   It is `ParsedEmoji.emoji` stored verbatim (see "Emoji keys" below). `name` is the custom emoji's
   name and is null for unicode emoji.
@@ -144,8 +150,9 @@ Anything else, the empty string included, throws `RangeError`. A route catches i
   parent channel for a thread: a thread under an excluded channel is excluded too.
 - `notExcluded(channelColumn, parentColumn?)` is the Drizzle filter for queries. Combine it with
   the other conditions through `and(...)`, and pass the parent-channel column on tables that have
-  one (`activityMessages.parentChannelId`), or threads under an excluded channel stay visible. It
-  is true for every row when the list is empty, and a null column never counts as excluded.
+  one (`parentChannelId` on `activityMessages`, `activityMentions`, `activityEmoji` and
+  `activityReactions`), or threads under an excluded channel stay visible. It is true for every
+  row when the list is empty, and a null column never counts as excluded.
 
 All three read the config when called, so a channel excluded today drops out of the next query
 even though its rows are still in the log. Call them inside the query or handler, never at module
@@ -208,8 +215,8 @@ seed script call them; nothing else inserts into those tables.
 
 | Function | Writes |
 |---|---|
-| `recordMessage(facts): boolean` | The message row, one `activity_mentions` row per mentioned user and one `activity_emoji` row per distinct emoji, in one transaction. Returns false, with nothing written, when the message is already recorded or its channel (or its thread's parent) is excluded. |
-| `recordReactionAdd({ messageId, userId, emoji, name, channelId, messageAuthorId, ts })` | One row per member, emoji and message. Adding it again keeps the row and clears `removedAt`. |
+| `recordMessage(facts): boolean` | The message row, one `activity_mentions` row per mentioned user and one `activity_emoji` row per distinct emoji, in one transaction. The mention and emoji rows get the message's `channelId` and `parentChannelId`. Returns false, with nothing written, when the message is already recorded or its channel (or its thread's parent) is excluded. |
+| `recordReactionAdd({ messageId, userId, emoji, name, channelId, parentChannelId?, messageAuthorId, ts })` | One row per member, emoji and message. Adding it again keeps the row and clears `removedAt`. `parentChannelId` is optional: pass it for a reaction in a thread. |
 | `recordReactionRemove(messageId, userId, emoji, ts)` | Stamps `removedAt` on the live row. Nothing happens when the reaction was never recorded. |
 | `recordMembership(userId, kind, ts)` | A `join` or a `leave`. |
 | `openVoiceSegment(userId, snapshot, ts)` | A new open voice segment (`endedAt` null, `lastSeenAt` = `ts`). |
@@ -235,10 +242,13 @@ Details that matter to a caller:
   `custom:<id>`, with `name` set for a custom emoji only. Build it the way `parseEmoji` does, or
   text use and reaction use of one emoji will not add up.
 - **Re-adding a reaction keeps the first `addedAt`.** Only `removedAt` is cleared. A message author
-  that was unknown (null) is filled in by a later add that knows it.
-- **Excluded channels.** `recordMessage` checks the channel and the thread's parent.
-  `recordReactionAdd` and `openVoiceSegment` only get a channel id, so they check that one id: for
-  a reaction in a thread the caller checks the parent with `isExcluded(threadId, parentId)` first.
+  or a parent channel that was unknown (null) is filled in by a later add that knows it.
+- **Excluded channels.** `recordMessage` and `recordReactionAdd` check the channel and the
+  thread's parent (`isExcluded(channelId, parentChannelId)`) and write nothing when either is
+  excluded. `openVoiceSegment` checks its voice channel.
+- **Pass `parentChannelId` to `recordReactionAdd` for a reaction in a thread.** It is stored on the
+  row. Without it the reaction is recorded even though the thread's parent is excluded, and
+  `notExcluded` cannot hide it when the parent is excluded later.
 - **A voice segment is one stretch with nothing changing**: one member, one channel, one set of
   flags (`VoiceSnapshot`: `channelId`, `muted`, `deafened`, `streaming`, `video`). A channel move or
   a mute toggle is a close followed by an open at the same second.

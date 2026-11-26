@@ -605,6 +605,12 @@ export const activityMentions = sqliteTable(
     fromUserId: text("from_user_id").notNull(),
     toUserId: text("to_user_id").notNull(),
     channelId: text("channel_id").notNull(),
+    /**
+     * Parent channel when the message is in a thread; null otherwise. Copied
+     * from the message so that excluding a channel also hides the rows of its
+     * threads (`notExcluded(channelId, parentChannelId)`).
+     */
+    parentChannelId: text("parent_channel_id"),
   },
   (t) => [
     uniqueIndex("activity_mentions_message_to_uq").on(t.messageId, t.toUserId),
@@ -625,6 +631,12 @@ export const activityEmoji = sqliteTable(
     ts: integer("ts").notNull(),
     userId: text("user_id").notNull(),
     channelId: text("channel_id").notNull(),
+    /**
+     * Parent channel when the message is in a thread; null otherwise. Copied
+     * from the message so that excluding a channel also hides the rows of its
+     * threads (`notExcluded(channelId, parentChannelId)`).
+     */
+    parentChannelId: text("parent_channel_id"),
     /**
      * The emoji's identity, `ParsedEmoji.emoji` stored as is: the unicode emoji
      * itself (without U+FE0F), or `custom:<id>` for a custom emoji.
@@ -660,6 +672,12 @@ export const activityReactions = sqliteTable(
     /** Custom emoji name; null for unicode emoji. */
     name: text("name"),
     channelId: text("channel_id").notNull(),
+    /**
+     * Parent channel when the reacted-to message is in a thread; null
+     * otherwise. Kept on the row so that excluding a channel also hides the
+     * reactions in its threads (`notExcluded(channelId, parentChannelId)`).
+     */
+    parentChannelId: text("parent_channel_id"),
     /** Author of the reacted-to message, when known (for "most reacted"). */
     messageAuthorId: text("message_author_id"),
     addedAt: integer("added_at").notNull(),
