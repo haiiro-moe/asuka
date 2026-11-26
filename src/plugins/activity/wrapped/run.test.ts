@@ -277,13 +277,71 @@ test("resendWrappedDm retries a failed link", async () => {
   expect(await resendWrappedDm(fakeCtx(open.client), "nobody", YEAR)).toBe("no-link");
 });
 
-test("resendWrappedDm sends to a member who has not opted in when an admin asks", async () => {
+test("resendWrappedDm refuses a member who has not opted in", async () => {
   active("u1");
   const { client, log } = fakeClient();
   await run(fakeCtx(client));
   expect(memberDms(log).length).toBe(0);
-  expect(await resendWrappedDm(fakeCtx(client), "u1", YEAR)).toBe("sent");
+  expect(await resendWrappedDm(fakeCtx(client), "u1", YEAR)).toBe("not-opted-in");
+  expect(memberDms(log).length).toBe(0);
+  expect(links().get("u1")!.dmStatus).toBe("skipped");
+});
+
+test("resendWrappedDm refuses a link already sent, and the sent counter never counts twice", async () => {
+  active("u1");
+  setOptIn("u1", true);
+  const { client, log } = fakeClient();
+  await run(fakeCtx(client));
+  expect(getWrappedStatus().sent).toBe(1);
+  expect(await resendWrappedDm(fakeCtx(client), "u1", YEAR)).toBe("already-sent");
   expect(memberDms(log).length).toBe(1);
+  expect(getWrappedStatus().sent).toBe(1);
+});
+
+test("resendWrappedDm refuses a member who left", async () => {
+  active("u1");
+  setOptIn("u1", true);
+  const closed = fakeClient({ closedDms: ["u1"] });
+  await run(fakeCtx(closed.client));
+  recordMembership("u1", "leave", nowSec());
+  const open = fakeClient();
+  expect(await resendWrappedDm(fakeCtx(open.client), "u1", YEAR)).toBe("left");
+  expect(open.log.dms.length).toBe(0);
+});
+
+test("resendWrappedDm refuses while a send is running for the year", async () => {
+  active("u1", "u2");
+  setOptIn("u1", true);
+  setOptIn("u2", true);
+  const closed = fakeClient({ closedDms: ["u1"] });
+  await run(fakeCtx(closed.client));
+  expect(links().get("u1")!.dmStatus).toBe("failed");
+  // A second send is running when the resend is asked for.
+  const slow = fakeClient();
+  const ctx = fakeCtx(slow.client);
+  expect(startWrappedSend(ctx, { startedBy: "admin", announce: false })).toBe("started");
+  expect(await resendWrappedDm(ctx, "u1", YEAR)).toBe("sending");
+  await waitForWrappedRun();
+  expect(memberDms(slow.log).map((d) => d.userId)).toEqual(["u1"]);
+});
+
+test("sendLinks re-reads each link: one flipped to sent mid-loop is skipped and not counted", async () => {
+  active("u1", "u2", "u3");
+  for (const u of ["u1", "u2", "u3"]) setOptIn(u, true);
+  const { client: first } = fakeClient();
+  await processYear(fakeCtx(first));
+  const flip = (userId: string) =>
+    db.update(schema.activityWrappedLinks)
+      .set({ dmStatus: "sent" })
+      .where(and(eq(schema.activityWrappedLinks.userId, userId), eq(schema.activityWrappedLinks.year, YEAR)))
+      .run();
+  // While u1's DM goes out, u2's link is marked sent elsewhere.
+  const { client, log } = fakeClient({ onDm: (id) => id === "u1" && flip("u2") });
+  const status = await sendYear(fakeCtx(client));
+  expect(memberDms(log).map((d) => d.userId)).toEqual(["u1", "u3"]);
+  // The counter is the number of sent links: u2 once, never twice.
+  expect(status.sent).toBe(3);
+  expect(links().get("u2")!.dmStatus).toBe("sent");
 });
 
 /** A snapshot marker: a link holding it was not rebuilt. */

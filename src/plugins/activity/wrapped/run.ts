@@ -41,12 +41,12 @@ import { renderBotMessage } from "../../../core/messages.ts";
 import type { BotContext } from "../../../core/plugin.ts";
 import { nowSec } from "../../../core/util.ts";
 import { db, getConfig, schema } from "../../../db/index.ts";
-import type { WrappedRunStatus } from "../types/wrapped.ts";
+import type { WrappedResendResult, WrappedRunStatus } from "../types/wrapped.ts";
 import { withWrappedBanner } from "./banner.ts";
 import { voiceReadinessForYear } from "../voice-ready.ts";
 import { activeMemberIds, buildWrapped, leftMemberIds, wrappedShared } from "./data.ts";
 import type { WrappedShared } from "./data.ts";
-import { sendWrappedDm } from "./dm.ts";
+import { sendWrappedDmDetailed } from "./dm.ts";
 import { getWrappedLink, linkUrl, upsertWrappedLink } from "./links.ts";
 import { isOptedIn, optedInCount } from "./optin.ts";
 import {
@@ -356,20 +356,59 @@ export async function postAnnouncement(
   }
 }
 
+/** Links whose DM is being sent right now, as `userId:year`: by a send step or a resend. */
+const inFlight = new Set<string>();
+
+/** The {@link inFlight} key of a link. */
+function flightKey(userId: string, year: number): string {
+  return `${userId}:${year}`;
+}
+
+/** True while a real send step for `year` is running and not stale. */
+function sendRunning(year: number): boolean {
+  const r = schema.activityWrappedRuns;
+  const row = db.select().from(r).where(and(eq(r.year, year), eq(r.kind, "real"))).orderBy(desc(r.id)).limit(1).get();
+  return !!row && row.status === "sending" && !isStale(row);
+}
+
 /**
- * DM one member their link again, whether or not they opted in: an admin
- * asked for this member. The link's DM status and the latest run of that
- * year's counters are updated.
+ * DM one member their link again, because an admin asked for that member
+ * (the resend control on the failed-DM list).
+ *
+ * Only a link that has not been delivered may be resent: `failed`, or
+ * `pending`/`skipped` while no DM to it is in flight. A member's own
+ * `/wrapped me` is the way back to a link that was already delivered, and the
+ * admin's `open link` still shows any link.
+ *
+ * On success the run's `sent` counter is set to the number of sent links of
+ * the year (so a link is never counted twice) and `failed` drops by one when
+ * the link had failed.
  *
  * @param ctx - Bot context.
  * @param userId - The member.
  * @param year - The year of the link.
- * @returns `sent`, `failed`, or `no-link` when the member has no link that year.
+ * @returns `sent` or `failed` after an attempt; without one: `no-link` when the
+ *   member has no link that year, `left` when they have left the guild,
+ *   `not-opted-in` when they have not opted in to the DM, `already-sent` when
+ *   the link was delivered, `sending` while a send step runs for the year or
+ *   this link's DM is in flight.
  */
-export async function resendWrappedDm(ctx: BotContext, userId: string, year: number): Promise<"sent" | "failed" | "no-link"> {
+export async function resendWrappedDm(ctx: BotContext, userId: string, year: number): Promise<WrappedResendResult> {
   const link = getWrappedLink(userId, year);
   if (!link) return "no-link";
-  const result = await sendWrappedDm(ctx.client, userId, linkUrl(link.token), year);
+  if (leftMemberIds().has(userId)) return "left";
+  if (!isOptedIn(userId)) return "not-opted-in";
+  if (link.dmStatus === "sent") return "already-sent";
+  const key = flightKey(userId, year);
+  if (inFlight.has(key) || sendRunning(year)) return "sending";
+
+  inFlight.add(key);
+  let result: "sent" | "failed";
+  try {
+    result = (await deliverDm(ctx, userId, link.token, year)).status;
+  } finally {
+    inFlight.delete(key);
+  }
   setDmStatus(userId, year, result);
 
   const run = db
@@ -384,7 +423,7 @@ export async function resendWrappedDm(ctx: BotContext, userId: string, year: num
     const wasFailed = link.dmStatus === "failed";
     const set =
       result === "sent"
-        ? { sent: sql`${r.sent} + 1`, failed: wasFailed ? sql`max(0, ${r.failed} - 1)` : sql`${r.failed}` }
+        ? { sent: linkCount(year, "sent"), failed: wasFailed ? sql`max(0, ${r.failed} - 1)` : sql`${r.failed}` }
         : { failed: wasFailed ? sql`${r.failed}` : sql`${r.failed} + 1` };
     db.update(r).set(set).where(eq(r.id, run.id)).run();
   }
@@ -547,9 +586,26 @@ function resetForSending(year: number): void {
     .run();
 }
 
+/** A link's current DM status, read fresh. */
+function dmStatusOf(userId: string, year: number): RunLinkStatus | null {
+  const l = schema.activityWrappedLinks;
+  return (
+    db
+      .select({ dmStatus: l.dmStatus })
+      .from(l)
+      .where(and(eq(l.userId, userId), eq(l.year, year), eq(l.private, 0)))
+      .get()?.dmStatus ?? null
+  );
+}
+
 /**
  * DM every pending link of an opted-in member, one per `sendDelayMs`; mark the
  * pending links of the others skipped. Members who left are passed over.
+ *
+ * Each link is read again right before its DM: one that is no longer
+ * `pending` (a resend delivered it meanwhile) or whose DM is in flight
+ * elsewhere is skipped. After each DM the run's `sent` counter is set to the
+ * number of sent links of the year, so no link is ever counted twice.
  */
 async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Promise<void> {
   const left = leftMemberIds();
@@ -569,6 +625,8 @@ async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Pr
   let first = true;
   for (const link of pending) {
     if (left.has(link.userId)) continue;
+    const key = flightKey(link.userId, job.year);
+    if (inFlight.has(key) || dmStatusOf(link.userId, job.year) !== "pending") continue;
     if (!isOptedIn(link.userId)) {
       setDmStatus(link.userId, job.year, "skipped");
       updateRun(job.id, {});
@@ -576,15 +634,34 @@ async function sendLinks(ctx: BotContext, job: { id: number; year: number }): Pr
     }
     if (!first) await sleep(wrappedRunTiming.sendDelayMs);
     first = false;
-    const result = await sendWrappedDm(ctx.client, link.userId, linkUrl(link.token), job.year);
-    setDmStatus(link.userId, job.year, result);
+    // The pause may have let a resend in: read the link once more.
+    if (inFlight.has(key) || dmStatusOf(link.userId, job.year) !== "pending") continue;
+    inFlight.add(key);
+    let outcome: DmOutcome;
+    try {
+      outcome = await deliverDm(ctx, link.userId, link.token, job.year);
+    } finally {
+      inFlight.delete(key);
+    }
+    setDmStatus(link.userId, job.year, outcome.status);
     const r = schema.activityWrappedRuns;
-    updateRun(job.id, result === "sent" ? { sent: sql`${r.sent} + 1` } : { failed: sql`${r.failed} + 1` });
+    updateRun(job.id, outcome.status === "sent" ? { sent: linkCount(job.year, "sent") } : { failed: sql`${r.failed} + 1` });
   }
 }
 
+/** A link's DM status. */
+type RunLinkStatus = "pending" | "sent" | "failed" | "skipped";
+
+/** What one DM attempt came to. */
+type DmOutcome = Awaited<ReturnType<typeof sendWrappedDmDetailed>>;
+
+/** DM a member their link, with the failure kind (see `sendWrappedDmDetailed`). */
+function deliverDm(ctx: BotContext, userId: string, token: string, year: number): Promise<DmOutcome> {
+  return sendWrappedDmDetailed(ctx.client, userId, linkUrl(token), year);
+}
+
 /** Set a link's DM status. */
-function setDmStatus(userId: string, year: number, dmStatus: "pending" | "sent" | "failed" | "skipped"): void {
+function setDmStatus(userId: string, year: number, dmStatus: RunLinkStatus): void {
   db.update(schema.activityWrappedLinks)
     .set({ dmStatus })
     .where(

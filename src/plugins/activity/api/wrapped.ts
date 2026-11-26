@@ -8,6 +8,7 @@ import type {
   WrappedRunStartResponse,
   WrappedSendResponse,
   WrappedFailedList,
+  WrappedResendResponse,
   PreviewDiscardResponse,
   PreviewStartResponse,
   ServerWrappedResponse,
@@ -224,9 +225,10 @@ const resumeRun: ApiRoute = {
 
 /**
  * `POST /api/activity/wrapped/resend/:userId?year=` (admin): DM one member their
- * link, even if they have not opted in, because an admin asked for that member.
- * Year defaults to the latest run's. Responds `{ result: "sent" | "failed" }`,
- * or 404 `{ result: "no-link" }`.
+ * link again (a failed or not yet sent link of an opted-in member who is still
+ * here). Year defaults to the latest run's. Responds a
+ * {@link WrappedResendResponse}: 200 `sent` or `failed`, 404 `no-link`, 409
+ * `left`, `not-opted-in`, `already-sent` or `sending`.
  */
 const resend: ApiRoute = {
   method: "POST",
@@ -236,7 +238,9 @@ const resend: ApiRoute = {
     const year = yearParam(req);
     if (year === null) return error(400, "bad year");
     const result = await resendWrappedDm(ctx, ctx.params.userId!, year);
-    return Response.json({ result }, { status: result === "no-link" ? 404 : 200 });
+    const out: WrappedResendResponse = { result };
+    const status = result === "sent" || result === "failed" ? 200 : result === "no-link" ? 404 : 409;
+    return Response.json(out, { status });
   },
 };
 

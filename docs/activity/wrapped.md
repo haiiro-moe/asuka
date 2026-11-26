@@ -18,8 +18,8 @@ The tables (`activity_wrapped_runs`, `activity_wrapped_links`, `activity_wrapped
   admin who started it. DMs go out only in the send step, the announcement only in the send step
   (when asked) or the announce step.
 - **DMs go only to members who opted in** (`/wrapped optin` or the sign-up button). Processing makes
-  a link for every member with activity, but the send step writes only to opted-in members. The one
-  exception is an admin resending to one named member (`POST .../resend/:userId`).
+  a link for every member with activity, but the send step writes only to opted-in members, and so
+  does an admin's resend (`POST .../resend/:userId`), which refuses a member who is not opted in.
 - **A link shows only its holder's snapshot.** It is reusable: opening it counts the open and
   never deletes it. An unknown, truncated or other member's token gets a 404 and no data.
 - **Naming on the server story**: only the best pair (only when both opted in), the best club's
@@ -247,8 +247,16 @@ stored `announce`; the announcement stays once per year. Starting a new processi
 latest is interrupted marks the old one `failed` first. A failure in either step ends the run
 `failed` and posts `wrapped.run-failed` to the mod-log channel.
 
-`resendWrappedDm(ctx, userId, year)` DMs one member again (opted in or not), updates the link and
-the latest run of that year's counters, and returns `sent`, `failed` or `no-link`.
+`resendWrappedDm(ctx, userId, year)` DMs one member again, for the resend control on the failed
+list. It refuses without sending: `no-link` (no link that year), `left` (the member left),
+`not-opted-in`, `already-sent` (the link was delivered; the member's own `/wrapped me` is the way
+back to it, and the admin's `open link` still works) and `sending` (a send step runs for the year,
+or this link's DM is in flight). So only a `failed` link, or one not yet sent, is resent. On
+success the run's `sent` counter becomes the number of sent links of the year, so a link is never
+counted twice.
+
+The send step reads each link again right before its DM and skips one that is no longer `pending`
+or whose DM is in flight elsewhere (an in-process set shared with the resend).
 
 ## Sign-ups
 
@@ -320,7 +328,7 @@ The admin check is `isAdmin` (Administrator or Manage Server). The slow admin su
 | `POST /api/activity/wrapped/send` | admin | body `{ announce? }` (default true); 202 or 409 `WrappedSendResponse` |
 | `POST /api/activity/wrapped/announce` | admin | `WrappedAnnounceResponse` for the latest run's year: 200 posted, 502 failed (retry), 409 otherwise |
 | `POST /api/activity/wrapped/run/resume` | admin | 202 or 409 `WrappedResumeResponse` |
-| `POST /api/activity/wrapped/resend/:userId?year=` | admin | `{ result: "sent" \| "failed" }`, 404 `{ result: "no-link" }`; year defaults to the latest run's |
+| `POST /api/activity/wrapped/resend/:userId?year=` | admin | `WrappedResendResponse`: 200 `sent` or `failed`, 404 `no-link`, 409 `left`, `not-opted-in`, `already-sent` or `sending`; year defaults to the latest run's |
 | `GET /api/activity/wrapped/signup` | admin | `WrappedSignupState` (`year`, `posted`, `buttons`, `closed`, `optedIn`) |
 | `POST /api/activity/wrapped/signup-message` | admin | body `{ year?, buttons? }` (defaults: current UTC year, true); the new `WrappedSignupState`; 400 when no announcement channel is set or reachable |
 | `POST /api/activity/wrapped/signup/close` | admin | close sign-ups; the `WrappedSignupState` |

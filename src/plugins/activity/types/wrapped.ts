@@ -251,6 +251,19 @@ export interface WrappedResumeResponse {
   status: WrappedRunStatus;
 }
 
+/**
+ * What `POST /api/activity/wrapped/resend/:userId` did. `sent` and `failed`
+ * (200) are the outcome of a DM attempt; the others (404 for `no-link`, 409
+ * otherwise) refused without sending: the member has no link, has left, has not
+ * opted in, was already sent the link, or a send is running for the year.
+ */
+export type WrappedResendResult = "sent" | "failed" | "no-link" | "left" | "not-opted-in" | "already-sent" | "sending";
+
+/** `POST /api/activity/wrapped/resend/:userId`. */
+export interface WrappedResendResponse {
+  result: WrappedResendResult;
+}
+
 /** `POST /api/activity/wrapped/announce`. 200 when posted, 409 otherwise. */
 export interface WrappedAnnounceResponse {
   /** `no-channel`: no announcement channel is set; `failed`: it could not be reached or the post failed (retry). */
