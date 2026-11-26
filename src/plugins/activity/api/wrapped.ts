@@ -5,7 +5,7 @@ import type { ApiContext, ApiRoute, BotContext } from "../../../core/plugin.ts";
 import type { WrappedData, WrappedLinkResponse } from "../types/wrapped.ts";
 import { ensureWrappedLink, getLinkByToken, linkUrl, peekLinkByToken } from "../wrapped/links.ts";
 import { currentUtcYear, optedInCount, signupMessage } from "../wrapped/optin.ts";
-import { getWrappedStatus, resendWrappedDm, resumeWrappedRun, startWrappedRun } from "../wrapped/run.ts";
+import { getWrappedStatus, resendWrappedDm, resumeWrappedRun, runSendsDms, startWrappedRun } from "../wrapped/run.ts";
 
 /** Lowest and highest year a run or link may be asked for. */
 const MIN_YEAR = 2015;
@@ -56,26 +56,39 @@ async function memberInfo(ctx: BotContext, userId: string): Promise<{ name: stri
   return { name: user.displayName ?? user.username ?? null, avatarUrl };
 }
 
-/** A channel's name from the guild cache; null when unknown. */
-function channelName(ctx: BotContext, channelId: string | null): string | null {
-  if (!channelId) return null;
-  const channel = ctx.client.guilds.cache.get(ctx.guildId)?.channels.cache.get(channelId);
-  return channel?.name ?? null;
+/**
+ * A channel's plain name and, for a thread, its parent channel's name. Taken
+ * from the cache, else fetched (an archived thread is often not cached).
+ *
+ * @returns Nulls when the id is null or the channel is unknown.
+ */
+async function channelNames(
+  ctx: BotContext,
+  channelId: string | null,
+): Promise<{ name: string | null; parentName: string | null }> {
+  if (!channelId) return { name: null, parentName: null };
+  const cached = ctx.client.guilds.cache.get(ctx.guildId)?.channels.cache.get(channelId);
+  const channel = cached ?? (await ctx.client.channels.fetch(channelId).catch(() => null));
+  if (!channel || !("name" in channel)) return { name: null, parentName: null };
+  const isThread = typeof channel.isThread === "function" && channel.isThread();
+  return { name: channel.name ?? null, parentName: isThread ? (channel.parent?.name ?? null) : null };
 }
 
 /** The public response for a link: the snapshot plus display names resolved now. */
 async function linkResponse(ctx: BotContext, userId: string, data: WrappedData): Promise<WrappedLinkResponse> {
-  const [self, friend, repliedTo] = await Promise.all([
+  const [self, friend, repliedTo, channel] = await Promise.all([
     memberInfo(ctx, userId),
     data.closestFriendId ? memberInfo(ctx, data.closestFriendId) : null,
     data.mostRepliedToId ? memberInfo(ctx, data.mostRepliedToId) : null,
+    channelNames(ctx, data.topChannelId),
   ]);
   return {
     data,
     displayName: self.name ?? "you",
     closestFriendName: friend?.name ?? null,
     mostRepliedToName: repliedTo?.name ?? null,
-    topChannelName: channelName(ctx, data.topChannelId),
+    topChannelName: channel.name,
+    topChannelParentName: channel.parentName,
   };
 }
 
@@ -111,7 +124,9 @@ const postRun: ApiRoute = {
 
 /**
  * `POST /api/activity/wrapped/run/resume` (admin): continue an interrupted run.
- * Responds 202 `{ result: "resumed", status }` or 409 `{ result: "nothing-to-resume", status }`.
+ * Responds 202 `{ result: "resumed", sendDms, status }` or 409
+ * `{ result: "nothing-to-resume", sendDms, status }`; `sendDms` says whether DMs
+ * follow (null when no run exists).
  */
 const resumeRun: ApiRoute = {
   method: "POST",
@@ -119,7 +134,9 @@ const resumeRun: ApiRoute = {
   access: "admin",
   handle(_req, ctx) {
     const result = resumeWrappedRun(ctx);
-    return Response.json({ result, status: getWrappedStatus() }, { status: result === "resumed" ? 202 : 409 });
+    const status = getWrappedStatus();
+    const sendDms = status.id === null ? null : runSendsDms(status.id);
+    return Response.json({ result, sendDms, status }, { status: result === "resumed" ? 202 : 409 });
   },
 };
 

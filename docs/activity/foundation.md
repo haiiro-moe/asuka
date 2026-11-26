@@ -18,7 +18,9 @@ write API that every row goes through, the seed script and how the plugin is lai
 ## Tables
 
 All are defined in `src/db/schema.ts` and created by migration `0016`. Migration `0017` adds
-`parent_channel_id` to `activity_mentions`, `activity_emoji` and `activity_reactions`.
+`parent_channel_id` to `activity_mentions`, `activity_emoji` and `activity_reactions`. Migration
+`0018` adds `send_dms` to `activity_wrapped_runs` and `processed_run_id` to
+`activity_wrapped_links`.
 
 ### Event log
 
@@ -38,8 +40,8 @@ All are defined in `src/db/schema.ts` and created by migration `0016`. Migration
 | Export | SQL table | One row per | Purpose |
 |---|---|---|---|
 | `activityBackfill` | `activity_backfill` | channel or thread | Backfill cursor. `beforeId` is where to continue, `doneAt` marks the message pass finished, `reactionsDoneAt` the optional reaction pass. |
-| `activityWrappedRuns` | `activity_wrapped_runs` | Wrapped run | A run's status (`processing`, `sending`, `done`, `failed`) and its progress counters. |
-| `activityWrappedLinks` | `activity_wrapped_links` | member and year | The member's personal link: its token, the JSON snapshot of their year, the DM status and how often the link was opened. |
+| `activityWrappedRuns` | `activity_wrapped_runs` | Wrapped run | A run's status (`processing`, `sending`, `done`, `failed`), whether it DMs the links (`sendDms`, 1 or 0) and its progress counters. |
+| `activityWrappedLinks` | `activity_wrapped_links` | member and year | The member's personal link: its token, the JSON snapshot of their year, the DM status, how often the link was opened, and the run that last built the snapshot (`processedRunId`, so a resumed run knows who is left). |
 | `activityWrappedOptins` | `activity_wrapped_optins` | opted-in member | Members who want their Wrapped link by DM. |
 
 ### Keys and indexes

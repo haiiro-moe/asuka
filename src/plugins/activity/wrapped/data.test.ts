@@ -129,16 +129,26 @@ test("topEmoji is capped at 3 and merges text and reaction use", () => {
   ]);
 });
 
-test("busiest hour, weekday and channel; a thread counts for its parent", () => {
+test("busiest hour, weekday and channel", () => {
   // 2026-03-02 is a Monday, 2026-03-03 a Tuesday.
-  recordMessage(msg("u1", at("2026-03-02T22:10:00Z"), { channelId: "t1", parentChannelId: "c5" }));
-  recordMessage(msg("u1", at("2026-03-03T22:20:00Z"), { channelId: "t2", parentChannelId: "c5" }));
+  recordMessage(msg("u1", at("2026-03-02T22:10:00Z"), { channelId: "c5" }));
+  recordMessage(msg("u1", at("2026-03-03T22:20:00Z"), { channelId: "c5" }));
   recordMessage(msg("u1", at("2026-03-03T08:00:00Z"), { channelId: "c6" }));
 
   const data = buildWrapped("u1", 2026)!;
   expect(data.busiestHour).toBe(22);
   expect(data.busiestDay).toBe("tuesday");
   expect(data.topChannelId).toBe("c5");
+});
+
+test("a thread is a channel of its own: the most active thread is the top channel", () => {
+  const t = at("2026-03-02T12:00:00Z");
+  // Three messages in thread t1 under c5, two in c5 itself, two in another thread t2 of c5.
+  for (let i = 0; i < 3; i++) recordMessage(msg("u1", t + i, { channelId: "t1", parentChannelId: "c5" }));
+  for (let i = 0; i < 2; i++) recordMessage(msg("u1", t + 10 + i, { channelId: "c5" }));
+  for (let i = 0; i < 2; i++) recordMessage(msg("u1", t + 20 + i, { channelId: "t2", parentChannelId: "c5" }));
+
+  expect(buildWrapped("u1", 2026)!.topChannelId).toBe("t1");
 });
 
 test("voice hours are clipped to the year", () => {

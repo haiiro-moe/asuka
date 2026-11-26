@@ -6,7 +6,7 @@ import type { BotContext, Command } from "../../../core/plugin.ts";
 import type { WrappedRunStatus } from "../types/wrapped.ts";
 import { ensureWrappedLink, getWrappedLink, linkUrl } from "./links.ts";
 import { applyOptInChoice, currentUtcYear } from "./optin.ts";
-import { getWrappedStatus, resumeWrappedRun, startWrappedRun } from "./run.ts";
+import { getWrappedStatus, resumeWrappedRun, runSendsDms, startWrappedRun } from "./run.ts";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -128,7 +128,8 @@ function resume(interaction: ChatInputCommandInteraction, ctx: BotContext) {
   if (resumeWrappedRun(ctx) === "nothing-to-resume") {
     return ack(interaction, Accent.warning, "nothing to resume", ["no run is interrupted."]);
   }
-  return ack(interaction, Accent.success, "run resumed", [`» continuing from ${before.processed} of ${before.total}.`]);
+  const dms = before.id !== null && runSendsDms(before.id) ? "» dms: opted-in members only" : "» dms: none, links only";
+  return ack(interaction, Accent.success, "run resumed", [`» continuing from ${before.processed} of ${before.total}.`, dms]);
 }
 
 /**

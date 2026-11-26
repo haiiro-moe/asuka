@@ -115,20 +115,22 @@ export function getWrappedLink(
  * Create a member's link for a year, or refresh its snapshot.
  *
  * An existing link keeps its token, its DM status and its open count; only the
- * snapshot is replaced.
+ * snapshot is replaced (and `processedRunId`, when a run passes one).
  *
  * @param userId - The member.
  * @param year - The year.
  * @param data - The snapshot, from {@link buildWrapped}.
+ * @param processedRunId - The run that built the snapshot. Left out (an admin
+ *   preview, `/wrapped me`), a new link gets null and an existing one keeps its value.
  * @returns The link's token.
  */
-export function upsertWrappedLink(userId: string, year: number, data: WrappedData): string {
+export function upsertWrappedLink(userId: string, year: number, data: WrappedData, processedRunId?: number): string {
   const json = JSON.stringify(data);
   db.insert(schema.activityWrappedLinks)
-    .values({ userId, year, token: newToken(), data: json, createdAt: nowSec() })
+    .values({ userId, year, token: newToken(), data: json, createdAt: nowSec(), processedRunId: processedRunId ?? null })
     .onConflictDoUpdate({
       target: [schema.activityWrappedLinks.userId, schema.activityWrappedLinks.year],
-      set: { data: json },
+      set: processedRunId === undefined ? { data: json } : { data: json, processedRunId },
     })
     .run();
   return getWrappedLink(userId, year)!.token;

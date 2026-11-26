@@ -34,7 +34,7 @@ src/plugins/activity/
     links.ts            newToken, linkUrl, getLinkByToken, peekLinkByToken, upsertWrappedLink,
                         ensureWrappedLink, getWrappedLink
     run.ts              startWrappedRun, resumeWrappedRun, getWrappedStatus, resendWrappedDm,
-                        waitForWrappedRun, wrappedRunTiming
+                        runSendsDms, waitForWrappedRun, wrappedRunTiming
     dm.ts               sendWrappedDm, wrappedDmPayload
     optin.ts            isOptedIn, setOptIn, optedInCount, applyOptInChoice, signupMessage
     banner.ts           the "wrapped <year>" title banner added above the sign-up and DM text
@@ -57,7 +57,7 @@ reaction or voice time that year. It reads only the member's own rows:
 | `topEmoji` | up to 3: emoji in their message text plus reactions they added and did not remove, merged by emoji key |
 | `busiestHour` | UTC hour (0-23) with most messages |
 | `busiestDay` | UTC weekday with most messages, lowercase (`tuesday`) |
-| `topChannelId` | channel with most messages; a thread counts for its parent |
+| `topChannelId` | channel with most messages; a thread counts as a channel of its own (the public response adds its parent's name) |
 | `mostRepliedToId` | who they replied to most (never themselves) |
 | `closestFriendId` | the counterpart with the highest weight: 1 per reply they sent, 1 per mention they sent, 1 per 10 minutes (`VOICE_OVERLAP_SECONDS_PER_POINT`) in the same voice channel at the same time |
 | `xpLevel` | their current level from `members` |
@@ -87,8 +87,9 @@ once and works in the background:
 
 1. **processing**: the member list is every member with activity that year whose latest
    membership change is not a leave (`activeMemberIds`, sorted by id; `total` is set before
-   returning). Each member's snapshot is built and their link upserted. `processed` and
-   `updatedAt` are saved after every member.
+   returning). Each member's snapshot is built and their link upserted and stamped with the run
+   id (`processedRunId`). `processed` and `updatedAt` are saved after every member. The run's
+   `sendDms` choice is stored on its row.
 2. **sending** (only with `sendDms`): failed and skipped links of the year go back to pending, so a
    member who opted in since the last run, or whose DM failed, is tried again; links already sent
    are not. Each pending link of an opted-in member is DM'd, one per second
@@ -103,13 +104,13 @@ of that year marked skipped) and `optedIn` (current opt-ins) are read from the l
 tables. A `processing` or `sending` run not updated for more than 120 seconds, and not running in
 this process, reports `interrupted`.
 
-`resumeWrappedRun(ctx)` continues an interrupted run: during processing, from position
-`processed` in the (recomputed) member list; during sending, the links still pending. Starting a
+`resumeWrappedRun(ctx)` continues an interrupted run. During processing it takes a fresh member
+list and processes every member whose link this run has not processed (`processedRunId` is not the
+run's id), so a member who became active meanwhile is included, one who left is not, and nobody
+is processed twice. `processed` is the count of links the run has processed and `total` never
+shrinks. During sending it DMs the links still pending. DMs follow only when the run's stored
+`sendDms` is 1 (`runSendsDms(id)`); `/wrapped resume` and the resume route say which. Starting a
 new run while the latest is interrupted marks the old one `failed` first.
-
-**Known gap:** the runs table has no column for `sendDms`, so the choice is kept in memory. A run
-interrupted while *processing* by a restart resumes without sending; start a new run (tokens are
-kept, sent links are not re-sent) to send. A run interrupted while *sending* resumes sending.
 
 `resendWrappedDm(ctx, userId, year)` DMs one member again (opted in or not), updates the link and
 the latest run of that year's counters, and returns `sent`, `failed` or `no-link`.
@@ -146,7 +147,7 @@ acks in code, like the elections commands, and are not editable.
 |---|---|---|
 | `start [year] [send]` | admin | `startWrappedRun`; year defaults to the current UTC year, `send` to true |
 | `status` | admin | `getWrappedStatus` as a card (progress bar, counts, dates like `20 Dec 2026`) |
-| `resume` | admin | `resumeWrappedRun` |
+| `resume` | admin | `resumeWrappedRun`; the card says whether DMs follow |
 | `optin`, `optout` | anyone | record the choice, ephemeral confirmation |
 | `me` | anyone | their own link for the latest run's year (opted in or not); `me-not-ready` before any run, `me-empty` without activity. A member a run missed gets a link made on the spot. |
 
@@ -158,12 +159,12 @@ The admin check is `isAdmin` (Administrator or Manage Server).
 |---|---|---|
 | `GET /api/activity/wrapped/run` | admin | `WrappedRunStatus` |
 | `POST /api/activity/wrapped/run` | admin | body `{ year?, sendDms? }` (defaults: current UTC year, true); 202 `{ result: "started", status }` or 409 `{ result: "already-running", status }`; 400 on a bad body |
-| `POST /api/activity/wrapped/run/resume` | admin | 202 `{ result: "resumed", status }` or 409 `{ result: "nothing-to-resume", status }` |
+| `POST /api/activity/wrapped/run/resume` | admin | 202 `{ result: "resumed", sendDms, status }` or 409 `{ result: "nothing-to-resume", sendDms, status }`; `sendDms` says whether DMs follow (null with no run) |
 | `POST /api/activity/wrapped/resend/:userId?year=` | admin | `{ result: "sent" \| "failed" }`, 404 `{ result: "no-link" }`; year defaults to the latest run's |
 | `POST /api/activity/wrapped/signup-message` | admin | posts the sign-up message to the announcement channel; `{ ok: true }`, 400 when none is set |
 | `GET /api/activity/wrapped/optins` | admin | `{ count }` |
 | `GET /api/activity/wrapped/link/:userId?year=` | admin | `{ url }`, making the snapshot first if needed; 404 without activity |
-| `GET /api/activity/wrapped/t/:token` | public | `WrappedLinkResponse` (snapshot plus display names resolved now); counts an open; 404 otherwise |
+| `GET /api/activity/wrapped/t/:token` | public | `WrappedLinkResponse` (snapshot plus display names resolved now; `topChannelName` is the plain channel or thread name, `topChannelParentName` the thread's parent or null); counts an open; 404 otherwise |
 | `GET /api/activity/wrapped/t/:token/card.png` | public | the card PNG (no open counted); 404 JSON for an unknown token; the `WrappedLinkResponse` JSON when rendering fails |
 
 The public routes need no session: the token is the authorisation.

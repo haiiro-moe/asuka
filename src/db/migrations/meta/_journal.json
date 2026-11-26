@@ -127,6 +127,13 @@
       "when": 1795687134830,
       "tag": "0017_flat_magma",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1795689186681,
+      "tag": "0018_slow_ozymandias",
+      "breakpoints": true
     }
   ]
 }

@@ -10,8 +10,9 @@
  * can poll the progress:
  *
  * 1. **processing**: for each member with activity that UTC year who has not
- *    left (sorted by id), build the snapshot and upsert their link (an existing
- *    link keeps its token).
+ *    left (sorted by id) and whose link this run has not processed yet, build
+ *    the snapshot and upsert their link (an existing link keeps its token),
+ *    stamping the link with the run id (`processedRunId`).
  * 2. **sending** (only when the run was started with `sendDms`): links that
  *    are failed or skipped go back to pending, then each pending link of an
  *    opted-in member is DM'd, one per second; a link of a member who has not
@@ -20,7 +21,10 @@
  *
  * A run whose row has not been updated for 120 seconds while processing or
  * sending (the bot restarted, say) reports `interrupted`; resuming it
- * continues the unprocessed members and the pending DMs only.
+ * continues the members whose link this run has not processed (taken from a
+ * fresh member list, so members who became active meanwhile are included)
+ * and the pending DMs only. Whether a run sends DMs is stored on the run
+ * (`sendDms`), so a resumed run keeps the original choice.
  *
  * See docs/activity/wrapped.md.
  *
@@ -53,13 +57,6 @@ export const wrappedRunTiming = {
 
 /** The run this process is working on, if any. */
 let active: { id: number; promise: Promise<void> } | null = null;
-
-/**
- * Whether each run was started with `sendDms`, for runs started in this
- * process. The runs table has no column for it, so a run interrupted during
- * processing by a restart resumes without sending (see docs/activity/wrapped.md).
- */
-const sendDmsByRun = new Map<number, boolean>();
 
 type RunRow = typeof schema.activityWrappedRuns.$inferSelect;
 
@@ -179,21 +176,22 @@ export function startWrappedRun(
       total: members.length,
       processed: 0,
       startedBy: opts.startedBy,
+      sendDms: opts.sendDms ? 1 : 0,
       startedAt: now,
       updatedAt: now,
     })
     .returning({ id: schema.activityWrappedRuns.id })
     .get().id;
-  sendDmsByRun.set(id, opts.sendDms);
-  launch(ctx, { id, year: opts.year, startedBy: opts.startedBy, sendDms: opts.sendDms, phase: "processing", members, from: 0 });
+  launch(ctx, { id, year: opts.year, startedBy: opts.startedBy, sendDms: opts.sendDms, phase: "processing", members });
   return "started";
 }
 
 /**
- * Continue an interrupted run: the members it had not processed yet (by
- * position in the sorted member list) and the DMs still pending. A run
- * interrupted while sending sends; a run interrupted while processing sends
- * only if it was started with `sendDms` in this process.
+ * Continue an interrupted run. During processing: every member in a fresh
+ * member list whose link this run has not processed (`processedRunId`), so a
+ * member who became active meanwhile is included and one who left is not.
+ * During sending: the DMs still pending. DMs follow only when the run was
+ * started with `sendDms`, which is stored on the run (see {@link runSendsDms}).
  *
  * @param ctx - Bot context.
  * @returns `resumed`, or `nothing-to-resume` when the latest run is not interrupted.
@@ -207,14 +205,25 @@ export function resumeWrappedRun(ctx: BotContext): "resumed" | "nothing-to-resum
     .set({ updatedAt: nowSec() })
     .where(eq(schema.activityWrappedRuns.id, row.id))
     .run();
+  const sendDms = row.sendDms === 1;
   if (row.status === "processing") {
     const members = activeMemberIds(row.year);
-    const sendDms = sendDmsByRun.get(row.id) ?? false;
-    launch(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, sendDms, phase: "processing", members, from: row.processed });
+    launch(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, sendDms, phase: "processing", members });
   } else {
-    launch(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, sendDms: true, phase: "sending", members: [], from: 0 });
+    launch(ctx, { id: row.id, year: row.year, startedBy: row.startedBy, sendDms, phase: "sending", members: [] });
   }
   return "resumed";
+}
+
+/**
+ * Whether a run DMs the links after processing (`sendDms` when it started).
+ *
+ * @param id - The run's id.
+ * @returns True or false; null when no such run exists.
+ */
+export function runSendsDms(id: number): boolean | null {
+  const row = runRow(id);
+  return row ? row.sendDms === 1 : null;
 }
 
 /**
@@ -260,10 +269,8 @@ interface RunJob {
   sendDms: boolean;
   /** The phase to start in. */
   phase: "processing" | "sending";
-  /** The sorted member list (processing only). */
+  /** The fresh, sorted member list (processing only). */
   members: string[];
-  /** Index in `members` to continue from (processing only). */
-  from: number;
 }
 
 /** Run a job in the background and remember it as the active run. */
@@ -305,14 +312,32 @@ async function work(ctx: BotContext, job: RunJob): Promise<void> {
   }
 }
 
-/** Build and store the snapshot of each member from `job.from` on, saving progress after each. */
+/** Members of a year whose link was processed by run `id`. */
+function processedByRun(id: number, year: number): Set<string> {
+  const rows = db
+    .select({ userId: schema.activityWrappedLinks.userId })
+    .from(schema.activityWrappedLinks)
+    .where(and(eq(schema.activityWrappedLinks.year, year), eq(schema.activityWrappedLinks.processedRunId, id)))
+    .all();
+  return new Set(rows.map((r) => r.userId));
+}
+
+/**
+ * Build and store the snapshot of each member in `job.members` whose link this
+ * run has not processed yet, stamping the link with the run id and saving
+ * progress after each. `processed` counts the links this run has processed;
+ * `total` is that plus the members still to do, and never shrinks.
+ */
 async function processMembers(job: RunJob): Promise<void> {
-  updateRun(job.id, { total: job.members.length });
-  for (let i = job.from; i < job.members.length; i++) {
-    const userId = job.members[i]!;
+  const done = processedByRun(job.id, job.year);
+  const todo = job.members.filter((userId) => !done.has(userId));
+  let processed = done.size;
+  updateRun(job.id, { processed, total: Math.max(runRow(job.id)?.total ?? 0, processed + todo.length) });
+  for (const userId of todo) {
     const data = buildWrapped(userId, job.year);
-    if (data) upsertWrappedLink(userId, job.year, data);
-    updateRun(job.id, { processed: i + 1 });
+    if (data) upsertWrappedLink(userId, job.year, data, job.id);
+    processed += 1;
+    updateRun(job.id, { processed });
     // Let the event loop breathe (gateway, web requests) between members.
     await sleep(0);
   }

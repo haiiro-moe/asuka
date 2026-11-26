@@ -154,14 +154,14 @@ export function buildWrapped(userId: string, year: number): WrappedData | null {
     .get();
   const busiestDay = day ? WEEKDAYS[day.day]! : null;
 
-  const channelExpr = sql<string>`coalesce(${m.parentChannelId}, ${m.channelId})`;
+  // A thread is a channel of its own here: grouped by the message's own channel.
   const topChannelId =
     db
-      .select({ channelId: channelExpr, n: count() })
+      .select({ channelId: m.channelId, n: count() })
       .from(m)
       .where(msgWhere)
-      .groupBy(channelExpr)
-      .orderBy(desc(count()), asc(channelExpr))
+      .groupBy(m.channelId)
+      .orderBy(desc(count()), asc(m.channelId))
       .limit(1)
       .get()?.channelId ?? null;
 

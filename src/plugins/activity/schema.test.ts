@@ -196,6 +196,7 @@ test("schema inserts and reads back one row per activity table", () => {
     },
   ]);
 
+  // sendDms is left out on purpose: it must default to 1 (send).
   db.insert(schema.activityWrappedRuns)
     .values({
       year: 2026,
@@ -220,10 +221,11 @@ test("schema inserts and reads back one row per activity table", () => {
       failed: 0,
       startedBy: "u9",
       finishedAt: null,
+      sendDms: 1,
     },
   ]);
 
-  // dmStatus and opens are left out on purpose: they must take their defaults.
+  // dmStatus, opens and processedRunId are left out on purpose: they must take their defaults.
   db.insert(schema.activityWrappedLinks)
     .values({
       userId: "u1",
@@ -243,6 +245,7 @@ test("schema inserts and reads back one row per activity table", () => {
       createdAt: 1_800_000_000,
       opens: 0,
       lastOpenedAt: null,
+      processedRunId: null,
     },
   ]);
 

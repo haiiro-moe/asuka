@@ -6,12 +6,14 @@ import { recordMembership, recordMessage } from "../record.ts";
 import plugin from "../index.ts";
 import { wrappedCommands } from "./commands.ts";
 import { wrappedListeners } from "./listeners.ts";
-import { getLinkByToken, linkUrl } from "./links.ts";
+import { buildWrapped } from "./data.ts";
+import { getLinkByToken, linkUrl, upsertWrappedLink } from "./links.ts";
 import { setOptIn } from "./optin.ts";
 import {
   getWrappedStatus,
   resendWrappedDm,
   resumeWrappedRun,
+  runSendsDms,
   startWrappedRun,
   waitForWrappedRun,
   wrappedRunTiming,
@@ -203,24 +205,128 @@ test("resendWrappedDm sends to a member who has not opted in when an admin asks"
   expect(log.dms.length).toBe(1);
 });
 
+/** A snapshot marker: a link holding it was not rebuilt. */
+const UNTOUCHED = 999;
+
+/**
+ * Insert an interrupted processing run (last updated 121 s ago) and, for each
+ * of `processedUserIds`, a link this run already processed, holding the
+ * {@link UNTOUCHED} marker.
+ */
+function interruptedRun(opts: { total: number; processedUserIds: string[]; sendDms?: boolean }): number {
+  const stale = nowSec() - 121;
+  const id = db
+    .insert(schema.activityWrappedRuns)
+    .values({
+      year: YEAR,
+      status: "processing",
+      total: opts.total,
+      processed: opts.processedUserIds.length,
+      sendDms: opts.sendDms === false ? 0 : 1,
+      startedBy: "admin",
+      startedAt: stale,
+      updatedAt: stale,
+    })
+    .returning({ id: schema.activityWrappedRuns.id })
+    .get().id;
+  for (const userId of opts.processedUserIds) {
+    upsertWrappedLink(userId, YEAR, { ...buildWrapped(userId, YEAR)!, messages: UNTOUCHED }, id);
+  }
+  return id;
+}
+
+/** The `messages` number in a member's stored snapshot. */
+function storedMessages(userId: string): number {
+  return (JSON.parse(links().get(userId)!.data) as { messages: number }).messages;
+}
+
 test("a run not updated for 121 seconds is interrupted; resume completes only the unprocessed members", async () => {
   active("u1", "u2", "u3");
-  const stale = nowSec() - 121;
-  db.insert(schema.activityWrappedRuns)
-    .values({ year: YEAR, status: "processing", total: 3, processed: 1, startedBy: "admin", startedAt: stale, updatedAt: stale })
-    .run();
+  const id = interruptedRun({ total: 3, processedUserIds: ["u1"], sendDms: false });
   expect(getWrappedStatus().status).toBe("interrupted");
 
   const { client } = fakeClient();
   expect(resumeWrappedRun(fakeCtx(client))).toBe("resumed");
   await waitForWrappedRun();
 
-  // u1 (the first in id order) was processed before the interruption.
-  expect([...links().keys()].sort()).toEqual(["u2", "u3"]);
+  // u1 was processed before the interruption and is not processed twice.
+  expect(storedMessages("u1")).toBe(UNTOUCHED);
+  expect(storedMessages("u2")).toBe(1);
+  expect(storedMessages("u3")).toBe(1);
+  for (const row of links().values()) expect(row.processedRunId).toBe(id);
   const status = getWrappedStatus();
   expect(status.status).toBe("done");
   expect(status.processed).toBe(3);
+  expect(status.total).toBe(3);
   expect(resumeWrappedRun(fakeCtx(client))).toBe("nothing-to-resume");
+});
+
+test("resume processes a member who became active meanwhile, even one sorting earlier", async () => {
+  active("a", "c", "d");
+  interruptedRun({ total: 3, processedUserIds: ["a", "c"], sendDms: false });
+  // b becomes active while the run is down; by position it would land on index 1.
+  active("b");
+
+  const { client } = fakeClient();
+  expect(resumeWrappedRun(fakeCtx(client))).toBe("resumed");
+  await waitForWrappedRun();
+
+  expect([...links().keys()].sort()).toEqual(["a", "b", "c", "d"]);
+  expect(storedMessages("a")).toBe(UNTOUCHED);
+  expect(storedMessages("c")).toBe(UNTOUCHED);
+  expect(storedMessages("b")).toBe(1);
+  expect(storedMessages("d")).toBe(1);
+  const status = getWrappedStatus();
+  expect(status.processed).toBe(4);
+  expect(status.total).toBe(4);
+});
+
+test("resume leaves out a member who left meanwhile without shifting anyone", async () => {
+  active("a", "c", "d");
+  interruptedRun({ total: 3, processedUserIds: ["a"], sendDms: false });
+  recordMembership("c", "leave", nowSec());
+
+  const { client } = fakeClient();
+  expect(resumeWrappedRun(fakeCtx(client))).toBe("resumed");
+  await waitForWrappedRun();
+
+  expect([...links().keys()].sort()).toEqual(["a", "d"]);
+  expect(storedMessages("d")).toBe(1);
+  const status = getWrappedStatus();
+  expect(status.status).toBe("done");
+  expect(status.processed).toBe(2);
+  // The total is never rewritten to a smaller number.
+  expect(status.total).toBe(3);
+});
+
+test("a resumed processing run keeps the run's sendDms choice", async () => {
+  active("u1", "u2");
+  setOptIn("u1", true);
+  setOptIn("u2", true);
+  interruptedRun({ total: 2, processedUserIds: ["u1"], sendDms: true });
+  const sending = fakeClient();
+  expect(resumeWrappedRun(fakeCtx(sending.client))).toBe("resumed");
+  await waitForWrappedRun();
+  expect(sending.log.dms.map((d) => d.userId)).toEqual(["u1", "u2"]);
+
+  resetWrappedTables();
+  active("u1", "u2");
+  setOptIn("u1", true);
+  interruptedRun({ total: 2, processedUserIds: ["u1"], sendDms: false });
+  const quiet = fakeClient();
+  expect(resumeWrappedRun(fakeCtx(quiet.client))).toBe("resumed");
+  await waitForWrappedRun();
+  expect(quiet.log.dms.length).toBe(0);
+  expect(getWrappedStatus().status).toBe("done");
+});
+
+test("startWrappedRun stores sendDms on the run", async () => {
+  active("u1");
+  const { client } = fakeClient();
+  await run(fakeCtx(client), false);
+  expect(runSendsDms(getWrappedStatus().id!)).toBe(false);
+  await run(fakeCtx(client), true);
+  expect(runSendsDms(getWrappedStatus().id!)).toBe(true);
 });
 
 test("a run updated 119 seconds ago is still running and cannot be resumed", () => {
@@ -244,7 +350,7 @@ test("resuming an interrupted send continues only the unsent DMs", async () => {
     .where(and(eq(schema.activityWrappedLinks.userId, "u1"), eq(schema.activityWrappedLinks.year, YEAR)))
     .run();
   const stale = nowSec() - 300;
-  db.update(schema.activityWrappedRuns).set({ status: "sending", sent: 1, updatedAt: stale, finishedAt: null }).run();
+  db.update(schema.activityWrappedRuns).set({ status: "sending", sendDms: 1, sent: 1, updatedAt: stale, finishedAt: null }).run();
   expect(getWrappedStatus().status).toBe("interrupted");
 
   const { client, log } = fakeClient();

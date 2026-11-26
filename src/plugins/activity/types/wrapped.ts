@@ -45,7 +45,7 @@ export interface WrappedData {
   closestFriendId: string | null;
   /** The member they replied to the most; null when they replied to no one. */
   mostRepliedToId: string | null;
-  /** The channel they wrote the most in (a thread counts for its parent); null without messages. */
+  /** The channel they wrote the most in (a thread counts as a channel of its own); null without messages. */
   topChannelId: string | null;
   /** The member's current level, when the snapshot was taken. */
   xpLevel: number;
@@ -109,6 +109,8 @@ export interface WrappedLinkResponse {
   closestFriendName: string | null;
   /** Display name of {@link WrappedData.mostRepliedToId}; null when none or unknown. */
   mostRepliedToName: string | null;
-  /** Name of {@link WrappedData.topChannelId}; null when none or unknown. */
+  /** Plain name of {@link WrappedData.topChannelId} (a thread's own name); null when none or unknown. */
   topChannelName: string | null;
+  /** Name of the thread's parent channel when {@link WrappedData.topChannelId} is a thread; null for a normal channel or when unknown. */
+  topChannelParentName: string | null;
 }

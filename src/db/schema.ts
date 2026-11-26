@@ -791,6 +791,11 @@ export const activityWrappedRuns = sqliteTable("activity_wrapped_runs", {
   failed: integer("failed").notNull().default(0),
   /** User id of the admin who started the run. */
   startedBy: text("started_by").notNull(),
+  /**
+   * 1 = DM the links of opted-in members after processing, 0 = make the links
+   * only. Read again when an interrupted run is resumed.
+   */
+  sendDms: integer("send_dms").notNull().default(1),
   startedAt: integer("started_at").notNull().default(now),
   updatedAt: integer("updated_at").notNull().default(now),
   finishedAt: integer("finished_at"),
@@ -818,6 +823,12 @@ export const activityWrappedLinks = sqliteTable(
     /** How many times the link has been opened. */
     opens: integer("opens").notNull().default(0),
     lastOpenedAt: integer("last_opened_at"),
+    /**
+     * Id of the run that last built this link's snapshot; null when no run has
+     * (an admin preview or `/wrapped me` made it). A resumed run processes
+     * every member whose link was not processed by that run.
+     */
+    processedRunId: integer("processed_run_id"),
   },
   (t) => [primaryKey({ columns: [t.userId, t.year] })],
 );
