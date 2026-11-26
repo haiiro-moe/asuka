@@ -130,6 +130,8 @@ Date helpers: `formatDateTimeInput`, `parseDateTimeInput`, `formatDay`, `formatM
 `timeZoneName`. Older helpers `card`, `btn`, `btnGhost`, `input` in `ui.ts` are `@deprecated` shims; do not
 use them in new code. `Modal.tsx` keeps its old props and renders `Dialog`.
 
+Activity charts (`src/web/app/activity/charts.tsx`, see [docs/activity/web.md](activity/web.md)): `ActivityHeatmap`, `ActivityColumns`, `ActivityTiles`, `ActivityRank`. They wrap `fx-heat`, `fx-cols`, `fx-tiles` and `fx-rank`; pages use them instead of writing chart markup.
+
 Editors: `CodeEditor.tsx` (CodeMirror themed with tokens), `DiscordMarkdown.tsx` (the Discord-layout
 preview, drawn in tokens; a per-message accent colour from data stays dynamic), `ComponentsEditor.tsx`
 (block editor, props `value`, `onChange`, optional `layout`), `BotMessagesTab.tsx`.
