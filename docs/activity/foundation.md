@@ -143,6 +143,25 @@ Anything else, the empty string included, throws `RangeError`. A route catches i
 
 `QUIET_DAYS` is 30: a member has gone quiet after 30 days with no message and no voice.
 
+### Voice readiness (`voice-ready.ts`)
+
+The voice recorder is young, so everything derived from voice is withheld until the voice log
+holds at least `VOICE_MIN_WHOLE_MONTHS` (2) whole UTC calendar months. This module is the single
+place that decides; lanes import it and never compare dates themselves.
+
+- `voiceReadyAtFor(firstTs)` is pure. The month of the first segment is partial, so counting starts
+  at the next month start, unless `firstTs` is exactly a month start at 00:00:00 (then that month
+  counts). Voice is ready at the start of the day after the two whole months: a first segment on
+  27 Nov 2026 gives 1 Feb 2027 (Dec and Jan are whole); one at exactly 1 Nov 2026 gives 1 Jan 2027.
+- `voiceReadiness(now?)` returns `{ ready, since, readyAt }`. `since` is the earliest
+  `activity_voice.startedAt`, one `min()` query that ignores excluded channels (exclusion changes
+  what is shown, not how long the recorder has run). With no rows, `ready` is false and both times
+  are null. `ready` is `now >= readyAt`.
+- `voiceReady(now?)` is `voiceReadiness(now).ready`.
+
+While `voiceReady()` is false a voice-derived output is empty or null, never zero-filled, and a
+page says that voice stats unlock on `readyAt` instead of showing a 0.
+
 ### Excluded channels (`exclusion.ts`)
 
 - `excludedChannelIds()` parses `guild_config.activityExcludedChannelIds` into a set.
@@ -321,6 +340,7 @@ src/plugins/activity/
   time.ts               Period, weekdayHour, lastDays, termPeriod, parsePeriodParam, QUIET_DAYS
   privacy.ts            MIN_GROUP, hideSmall, mergeSmallGroups
   exclusion.ts          excludedChannelIds, isExcluded, notExcluded
+  voice-ready.ts        VOICE_MIN_WHOLE_MONTHS, voiceReadyAtFor, voiceReadiness, voiceReady
   facts.ts              RawMessage, MessageFacts, toRawMessage, extractMessageFacts
   record.ts             the write API: recordMessage, reactions, voice segments, membership,
                         commands, credits
