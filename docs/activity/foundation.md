@@ -56,10 +56,10 @@ All are defined in `src/db/schema.ts` and created by migration `0016`. Migration
 | Table | Unique | Indexes |
 |---|---|---|
 | `activity_messages` | `message_id` | `ts`; (`user_id`, `ts`); `channel_id` |
-| `activity_mentions` | (`message_id`, `to_user_id`) | `ts` |
-| `activity_emoji` | (`message_id`, `emoji`) | (`emoji`, `ts`) |
-| `activity_reactions` | (`message_id`, `user_id`, `emoji`) | `added_at` |
-| `activity_voice` | | (`user_id`, `started_at`); (`channel_id`, `started_at`) |
+| `activity_mentions` | (`message_id`, `to_user_id`) | `ts`; (`from_user_id`, `ts`) |
+| `activity_emoji` | (`message_id`, `emoji`) | (`emoji`, `ts`); (`user_id`, `ts`) |
+| `activity_reactions` | (`message_id`, `user_id`, `emoji`) | `added_at`; (`user_id`, `added_at`) |
+| `activity_voice` | | (`user_id`, `started_at`); (`channel_id`, `started_at`); `user_id` where `ended_at IS NULL` (partial, the open segments) |
 | `activity_backfill` | `channel_id` (primary key) | |
 | `activity_wrapped_links` | (`user_id`, `year`, `owner_user_id`) (primary key); `token` | |
 | `activity_wrapped_optins` | `user_id` (primary key) | |

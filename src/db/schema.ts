@@ -615,6 +615,8 @@ export const activityMentions = sqliteTable(
   (t) => [
     uniqueIndex("activity_mentions_message_to_uq").on(t.messageId, t.toUserId),
     index("activity_mentions_ts_idx").on(t.ts),
+    // A member's own mentions (the user-tier sharing and awards views).
+    index("activity_mentions_from_ts_idx").on(t.fromUserId, t.ts),
   ],
 );
 
@@ -650,6 +652,8 @@ export const activityEmoji = sqliteTable(
   (t) => [
     uniqueIndex("activity_emoji_message_emoji_uq").on(t.messageId, t.emoji),
     index("activity_emoji_emoji_ts_idx").on(t.emoji, t.ts),
+    // A member's own emoji use (the user-tier emoji views and Wrapped).
+    index("activity_emoji_user_ts_idx").on(t.userId, t.ts),
   ],
 );
 
@@ -690,6 +694,8 @@ export const activityReactions = sqliteTable(
       t.emoji,
     ),
     index("activity_reactions_added_idx").on(t.addedAt),
+    // A member's own reactions (the user-tier reacted view, `/wrapped me`).
+    index("activity_reactions_user_added_idx").on(t.userId, t.addedAt),
   ],
 );
 
@@ -717,6 +723,8 @@ export const activityVoice = sqliteTable(
   (t) => [
     index("activity_voice_user_started_idx").on(t.userId, t.startedAt),
     index("activity_voice_channel_started_idx").on(t.channelId, t.startedAt),
+    // The open segments: at most one per member, looked up on every voice event.
+    index("activity_voice_open_user_idx").on(t.userId).where(sql`${t.endedAt} IS NULL`),
   ],
 );
 
