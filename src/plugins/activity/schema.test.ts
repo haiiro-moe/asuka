@@ -17,6 +17,8 @@ const activityTables = [
   schema.activityWrappedRuns,
   schema.activityWrappedLinks,
   schema.activityWrappedOptins,
+  schema.activityWrappedServer,
+  schema.activityWrappedSignup,
 ];
 
 // bun test runs with NODE_ENV=test, so the database is in-memory.
@@ -196,6 +198,7 @@ test("schema inserts and reads back one row per activity table", () => {
     },
   ]);
 
+  // announce is left out on purpose: it must default to 1 (announce).
   db.insert(schema.activityWrappedRuns)
     .values({
       year: 2026,
@@ -220,10 +223,11 @@ test("schema inserts and reads back one row per activity table", () => {
       failed: 0,
       startedBy: "u9",
       finishedAt: null,
+      announce: 1,
     },
   ]);
 
-  // dmStatus and opens are left out on purpose: they must take their defaults.
+  // dmStatus, opens and processedRunId are left out on purpose: they must take their defaults.
   db.insert(schema.activityWrappedLinks)
     .values({
       userId: "u1",
@@ -243,7 +247,20 @@ test("schema inserts and reads back one row per activity table", () => {
       createdAt: 1_800_000_000,
       opens: 0,
       lastOpenedAt: null,
+      processedRunId: null,
     },
+  ]);
+
+  // data and announcedAt are left out: a token exists before any snapshot.
+  db.insert(schema.activityWrappedServer).values({ year: 2026, token: "srv-roundtrip", createdAt: 1_800_000_000 }).run();
+  expect(db.select().from(schema.activityWrappedServer).all()).toMatchObject([
+    { year: 2026, token: "srv-roundtrip", data: null, createdAt: 1_800_000_000, announcedAt: null },
+  ]);
+
+  // buttons and closed take their defaults (with buttons, open).
+  db.insert(schema.activityWrappedSignup).values({ year: 2026, channelId: "c1", messageId: "m1", postedAt: 1_800_000_000 }).run();
+  expect(db.select().from(schema.activityWrappedSignup).all()).toMatchObject([
+    { year: 2026, channelId: "c1", messageId: "m1", buttons: 1, closed: 0, postedAt: 1_800_000_000, closedAt: null },
   ]);
 
   db.insert(schema.activityWrappedOptins)
