@@ -7,9 +7,10 @@ commands and Social Credits. Every row goes through the write API in `record.ts`
 
 ```
 src/plugins/activity/capture/
-  index.ts        captureListeners (event bindings), captureSchedules (the heartbeat)
-  listeners.ts    the gateway handlers, onMessageCreate ... onReady, reactionEmojiKey
-  voice.ts        planVoice, snapshotOf, openSegmentOf, applyVoice
+  index.ts        captureListeners (event bindings), captureSchedules (runs voiceHeartbeat)
+  listeners.ts    the gateway handlers (onMessageCreate ... onReady), reconcileVoice,
+                  voiceHeartbeat, reactionEmojiKey
+  voice.ts        planVoice, snapshotOf, openSegmentOf, openSegmentStamps, applyVoice
   hooks.ts        captureCommand, captureCredit (called from core and the store)
   *.test.ts       voice, listeners (with the heartbeat), hooks
 ```
@@ -90,18 +91,39 @@ left open at its own `lastSeenAt` (the last heartbeat before the bot stopped). I
 segment, starting now, for every member connected at that moment, read from the guild's
 voice-state cache. Downtime is never counted as voice time.
 
-The cache source is injectable: `onReady(ctx, source)` takes a `VoiceStateSource`
-(`() => Iterable<VoiceState>`) and defaults to `cachedVoiceStates(ctx)`, so tests pass plain
-fake voice states.
+The cache source is injectable: `onReady(ctx, source)` and `voiceHeartbeat(ctx, source)` take a
+`VoiceStateSource` (`() => Iterable<VoiceState> | null`) and default to `cachedVoiceStates(ctx)`,
+so tests pass plain fake voice states. The cached source gives **null while the gateway cannot be
+trusted**: before the first `ClientReady`, while discord.js is reconnecting (`client.isReady()` is
+false), and while the guild is missing or unavailable.
 
 ### Heartbeat
 
-`captureSchedules` holds `voice-activity-heartbeat` (cron `* * * * *`). While activity is enabled
-it calls `touchVoiceSegments(nowSec())`, which stamps `lastSeenAt` on every open segment. While it
-is disabled it calls `closeDanglingVoiceSegments()` instead, so open segments end at their last
-heartbeat and the disabled time is never counted. After recording is turned back on, a member
-who stayed connected the whole time gets a new segment at their next voice change or at the next
-restart, whichever comes first.
+`captureSchedules` holds `voice-activity-heartbeat` (cron `* * * * *`), which runs
+`voiceHeartbeat`. Voice events can be missed without a restart: when discord.js re-identifies
+(an invalid session, a failed resume), `GUILD_CREATE` rebuilds the voice-state cache and no
+`VoiceStateUpdate` is emitted. So while activity is enabled, the heartbeat **reconciles** the open
+segments with the cache (`reconcileVoice`) before stamping them. Every member who has an open
+segment or a cached voice state is checked:
+
+| Member | Result |
+|---|---|
+| Connected: a known non-bot in a recorded channel | `applyVoice(userId, snapshot, now)`: an unchanged segment carries on (no churn), a missing one is opened, one whose channel or flags changed is closed and replaced, both at now. |
+| Has an open segment but is not connected: no cached state, left the channel, moved to an excluded channel, or a member whose bot flag is unknown | The segment is closed at its own `lastSeenAt`, the last heartbeat that saw them, so the time they were away is not counted. |
+| A bot, or unknown, with no open segment | Skipped. |
+
+Then `touchVoiceSegments(now)` stamps `lastSeenAt` on every segment that is still open.
+
+- **Gateway not ready** (the source gives null): nothing is reconciled or stamped. A segment left
+  open by a restart or an outage still ends at the last heartbeat that saw it, so a heartbeat
+  that fires between boot and `ClientReady` cannot stretch the previous run's segments over the
+  downtime.
+- **Activity disabled:** the heartbeat calls `closeDanglingVoiceSegments()` instead, so open
+  segments end at their last heartbeat and the disabled time is never counted. After recording
+  is turned back on, the next heartbeat opens segments for the members who are connected.
+- The gap that is left is a dead connection discord.js has not noticed yet: while the client
+  still reports ready, the stale cache keeps a member who left looking connected, for as long as
+  it takes discord.js to notice (a missed gateway heartbeat ack).
 
 ## Core hooks
 

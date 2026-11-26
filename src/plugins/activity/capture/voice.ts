@@ -109,6 +109,25 @@ export function openSegmentOf(userId: string): OpenVoiceSegment | null {
 }
 
 /**
+ * Every open segment's member and last heartbeat.
+ *
+ * @returns `lastSeenAt` of each open segment, keyed by member. If a member ever
+ *   had more than one open, the latest stamp wins.
+ */
+export function openSegmentStamps(): Map<string, number> {
+  const rows = db
+    .select({ userId: schema.activityVoice.userId, lastSeenAt: schema.activityVoice.lastSeenAt })
+    .from(schema.activityVoice)
+    .where(isNull(schema.activityVoice.endedAt))
+    .all();
+  const stamps = new Map<string, number>();
+  for (const row of rows) {
+    stamps.set(row.userId, Math.max(row.lastSeenAt, stamps.get(row.userId) ?? row.lastSeenAt));
+  }
+  return stamps;
+}
+
+/**
  * Bring a member's segments in line with their new voice state.
  *
  * The previous state is read from the open segment in the database, not from

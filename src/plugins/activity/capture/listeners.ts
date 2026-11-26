@@ -34,16 +34,18 @@ import { isExcluded } from "../exclusion.ts";
 import { extractMessageFacts, toRawMessage } from "../facts.ts";
 import {
   closeDanglingVoiceSegments,
+  closeVoiceSegment,
   openVoiceSegment,
   recordMembership,
   recordMessage,
   recordReactionAdd,
   recordReactionRemove,
+  touchVoiceSegments,
 } from "../record.ts";
-import { applyVoice, snapshotOf } from "./voice.ts";
+import { applyVoice, openSegmentStamps, snapshotOf } from "./voice.ts";
 
 /** U+FE0F, dropped from reaction emoji the same way `parseEmoji` drops it. */
-const VARIATION_SELECTOR = /️/g;
+const VARIATION_SELECTOR = /\uFE0F/g;
 
 /**
  * Run a handler's work, logging instead of throwing.
@@ -238,18 +240,28 @@ export async function onVoiceStateUpdate(ctx: BotContext, _oldState: VoiceState,
   });
 }
 
-/** Where {@link onReady} finds the members connected to voice. */
-export type VoiceStateSource = () => Iterable<VoiceState>;
+/**
+ * Where {@link onReady} and {@link voiceHeartbeat} find the members connected
+ * to voice. Returns null when the gateway is not ready and the cache cannot be
+ * trusted (before the first `ClientReady`, while reconnecting, or while the
+ * guild is unavailable).
+ */
+export type VoiceStateSource = () => Iterable<VoiceState> | null;
 
 /**
  * The voice states of the locked guild, from the client's cache.
  *
  * @param ctx - The bot context.
- * @returns A source over `guild.voiceStates.cache`; empty when the guild is not
- *   cached.
+ * @returns A source over `guild.voiceStates.cache`. It gives null while the
+ *   client is not ready or the guild is missing or unavailable.
  */
 export function cachedVoiceStates(ctx: BotContext): VoiceStateSource {
-  return () => ctx.client.guilds.cache.get(ctx.guildId)?.voiceStates.cache.values() ?? [];
+  return () => {
+    if (!ctx.client.isReady()) return null;
+    const guild = ctx.client.guilds.cache.get(ctx.guildId);
+    if (!guild?.available) return null;
+    return guild.voiceStates.cache.values();
+  };
 }
 
 /**
@@ -270,7 +282,7 @@ export async function onReady(ctx: BotContext, source: VoiceStateSource = cached
     if (closed > 0) console.log(`[activity] closed ${closed} voice segments left open by a restart`);
 
     const ts = nowSec();
-    for (const state of source()) {
+    for (const state of source() ?? []) {
       try {
         if (botOrUnknown(state.member?.user)) continue;
         const snapshot = snapshotOf(state);
@@ -280,4 +292,85 @@ export async function onReady(ctx: BotContext, source: VoiceStateSource = cached
       }
     }
   });
+}
+
+/**
+ * Bring every member's segments in line with the live voice states, then
+ * stamp `lastSeenAt` on the segments that are still open.
+ *
+ * Gateway events can be missed: when discord.js re-identifies, the guild's
+ * voice-state cache is rebuilt without a `VoiceStateUpdate`. So each member who
+ * has an open segment or a cached state is checked:
+ *
+ * - Connected (a known non-bot in a recorded channel): `applyVoice` at `ts`,
+ *   which keeps an unchanged segment, opens a missing one and replaces one
+ *   whose channel or flags changed.
+ * - Not connected, but with an open segment (no cached state, left the
+ *   channel, moved to an excluded channel, or a member whose bot flag is
+ *   unknown): the segment is closed at its own `lastSeenAt`, the last time the
+ *   member was seen, so the time they were away is not counted.
+ * - Bots and unknown users without an open segment are skipped.
+ *
+ * @param states - The guild's voice states.
+ * @param ts - The current time, in unix seconds.
+ */
+export function reconcileVoice(states: Iterable<VoiceState>, ts: number): void {
+  const open = openSegmentStamps();
+  const seen = new Set<string>();
+
+  for (const state of states) {
+    seen.add(state.id);
+    try {
+      const snapshot = botOrUnknown(state.member?.user) ? null : snapshotOf(state);
+      const lastSeenAt = open.get(state.id);
+      if (snapshot) applyVoice(state.id, snapshot, ts);
+      else if (lastSeenAt !== undefined) closeVoiceSegment(state.id, lastSeenAt);
+    } catch (err) {
+      console.error(`[activity] voice reconcile failed for ${state.id}:`, err);
+    }
+  }
+
+  for (const [userId, lastSeenAt] of open) {
+    if (seen.has(userId)) continue;
+    try {
+      closeVoiceSegment(userId, lastSeenAt);
+    } catch (err) {
+      console.error(`[activity] voice reconcile failed for ${userId}:`, err);
+    }
+  }
+
+  touchVoiceSegments(ts);
+}
+
+/**
+ * The voice heartbeat, run once a minute by `voice-activity-heartbeat`.
+ *
+ * - **Enabled:** {@link reconcileVoice} against the live voice-state cache,
+ *   which also stamps `lastSeenAt` on every open segment, so a restart can
+ *   close them at the last minute the bot saw them.
+ * - **Gateway not ready** (the source gives null): nothing is changed or
+ *   stamped, so a segment left open by a restart or an outage still ends at
+ *   the last heartbeat that saw it.
+ * - **Disabled:** the open segments are closed at their last heartbeat, so the
+ *   disabled time is never counted. When recording is turned back on, the next
+ *   heartbeat opens segments for the members who are connected.
+ *
+ * Never throws; errors are logged with an `[activity]` prefix.
+ *
+ * @param ctx - The bot context.
+ * @param source - The connected members; the guild's voice-state cache by
+ *   default. Tests pass fakes.
+ */
+export function voiceHeartbeat(ctx: BotContext, source: VoiceStateSource = cachedVoiceStates(ctx)): void {
+  try {
+    if (!getConfig().activityEnabled) {
+      closeDanglingVoiceSegments();
+      return;
+    }
+    const states = source();
+    if (states === null) return;
+    reconcileVoice(states, nowSec());
+  } catch (err) {
+    console.error("[activity] voice heartbeat failed:", err);
+  }
 }

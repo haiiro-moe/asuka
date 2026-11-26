@@ -15,6 +15,7 @@ import {
   onReady,
   onVoiceStateUpdate,
   reactionEmojiKey,
+  voiceHeartbeat,
 } from "./listeners.ts";
 
 /** Every table this file writes to. Emptied before each test. */
@@ -326,20 +327,71 @@ describe("voice", () => {
 describe("voice heartbeat", () => {
   const snap = { channelId: "c1", muted: false, deafened: false, streaming: false, video: false };
 
-  test("stamps lastSeenAt on open segments", async () => {
-    openVoiceSegment("u1", snap, 1_000);
-    await captureSchedules[0]!.run(ctx);
-    expect(captureSchedules[0]!.name).toBe("voice-activity-heartbeat");
-    expect(segments()[0]!.lastSeenAt).toBeGreaterThan(1_000);
-    expect(segments()[0]!.endedAt).toBeNull();
+  test("is scheduled every minute", () => {
+    expect(captureSchedules.map((s) => [s.name, s.cron])).toEqual([["voice-activity-heartbeat", "* * * * *"]]);
   });
 
-  test("closes open segments at their last heartbeat while disabled", async () => {
+  test("a member who stayed in place keeps the same segment, with lastSeenAt stamped", () => {
+    openVoiceSegment("u1", snap, 1_000);
+    voiceHeartbeat(ctx, () => [voice()]);
+    const rows = segments();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ startedAt: 1_000, endedAt: null });
+    expect(rows[0]!.lastSeenAt).toBeGreaterThan(1_000);
+  });
+
+  test("an open segment with no member in the cache is closed at its last lastSeenAt", () => {
+    openVoiceSegment("u1", snap, 1_000);
+    touchVoiceSegments(1_060);
+    voiceHeartbeat(ctx, () => []);
+    expect(segments()).toEqual([expect.objectContaining({ userId: "u1", endedAt: 1_060, lastSeenAt: 1_060 })]);
+  });
+
+  test("a member in the cache with no open segment gets one opened", () => {
+    voiceHeartbeat(ctx, () => [voice({ selfMute: true })]);
+    expect(segments()).toEqual([expect.objectContaining({ userId: "u1", channelId: "c1", muted: 1, endedAt: null })]);
+  });
+
+  test("a member whose channel changed while disconnected gets the old segment closed and a new one opened", () => {
+    openVoiceSegment("u1", snap, 1_000);
+    voiceHeartbeat(ctx, () => [voice({ channelId: "c2" })]);
+    const rows = segments();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ channelId: "c1", startedAt: 1_000 });
+    expect(rows[0]!.endedAt).not.toBeNull();
+    expect(rows[1]).toMatchObject({ channelId: "c2", endedAt: null });
+  });
+
+  test("an excluded voice channel in the cache opens nothing", () => {
+    setConfig(true, "c1");
+    voiceHeartbeat(ctx, () => [voice()]);
+    expect(segments()).toHaveLength(0);
+  });
+
+  test("bots are skipped", () => {
+    voiceHeartbeat(ctx, () => [voice({ id: "b1", member: member("b1", true) })]);
+    expect(segments()).toHaveLength(0);
+  });
+
+  test("an open segment whose member is unknown is closed at its last lastSeenAt", () => {
+    openVoiceSegment("u1", snap, 1_000);
+    touchVoiceSegments(1_060);
+    voiceHeartbeat(ctx, () => [voice({ member: null })]);
+    expect(segments()).toEqual([expect.objectContaining({ endedAt: 1_060 })]);
+  });
+
+  test("leaves everything alone while the gateway is not ready", () => {
+    openVoiceSegment("u1", snap, 1_000);
+    voiceHeartbeat(ctx, () => null);
+    expect(segments()).toEqual([expect.objectContaining({ endedAt: null, lastSeenAt: 1_000 })]);
+  });
+
+  test("closes open segments at their last heartbeat while disabled", () => {
     openVoiceSegment("u1", snap, 1_000);
     touchVoiceSegments(1_060);
     setConfig(false);
-    await captureSchedules[0]!.run(ctx);
-    expect(segments()[0]).toMatchObject({ endedAt: 1_060, lastSeenAt: 1_060 });
+    voiceHeartbeat(ctx, () => [voice()]);
+    expect(segments()).toEqual([expect.objectContaining({ endedAt: 1_060, lastSeenAt: 1_060 })]);
   });
 });
 
@@ -356,5 +408,10 @@ describe("captureListeners", () => {
         Events.VoiceStateUpdate,
       ].sort(),
     );
+  });
+
+  test("ClientReady runs once", () => {
+    const ready = captureListeners.filter((l) => l.event === Events.ClientReady);
+    expect(ready.map((l) => l.once)).toEqual([true]);
   });
 });

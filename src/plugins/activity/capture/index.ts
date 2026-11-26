@@ -6,9 +6,6 @@
 import { Events } from "discord.js";
 import { defineListener } from "../../../core/plugin.ts";
 import type { Listener, Schedule } from "../../../core/plugin.ts";
-import { nowSec } from "../../../core/util.ts";
-import { getConfig } from "../../../db/index.ts";
-import { closeDanglingVoiceSegments, touchVoiceSegments } from "../record.ts";
 import {
   onMemberAdd,
   onMemberRemove,
@@ -17,6 +14,7 @@ import {
   onReactionRemove,
   onReady,
   onVoiceStateUpdate,
+  voiceHeartbeat,
 } from "./listeners.ts";
 
 /**
@@ -39,23 +37,10 @@ export const captureListeners: Listener[] = [
 ];
 
 /**
- * The voice heartbeat, once a minute.
- *
- * While activity is enabled it stamps `lastSeenAt` on every open segment, so a
- * restart can close them at the last minute the bot saw them. While it is
- * disabled it closes the open segments at their last heartbeat instead, so the
- * disabled time is never counted when recording is turned back on.
+ * Scheduled jobs of live capture: the voice heartbeat, once a minute. It
+ * reconciles open segments with the live voice states and stamps `lastSeenAt`
+ * (see `voiceHeartbeat` in `listeners.ts`).
  */
-function voiceHeartbeat(): void {
-  try {
-    if (getConfig().activityEnabled) touchVoiceSegments(nowSec());
-    else closeDanglingVoiceSegments();
-  } catch (err) {
-    console.error("[activity] voice heartbeat failed:", err);
-  }
-}
-
-/** Scheduled jobs of live capture: the voice heartbeat. */
 export const captureSchedules: Schedule[] = [
-  { name: "voice-activity-heartbeat", cron: "* * * * *", run: voiceHeartbeat },
+  { name: "voice-activity-heartbeat", cron: "* * * * *", run: (ctx) => voiceHeartbeat(ctx) },
 ];
