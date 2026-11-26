@@ -1,11 +1,32 @@
-import { beforeAll, expect, test } from "bun:test";
+import { beforeAll, beforeEach, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { db, getConfig, initDb, schema } from "../../db/index.ts";
 import { plugins } from "../index.ts";
 
-// bun test runs with NODE_ENV=test, so the database is in-memory and empty.
+/** Every table this file writes to. Emptied before each test. */
+const activityTables = [
+  schema.activityMessages,
+  schema.activityMentions,
+  schema.activityEmoji,
+  schema.activityReactions,
+  schema.activityVoice,
+  schema.activityMembership,
+  schema.activityCommands,
+  schema.activityCredits,
+  schema.activityBackfill,
+  schema.activityWrappedRuns,
+  schema.activityWrappedLinks,
+  schema.activityWrappedOptins,
+];
+
+// bun test runs with NODE_ENV=test, so the database is in-memory.
 beforeAll(() => {
   initDb();
+});
+
+// Tests assert whole-table contents, so none may see another test's rows.
+beforeEach(() => {
+  for (const table of activityTables) db.delete(table).run();
 });
 
 test("schema inserts and reads back one row per activity table", () => {
