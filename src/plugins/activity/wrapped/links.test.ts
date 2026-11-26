@@ -66,7 +66,7 @@ test("getLinkByToken returns the same data on every open and counts the opens", 
 
   const first = getLinkByToken(token);
   const second = getLinkByToken(token);
-  expect(first).toEqual({ userId: "u1", year: 2026, data: snapshot(12) });
+  expect(first).toEqual({ userId: "u1", year: 2026, data: snapshot(12), preview: false });
   expect(second).toEqual(first);
 
   const row = linkRow("u1")!;

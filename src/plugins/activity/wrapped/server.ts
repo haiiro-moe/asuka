@@ -33,6 +33,7 @@ import type { ClubYearStats, TermInYear } from "./extras.ts";
 import { VOICE_OVERLAP_SECONDS_PER_POINT } from "./data.ts";
 import { newToken } from "./links.ts";
 import { isOptedIn } from "./optin.ts";
+import { getPreviewServerByToken } from "./preview.ts";
 
 /** Weekday names by SQLite `strftime('%w')` (0 = Sunday). */
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -297,7 +298,9 @@ export function storeServerWrapped(year: number, data: ServerWrapped): string {
 }
 
 /**
- * Resolve a server Wrapped token, ready to serve.
+ * Resolve a server Wrapped token, ready to serve: the year's real server story,
+ * or an admin's private preview story (`preview: true`) while that preview
+ * exists and is younger than 14 days.
  *
  * The stored best pair is checked against the opt-ins again on every read: a
  * member who opted out after the snapshot was built must not stay named, so
@@ -312,12 +315,18 @@ export function storeServerWrapped(year: number, data: ServerWrapped): string {
 export function getServerWrappedByToken(
   token: string,
   optedIn: (userId: string) => boolean = isOptedIn,
-): { year: number; data: ServerWrapped } | null {
+): { year: number; data: ServerWrapped; preview: boolean } | null {
   if (typeof token !== "string" || token.length !== 43) return null;
   const row = db.select().from(schema.activityWrappedServer).where(eq(schema.activityWrappedServer.token, token)).get();
-  if (!row?.data) return null;
-  const data = JSON.parse(row.data) as ServerWrapped;
-  if (data.bestPair && !(optedIn(data.bestPair.aId) && optedIn(data.bestPair.bId))) data.bestPair = null;
-  return { year: row.year, data };
+  let found: { year: number; data: ServerWrapped; preview: boolean } | null = null;
+  if (row?.data) found = { year: row.year, data: JSON.parse(row.data) as ServerWrapped, preview: false };
+  else {
+    const priv = getPreviewServerByToken(token);
+    if (priv) found = { ...priv, data: structuredClone(priv.data), preview: true };
+  }
+  if (!found) return null;
+  const pair = found.data.bestPair;
+  if (pair && !(optedIn(pair.aId) && optedIn(pair.bId))) found.data.bestPair = null;
+  return found;
 }
 

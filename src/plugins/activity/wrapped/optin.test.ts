@@ -255,6 +255,11 @@ test("every wrapped.* default is a valid lowercase payload with no ! and no {par
       "wrapped.announce",
       "wrapped.processed",
       "wrapped.signup-closed",
+      "wrapped.preview-intro",
+      "wrapped.preview-for",
+      "wrapped.preview-skip",
+      "wrapped.preview-announce",
+      "wrapped.preview-server",
     ].sort(),
   );
   const { client } = fakeClient();

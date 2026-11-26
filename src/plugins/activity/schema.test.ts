@@ -224,6 +224,9 @@ test("schema inserts and reads back one row per activity table", () => {
       startedBy: "u9",
       finishedAt: null,
       announce: 1,
+      kind: "real",
+      ownerUserId: null,
+      serverToken: null,
     },
   ]);
 
@@ -248,6 +251,8 @@ test("schema inserts and reads back one row per activity table", () => {
       opens: 0,
       lastOpenedAt: null,
       processedRunId: null,
+      private: 0,
+      ownerUserId: "",
     },
   ]);
 
