@@ -25,6 +25,7 @@ import {
   levelProgress,
 } from "../plugins/profile/stats.ts";
 import { messageRoutes } from "./message-routes.ts";
+import { guildOptionsRoutes } from "./guild-options-routes.ts";
 
 /** Columns the dashboard is allowed to update on the singleton config row. */
 const EDITABLE_CONFIG = new Set<string>([
@@ -418,4 +419,5 @@ export const dashboardRoutes: ApiRoute[] = [
   usernamesRoute,
   statsRoute,
   ...messageRoutes,
+  ...guildOptionsRoutes,
 ];
