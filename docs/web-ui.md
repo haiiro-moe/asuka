@@ -119,6 +119,9 @@ component READMEs are the contract for look and behaviour.
 | `ColourField` | Typed hex + preset swatches | `value`, `onChange`, `allowEmpty`, `presets` (a list of token colours, `BAR_COLOUR_PRESETS` has no pine), `onValidityChange` |
 | `DateTimeField` | Typed `YYYY-MM-DD HH:mm` (or date only) | `value: Date \| null`, `onChange`, `dateOnly`, `required`, `onValidityChange` |
 | `Select` | Closed `.pick`, popup is `position: fixed` and flips; filter line from 13 options | `options` (`value`, `label`, `meta`), `value`, `onChange`, `filterFrom` |
+| `ChannelSelect` | A clearable single-channel `Select`: first row `none`, `# name` for text and announcement, `name (voice)` for the rest, the category as meta. A stored id not in the list shows as `unknown · <id>` and is kept | `channels`, `kinds` (`POSTABLE_KINDS`, `CATEGORY_KINDS`, `ACTIVITY_KINDS`), `value`, `onChange` (`""` clears) |
+| `ChannelMultiSelect` | Chosen channels as removable `Chip`s in saved order plus an add `Select` of the rest; writes the canonical `a,b,c`. Ids not in the list stay as dashed `unknown · <id>` chips | `channels`, `kinds`, `value` (comma list), `onChange`, `emptyText` |
+| `RoleSelect` | A clearable single-role `Select` with each role's colour as a `Swatch` (also before the control), highest role first, bot-managed roles last | `roles`, `value`, `onChange` (`""` clears) |
 | `Dialog` | Modal Window over a dither veil, focus trap, portals into `.fx` | `label`, `tone`, `wide`, `onClose`, `onSubmit`, `foot` |
 | `ConfirmDialog`, `useConfirm` | Awaitable replacement for `window.confirm` | `message`, `confirmLabel`, `tone`; `await confirm({...})` |
 | `Calendar` | Month grid, one bar per event per day, agenda list on phones | `month`, `events` (`id`, `title`, `colour`, `date`), `onSelect`, `onSelectDay`, `maxPerDay`; `CalendarEvent.allDay` hides the time; `barInk` picks readable bar text, pine and blurple bars get a side stripe instead |
@@ -129,6 +132,8 @@ component READMEs are the contract for look and behaviour.
 Date helpers: `formatDateTimeInput`, `parseDateTimeInput`, `formatDay`, `formatMonth`, `dayKey`,
 `timeZoneName`. Older helpers `card`, `btn`, `btnGhost`, `input` in `ui.ts` are `@deprecated` shims; do not
 use them in new code. `Modal.tsx` keeps its old props and renders `Dialog`.
+
+Channel and role pickers (`ChannelSelect`, `ChannelMultiSelect`, `RoleSelect`) take the lists from `GET /api/guild-options` (`api.guildOptions()`, admin only); `ui/channel-ids.ts` holds the pure parts (the comma-list codec `parseIdList` / `joinIdList`, `channelChoices`, `withNoneAndUnknown`, `orderRoles`, `roleHex`) and is covered by `channel-ids.test.ts`. The config page wires all 14 channel and role fields to them. If the options fail to load, or the list a field needs is empty (guild not cached), that field falls back to the raw-id `PromptField`, so config stays editable.
 
 Activity charts (`src/web/app/activity/charts.tsx`, see [docs/activity/web.md](activity/web.md)): `ActivityHeatmap`, `ActivityColumns`, `ActivityTiles`, `ActivityRank`. They wrap `fx-heat`, `fx-cols`, `fx-tiles` and `fx-rank`; pages use them instead of writing chart markup. The heatmap and the columns are `role="img"` and take a required, specific `ariaLabel` (built with `heatmapAriaLabel` / `columnsAriaLabel` from `activity/format.ts`) and an optional visually hidden `summary`.
 
