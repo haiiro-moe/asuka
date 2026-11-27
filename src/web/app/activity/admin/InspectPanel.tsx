@@ -83,7 +83,7 @@ export function InspectPanel({ period, userId, onInspect }: InspectPanelProps) {
   return (
     <Window label="gdb: ~/diagnostics/inspect">
       <Heading first>inspect a member</Heading>
-      <Quiet>Pick a name in the table, or paste a member id.</Quiet>
+      <Quiet>Pick a name in the table or the graph, or paste a member id.</Quiet>
       <form
         onSubmit={(e) => {
           e.preventDefault();
