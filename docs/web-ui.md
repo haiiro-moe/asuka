@@ -122,7 +122,7 @@ component READMEs are the contract for look and behaviour.
 | `Dialog` | Modal Window over a dither veil, focus trap, portals into `.fx` | `label`, `tone`, `wide`, `onClose`, `onSubmit`, `foot` |
 | `ConfirmDialog`, `useConfirm` | Awaitable replacement for `window.confirm` | `message`, `confirmLabel`, `tone`; `await confirm({...})` |
 | `Calendar` | Month grid, one bar per event per day, agenda list on phones | `month`, `events` (`id`, `title`, `colour`, `date`), `onSelect`, `onSelectDay`, `maxPerDay`; `CalendarEvent.allDay` hides the time; `barInk` picks readable bar text, pine and blurple bars get a side stripe instead |
-| `useReducedMotion`, `useStepped` | Motion helpers (stepped, never eased) | |
+| `useReducedMotion`, `useStepped` | Motion helpers (stepped, never eased). CSS animations are killed by `asuka.css`, so step frames from JS | `useStepped(count, ms, running, restart?)`: a new `restart` key starts again from frame 0 (one-shot runs) |
 | `startBlobs`, `blobTarget`, `blobTone`, `BAYER4`, `bayer`, `hexTone` | The fishnet blob and dither port behind `Blobs` | |
 | `cx` | Class-name joiner | |
 
