@@ -8,10 +8,16 @@
  */
 import { useId, useState, type ReactElement, type ReactNode } from "react";
 import { api, type Me } from "./api.ts";
+import type { GuildOptions } from "./ui/channel-ids.ts";
 import { ComponentsEditor } from "./ComponentsEditor.tsx";
 import { useNames, UserName, UserLink } from "./names.tsx";
 import { useMe, ROLE_RANK } from "./me-context.ts";
 import {
+  ACTIVITY_KINDS,
+  CATEGORY_KINDS,
+  POSTABLE_KINDS,
+  ChannelMultiSelect,
+  ChannelSelect,
   Chip,
   Empty,
   ErrorLine,
@@ -19,6 +25,7 @@ import {
   InkButton,
   Loading,
   PromptField,
+  RoleSelect,
   Saved,
   Select,
   SettingRow,
@@ -290,6 +297,9 @@ const LINK_FIXER_PLATFORMS: { key: string; label: string }[] = [
   { key: "youtube", label: "youtube" },
 ];
 
+/** How a config field is edited: a picker over the guild's channels or roles (the text box is its fallback). */
+type ConfigPick = "channel" | "category" | "channels" | "role";
+
 /** One editable `guild_config` column: its key, the prompt, an optional hint, the input type and its group. */
 interface ConfigField {
   key: string;
@@ -297,33 +307,106 @@ interface ConfigField {
   hint?: string;
   type?: string;
   group: "channels" | "roles" | "rules" | "activity";
+  /** Set for the channel and role fields: which picker edits it. */
+  pick?: ConfigPick;
 }
 
 const CONFIG_FIELDS: ConfigField[] = [
-  { key: "starboardChannelId", label: "starboard channel id", group: "channels" },
-  { key: "clubListingChannelId", label: "club listing channel id", group: "channels" },
-  { key: "clubCategoryId", label: "club category id", group: "channels" },
-  { key: "electionChannelId", label: "election channel id", group: "channels" },
-  { key: "modLogChannelId", label: "mod-log channel id", group: "channels" },
-  { key: "levelUpChannelId", label: "level-up channel id", group: "channels" },
-  { key: "announcementChannelId", label: "announcement channel id", group: "channels" },
-  { key: "approvalChannelId", label: "admin approval channel id", group: "channels" },
-  { key: "eventsChannelId", label: "events channel id", hint: "Announcements and reminders go here.", group: "channels" },
-  { key: "presidentRoleId", label: "president role id", group: "roles" },
-  { key: "clubCreateMinRoleId", label: "club-create min role id", group: "roles" },
-  { key: "clubAdminRoleId", label: "club admin role id", group: "roles" },
-  { key: "presidentApplyMinRoleId", label: "president-apply min role id", group: "roles" },
+  { key: "starboardChannelId", label: "starboard channel", group: "channels", pick: "channel" },
+  { key: "clubListingChannelId", label: "club listing channel", group: "channels", pick: "channel" },
+  { key: "clubCategoryId", label: "club category", group: "channels", pick: "category" },
+  { key: "electionChannelId", label: "election channel", group: "channels", pick: "channel" },
+  { key: "modLogChannelId", label: "mod-log channel", group: "channels", pick: "channel" },
+  { key: "levelUpChannelId", label: "level-up channel", group: "channels", pick: "channel" },
+  { key: "announcementChannelId", label: "announcement channel", group: "channels", pick: "channel" },
+  { key: "approvalChannelId", label: "admin approval channel", group: "channels", pick: "channel" },
+  { key: "eventsChannelId", label: "events channel", hint: "Announcements and reminders go here.", group: "channels", pick: "channel" },
+  { key: "presidentRoleId", label: "president role", group: "roles", pick: "role" },
+  { key: "clubCreateMinRoleId", label: "club-create min role", group: "roles", pick: "role" },
+  { key: "clubAdminRoleId", label: "club admin role", group: "roles", pick: "role" },
+  { key: "presidentApplyMinRoleId", label: "president-apply min role", group: "roles", pick: "role" },
   { key: "starboardEmoji", label: "starboard emoji", group: "rules" },
   { key: "starboardThreshold", label: "starboard threshold", type: "number", group: "rules" },
   { key: "serverNameTemplate", label: "server name template", hint: "%s is where the president's theme name goes.", group: "rules" },
   { key: "xpMessageCooldownSec", label: "xp message cooldown (s)", type: "number", group: "rules" },
   {
     key: "activityExcludedChannelIds",
-    label: "activity excluded channel ids",
-    hint: "A comma-separated list of channel ids the activity recorder skips.",
+    label: "activity excluded channels",
+    hint: "The activity recorder skips these channels.",
     group: "activity",
+    pick: "channels",
   },
 ];
+
+/** The prompt of a field's raw-id fallback text box: the picker's name with `id` (or `ids`) back on it. */
+function fallbackLabel(f: ConfigField): string {
+  return f.pick === "channels" ? `${f.label.replace(/ channels$/, " channel")} ids` : `${f.label} id`;
+}
+
+/**
+ * One channel or role field of the config page. With the guild's options loaded it is a {@link SettingRow}
+ * holding the matching picker. While they load it shows a narrator line. If they failed, or the list this
+ * field needs is empty (the guild is not cached), it falls back to the raw-id {@link PromptField} so the
+ * config stays editable.
+ *
+ * @param props.field - The field to edit; `field.pick` selects the picker.
+ * @param props.value - The stored string (a single id, or the comma list for `channels`).
+ * @param props.onChange - Called with the new stored string.
+ * @param props.options - The guild options, or null while loading or after a failed load.
+ * @param props.failed - True when loading the guild options failed.
+ */
+function ConfigPickRow({
+  field,
+  value,
+  onChange,
+  options,
+  failed,
+}: {
+  field: ConfigField;
+  value: string;
+  onChange: (v: string) => void;
+  options: GuildOptions | null;
+  failed: boolean;
+}) {
+  const labelId = useId();
+  if (!options && !failed) {
+    return (
+      <SettingRow label={field.label} labelId={labelId} description={field.hint}>
+        <span className="note-s">loading…</span>
+      </SettingRow>
+    );
+  }
+  const list = field.pick === "role" ? options?.roles : options?.channels;
+  if (!options || !list || list.length === 0) {
+    return (
+      <PromptField
+        className={FIELD_WRAP}
+        label={fallbackLabel(field)}
+        promptWidth={42}
+        hint={field.hint}
+        value={value}
+        onChange={onChange}
+      />
+    );
+  }
+  return (
+    <SettingRow label={field.label} labelId={labelId} description={field.hint}>
+      {field.pick === "role" ? (
+        <RoleSelect roles={options.roles} value={value} onChange={onChange} ariaLabelledBy={labelId} />
+      ) : field.pick === "channels" ? (
+        <ChannelMultiSelect channels={options.channels} kinds={ACTIVITY_KINDS} value={value} onChange={onChange} ariaLabelledBy={labelId} />
+      ) : (
+        <ChannelSelect
+          channels={options.channels}
+          kinds={field.pick === "category" ? CATEGORY_KINDS : POSTABLE_KINDS}
+          value={value}
+          onChange={onChange}
+          ariaLabelledBy={labelId}
+        />
+      )}
+    </SettingRow>
+  );
+}
 
 const CONFIG_GROUPS: { id: ConfigField["group"]; title: string }[] = [
   { id: "channels", title: "channels" },
@@ -335,6 +418,7 @@ const CONFIG_GROUPS: { id: ConfigField["group"]; title: string }[] = [
 /** The settings tab of the config page: guild config fields and the link fixer, both saved together. */
 function ConfigSettingsTab() {
   const { data, error, reload, setData } = useAsync(() => api.getConfig());
+  const guild = useAsync(() => api.guildOptions());
   const [saved, setSaved] = useState(false);
   if (!data) return <Pending error={error} reload={reload} />;
 
@@ -373,23 +457,34 @@ function ConfigSettingsTab() {
         {CONFIG_GROUPS.map((g, gi) => (
           <div key={g.id}>
             <Heading first={gi === 0}>{g.title}</Heading>
-            {CONFIG_FIELDS.filter((f) => f.group === g.id).map((f) => (
-              <PromptField
-                key={f.key}
-                className={FIELD_WRAP}
-                label={f.label}
-                promptWidth={42}
-                type={f.type ?? "text"}
-                hint={f.hint}
-                value={String(data[f.key] ?? "")}
-                onChange={(v) =>
-                  setData({
-                    ...data,
-                    [f.key]: f.type === "number" ? Number(v) : v,
-                  })
-                }
-              />
-            ))}
+            {CONFIG_FIELDS.filter((f) => f.group === g.id).map((f) =>
+              f.pick ? (
+                <ConfigPickRow
+                  key={f.key}
+                  field={f}
+                  value={String(data[f.key] ?? "")}
+                  onChange={(v) => setData({ ...data, [f.key]: v })}
+                  options={guild.data}
+                  failed={guild.error != null}
+                />
+              ) : (
+                <PromptField
+                  key={f.key}
+                  className={FIELD_WRAP}
+                  label={f.label}
+                  promptWidth={42}
+                  type={f.type ?? "text"}
+                  hint={f.hint}
+                  value={String(data[f.key] ?? "")}
+                  onChange={(v) =>
+                    setData({
+                      ...data,
+                      [f.key]: f.type === "number" ? Number(v) : v,
+                    })
+                  }
+                />
+              ),
+            )}
             {g.id === "activity" && (
               <Toggle
                 label="activity recording"
