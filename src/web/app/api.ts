@@ -1,3 +1,5 @@
+import type { GuildOptions } from "./ui/channel-ids.ts";
+
 export interface Me {
   userId: string;
   role: "admin" | "president" | "user";
@@ -93,6 +95,8 @@ export const api = {
   updateEventGroup: (id: number, data: any) =>
     request<any>("PUT", `/api/event-groups/${id}`, data),
   deleteEventGroup: (id: number) => request<void>("DELETE", `/api/event-groups/${id}`),
+  /** The guild's channels and roles for the config pickers (admin only). Both lists are empty when the guild is not cached. */
+  guildOptions: () => request<GuildOptions>("GET", "/api/guild-options"),
   eventOptions: () =>
     request<{
       channels: { id: string; name: string; type: string }[];
