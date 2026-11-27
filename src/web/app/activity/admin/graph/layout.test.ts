@@ -10,7 +10,9 @@ import {
   PAD,
   TILE_HALF,
   boxesTouch,
+  ROUTE_PAIR_LIMIT,
   capLine,
+  drawableCount,
   capPairs,
   layoutGraph,
   nodeBox,
@@ -20,6 +22,7 @@ import {
   type GraphLayout,
 } from "./layout.ts";
 import { sampleId as id, samplePairs } from "./fixtures.ts";
+import { RELATIONS_LIMIT } from "../../../../../plugins/activity/queries/admin.ts";
 
 function checkLayout(l: GraphLayout) {
   const ids = new Set(l.nodes.map((n) => n.id));
@@ -115,7 +118,8 @@ describe("layoutGraph", () => {
     expect(l.edges.length).toBeLessThanOrEqual(MAX_EDGES);
     expect(l.total).toBe(260);
     expect(l.shown).toBe(l.edges.length);
-    expect(capLine(l.shown, l.total)).toBe(`showing the strongest ${l.shown} of 260 pairs.`);
+    expect(capLine(l.shown, l.total, l.rows, 1000)).toBe(`showing the strongest ${l.shown} of 260 pairs.`);
+    expect(capLine(l.shown, l.total, l.rows)).toBe(`showing the strongest ${l.shown} pairs.`);
     checkLayout(l);
   });
 
@@ -165,29 +169,69 @@ describe("capPairs", () => {
     expect(capPairs(samplePairs(60, 120), 60, 50).kept.length).toBe(50);
   });
 
-  test("capLine is null when nothing is left out", () => {
-    expect(capLine(5, 5)).toBeNull();
-    expect(capLine(48, 50)).toBe("showing the strongest 48 of 50 pairs.");
+  test("capLine: no total claimed when the route's answer is full, of-M when the layout cap dropped pairs", () => {
+    expect(capLine(5, 5, 5)).toBeNull();
+    expect(capLine(40, 49, 49)).toBe("showing the strongest 40 of 49 pairs.");
+    expect(capLine(48, 50, 50)).toBe("showing the strongest 48 pairs.");
+    expect(capLine(50, 50, 50)).toBe("showing the strongest 50 pairs.");
+    expect(capLine(3, 3, 5)).toBeNull();
+  });
+
+  test("the route limit matches the server's", () => {
+    expect(ROUTE_PAIR_LIMIT).toBe(RELATIONS_LIMIT);
+  });
+
+  test("drawableCount leaves out self-pairs, repeats, zero and NaN weights", () => {
+    expect(drawableCount([])).toBe(0);
+    expect(
+      drawableCount([
+        { a: "1", b: "1", weight: 5 },
+        { a: "2", b: "3", weight: 0 },
+        { a: "4", b: "5", weight: Number.NaN },
+      ]),
+    ).toBe(0);
+    expect(
+      drawableCount([
+        { a: "1", b: "2", weight: 3 },
+        { a: "2", b: "1", weight: 3 },
+        { a: "3", b: "4", weight: 1 },
+      ]),
+    ).toBe(2);
+    expect(drawableCount(samplePairs(80, 120))).toBe(120);
   });
 });
 
 describe("classes", () => {
-  test("weight classes are quartiles, equal weights share one", () => {
+  test("weight classes rank distinct values, equal weights share one", () => {
     expect(weightClasses([1, 2, 3, 4, 5, 6, 7, 8])).toEqual([1, 1, 2, 2, 3, 3, 4, 4]);
-    expect(weightClasses([8, 1])).toEqual([3, 1]);
-    expect(weightClasses([5, 5, 5])).toEqual([1, 1, 1]);
-    expect(weightClasses([100])).toEqual([1]);
     expect(weightClasses([10, 20, 30, 40])).toEqual([1, 2, 3, 4]);
+    expect(weightClasses([1, 1, 1, 1, 1, 1, 9])).toEqual([2, 2, 2, 2, 2, 2, 4]);
   });
 
-  test("a quiet period still has a top step", () => {
-    expect(Math.max(...weightClasses([1, 2, 2, 3]))).toBe(4);
+  test("degenerate weights: a single tie and all-equal weights are the top step", () => {
+    expect(weightClasses([100])).toEqual([4]);
+    expect(weightClasses([5, 5, 5])).toEqual([4, 4, 4]);
+    expect(weightClasses([8, 1])).toEqual([4, 2]);
+    expect(weightClasses([])).toEqual([]);
+  });
+
+  test("a quiet period still has a top step: the strongest value is always w4", () => {
+    for (const ws of [[1], [1, 1], [1, 2], [2, 2, 3], [1, 1, 1, 2], [3, 1, 2, 2, 7]]) {
+      const cls = weightClasses(ws);
+      expect(cls[ws.indexOf(Math.max(...ws))]).toBe(4);
+    }
   });
 
   test("size classes: top fifth s3, upper half s2, lower half s1", () => {
     const totals = new Map([...Array(10).keys()].map((i) => [String(i), (i + 1) * 10]));
     const s = sizeClasses(totals);
     expect([...s.values()]).toEqual([1, 1, 1, 1, 1, 2, 2, 2, 3, 3]);
+  });
+
+  test("equal totals are all s2, a single pair too", () => {
+    expect([...sizeClasses(new Map([["a", 4], ["b", 4], ["c", 4]])).values()]).toEqual([2, 2, 2]);
+    expect(layoutGraph([{ a: "1", b: "2", weight: 7 }], { width: 640 }).nodes.map((n) => n.size)).toEqual([2, 2]);
+    expect(layoutGraph([{ a: "1", b: "2", weight: 7 }], { width: 640 }).edges[0]!.w).toBe(4);
   });
 
   test("tints are stable per id and spread over the four", () => {

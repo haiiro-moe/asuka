@@ -5,7 +5,7 @@
  *
  * @module
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { RelationPair } from "../../../../../plugins/activity/types/admin.ts";
 import { useKnownNames } from "../../../names.tsx";
 import { Quiet } from "../parts.tsx";
@@ -34,11 +34,14 @@ export function stageWidth(container: number, viewport: number): number {
   return Math.floor(container - (viewport > STACK_BELOW ? SIDE_ROOM : 0) - FRAME);
 }
 
+/** `useLayoutEffect` in the browser (measure before the first paint), `useEffect` in a server render. */
+const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 /** Tracks the stage width the container leaves (inside its `px-2` padding), in 16px steps so a small resize does not relayout. */
 function useStageWidth(): [RefObject<HTMLDivElement | null>, number] {
   const ref = useRef<HTMLDivElement | null>(null);
   const [w, setW] = useState(DEFAULT_STAGE);
-  useEffect(() => {
+  useIsoLayoutEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const measure = () => setW(Math.floor(stageWidth(el.clientWidth - 16, window.innerWidth) / 16) * 16);
@@ -77,7 +80,7 @@ export function RelationsGraph({ pairs, word, formatWeight, selected, onSelect, 
   const [ref, width] = useStageWidth();
   const layout = useMemo(() => layoutGraph(pairs, { width: Math.max(MIN_STAGE, width) }), [pairs, width]);
   const nameOf = useKnownNames(layout.nodes.map((n) => n.id));
-  const cap = capLine(layout.shown, layout.total);
+  const cap = capLine(layout.shown, layout.total, layout.rows);
   return (
     <div ref={ref} className="px-2 pb-2">
       {width < MIN_STAGE ? (

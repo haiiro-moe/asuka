@@ -99,6 +99,8 @@ export interface GraphLayout {
   shown: number;
   /** Pairs in the input (self-pairs and duplicates left out). */
   total: number;
+  /** Rows in the input, as the route answered them. */
+  rows: number;
 }
 
 /** What {@link capPairs} returns. */
@@ -158,36 +160,57 @@ export function capPairs(pairs: RelationPair[], maxNodes = MAX_NODES, maxEdges =
 }
 
 /**
- * The narrator line under the stage when pairs were left out: `showing the strongest 48 of 50 pairs.`;
- * null when every pair is drawn.
+ * The most pairs the relations route answers (`RELATIONS_LIMIT` in
+ * `src/plugins/activity/queries/admin.ts`; a test keeps the two equal). A full answer may have been
+ * cut by the server, so its true total is unknown.
+ */
+export const ROUTE_PAIR_LIMIT = 50;
+
+/**
+ * The narrator line under the stage when pairs were left out. When the route's answer is full
+ * ({@link ROUTE_PAIR_LIMIT} rows) the server may have cut it, so no total is claimed:
+ * `showing the strongest 48 pairs.`; otherwise, when the layout's cap dropped pairs,
+ * `showing the strongest 48 of 50 pairs.`; null when every pair is drawn from a short answer.
  *
  * @param shown - Pairs drawn.
- * @param total - Pairs in the input.
+ * @param total - Drawable pairs in the answer.
+ * @param rows - Rows the route answered (before dropping undrawable ones).
+ * @param limit - The route's row limit (default {@link ROUTE_PAIR_LIMIT}).
  */
-export function capLine(shown: number, total: number): string | null {
+export function capLine(shown: number, total: number, rows: number, limit = ROUTE_PAIR_LIMIT): string | null {
+  if (rows >= limit) return `showing the strongest ${shown} pairs.`;
   return shown < total ? `showing the strongest ${shown} of ${total} pairs.` : null;
 }
 
 /**
- * Weight classes from the quartiles of the given weights, so a quiet period still has a top step: a
- * weight's class is `1 + floor(4 * i / n)` where `i` is the index of its first occurrence in the
- * weights sorted from low to high (equal weights share a class).
+ * How many of the rows can be drawn: pairs of two different members with a positive weight, each
+ * pair once. Zero means the graph would be an empty stage, so the table is shown instead.
+ *
+ * @param pairs - The relations rows.
+ */
+export function drawableCount(pairs: RelationPair[]): number {
+  return capPairs(pairs, Infinity, Infinity).total;
+}
+
+/**
+ * Weight classes ranked by distinct value, so the strongest value always gets the top step: with
+ * `k` distinct weights, the one at rank `r` (0 lowest) is class `4 - floor(4 * (k - 1 - r) / k)`.
+ * Equal weights share a class; all-equal weights and a single tie are all `w4`.
  *
  * @param weights - The drawn weights, in any order.
  * @returns The class of each weight, in the input's order.
  */
 export function weightClasses(weights: number[]): WeightClass[] {
-  const sorted = [...weights].sort((p, q) => p - q);
-  const first = new Map<number, number>();
-  sorted.forEach((w, i) => {
-    if (!first.has(w)) first.set(w, i);
-  });
-  return weights.map((w) => Math.min(4, 1 + Math.floor(((first.get(w) ?? 0) * 4) / sorted.length)) as WeightClass);
+  const distinct = [...new Set(weights)].sort((p, q) => p - q);
+  const k = distinct.length;
+  const rank = new Map(distinct.map((w, r) => [w, r]));
+  return weights.map((w) => (4 - Math.floor((4 * (k - 1 - rank.get(w)!)) / k)) as WeightClass);
 }
 
 /**
  * Size classes from tiers of each member's total weight: `s3` for totals at or above the 80th
- * percentile (the top fifth), `s2` at or above the median, `s1` below. Equal totals share a class.
+ * percentile (the top fifth), `s2` at or above the median, `s1` below. Equal totals share a class,
+ * and when every total is equal everyone is `s2` (no one stands out).
  *
  * @param totals - Each member's total weight.
  * @returns The class per member id.
@@ -197,8 +220,9 @@ export function sizeClasses(totals: Map<string, number>): Map<string, SizeClass>
   const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
   const top = at(0.8);
   const mid = at(0.5);
+  const flat = sorted.length > 0 && sorted[0] === sorted[sorted.length - 1];
   const out = new Map<string, SizeClass>();
-  for (const [id, t] of totals) out.set(id, t >= top ? 3 : t >= mid ? 2 : 1);
+  for (const [id, t] of totals) out.set(id, flat ? 2 : t >= top ? 3 : t >= mid ? 2 : 1);
   return out;
 }
 
@@ -327,7 +351,7 @@ export function layoutGraph(pairs: RelationPair[], options: LayoutOptions): Grap
   const width = Math.max(2 * (PAD + LABEL_HALF) + GRID, Math.floor(options.width / GRID) * GRID);
   const minHeight = Math.max(MIN_HEIGHT, snap(options.minHeight ?? MIN_HEIGHT));
   const { kept, total } = capPairs(pairs, options.maxNodes ?? MAX_NODES, options.maxEdges ?? MAX_EDGES);
-  if (kept.length === 0) return { width, height: minHeight, nodes: [], edges: [], shown: 0, total };
+  if (kept.length === 0) return { width, height: minHeight, nodes: [], edges: [], shown: 0, total, rows: pairs.length };
 
   // members, busiest first
   const totals = new Map<string, number>();
@@ -373,7 +397,7 @@ export function layoutGraph(pairs: RelationPair[], options: LayoutOptions): Grap
   }));
   const classes = weightClasses(kept.map((p) => p.weight));
   const edges: GraphEdge[] = kept.map((p, k) => ({ a: p.a, b: p.b, weight: p.weight, w: classes[k]! }));
-  return { width, height, nodes, edges, shown: kept.length, total };
+  return { width, height, nodes, edges, shown: kept.length, total, rows: pairs.length };
 }
 
 /**

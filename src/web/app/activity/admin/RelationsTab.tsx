@@ -13,6 +13,7 @@ import { UserName } from "../../names.tsx";
 import { Heading, InkButton, Loading, Segmented, Window } from "../../ui/index.ts";
 import { useActivity } from "../useActivity.ts";
 import { formatCount, formatVoiceHours, voiceUnlockLine, type PeriodKey, type VoiceStatus } from "./format.ts";
+import { drawableCount } from "./graph/layout.ts";
 import { RelationsGraph } from "./graph/RelationsGraph.tsx";
 import { defaultView, type RelationsView } from "./graph/view.ts";
 import { InspectPanel } from "./InspectPanel.tsx";
@@ -116,12 +117,19 @@ export function RelationsBody({ kind, rows, view, onView, selected, onSelect, on
   if (kind === "voice" && (!voice || !voice.ready)) {
     return voice ? <p className="nar px-2">{voiceUnlockLine(voice)}</p> : null;
   }
-  const shown = view ?? defaultView(rows.length);
+  const drawable = drawableCount(rows);
+  // nothing drawable (zero weights, self-pairs): the table only, never an empty stage
+  const shown: RelationsView = drawable === 0 ? "table" : (view ?? defaultView(drawable));
   const table = <PairTable kind={kind} rows={rows} onPick={onPick} />;
   return (
     <>
       <div className="px-2 pb-2">
-        <Segmented options={VIEWS} value={shown} onChange={onView} ariaLabel="how to show the pairs" />
+        <Segmented
+          options={VIEWS.map((o) => ({ ...o, disabled: o.value === "graph" && drawable === 0 }))}
+          value={shown}
+          onChange={onView}
+          ariaLabel="how to show the pairs"
+        />
       </div>
       {shown === "graph" ? (
         <RelationsGraph

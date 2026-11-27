@@ -16,7 +16,7 @@ export const GRAPH_MIN_PAIRS = 3;
  * The view the tab opens on when the admin has not picked one: the graph from
  * {@link GRAPH_MIN_PAIRS} pairs up, the table below that.
  *
- * @param pairs - How many pairs the period has.
+ * @param pairs - How many drawable pairs the period has (`drawableCount` in layout.ts), not raw rows.
  */
 export function defaultView(pairs: number): RelationsView {
   return pairs >= GRAPH_MIN_PAIRS ? "graph" : "table";
