@@ -41,7 +41,7 @@ mirrored locally in `themes/haiiro-design-system/` of the haiiro workspace (`pro
 | File | What |
 |---|---|
 | `src/web/app/haiiro.css` | `@font-face`, every token from `tokens.json` as `:root` custom properties (unlayered), imports the two files below into `@layer components`. |
-| `src/web/app/haiiro-bundle.css` | Verbatim copy of the system's `components/bundle.css`. Do not edit; re-copy it when the system changes. |
+| `src/web/app/haiiro-bundle.css` | Copy of the system's `components/bundle.css`, verbatim except one comment line (the session-card comment names no product). Do not edit; re-copy it when the system changes and reword that comment again. It carries the NodeGraph block (`fx-graph`) at the end. |
 | `src/web/app/asuka.css` | The asuka layer: no-transition kill switch, global foam focus ring, `h1.title`, `.li`/`.seg`/`.spin` as real `<a>`/`<button>`, `.blobs-host`, `.swatch`, `.stripe`, `.frame`, the month calendar `.mcal*`. Candidates to move into the system. |
 | `src/web/app/styles.css` | Entry file: Tailwind plus a `@theme inline` that maps tokens back (see next section). |
 | `src/web/app/index.html` | Links `styles.css` only. |
@@ -131,6 +131,8 @@ Date helpers: `formatDateTimeInput`, `parseDateTimeInput`, `formatDay`, `formatM
 use them in new code. `Modal.tsx` keeps its old props and renders `Dialog`.
 
 Activity charts (`src/web/app/activity/charts.tsx`, see [docs/activity/web.md](activity/web.md)): `ActivityHeatmap`, `ActivityColumns`, `ActivityTiles`, `ActivityRank`. They wrap `fx-heat`, `fx-cols`, `fx-tiles` and `fx-rank`; pages use them instead of writing chart markup. The heatmap and the columns are `role="img"` and take a required, specific `ariaLabel` (built with `heatmapAriaLabel` / `columnsAriaLabel` from `activity/format.ts`) and an optional visually hidden `summary`.
+
+Relations graph (`src/web/app/activity/admin/graph/`, admin only, see [docs/activity/web-admin.md](activity/web-admin.md#relations-graph)): `NodeGraph` wraps the system's `fx-graph` (button nodes, edges, side panel, legend); `layoutGraph` gives it deterministic 4px-grid positions. It names members, so never use it on a president or user page.
 
 Editors: `CodeEditor.tsx` (CodeMirror themed with tokens), `DiscordMarkdown.tsx` (the Discord-layout
 preview, drawn in tokens; a per-message accent colour from data stays dynamic), `ComponentsEditor.tsx`

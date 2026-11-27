@@ -17,6 +17,9 @@ src/web/app/activity/admin/
   ModerationTab.tsx  NewcomersTab.tsx  DriftTab.tsx  ChannelsTab.tsx
   EconomyTab.tsx  ClubsEventsTab.tsx  BotTab.tsx
   RelationsTab.tsx  InspectPanel.tsx
+  graph/               the relations graph: layout.ts (positions and classes), view.ts (labels,
+                       keys, view default), NodeGraph.tsx (the fx-graph markup), RelationsGraph.tsx
+                       (measure, lay out, names), fixtures.ts, *.test.ts
   DataTab.tsx          backfill window, Wrapped overview, steps, sign-ups
   BackfillModal.tsx
   WrappedOverview.tsx  ProcessStep.tsx  SendStep.tsx  AnnounceStep.tsx
@@ -91,10 +94,10 @@ its path).
 - **economy**: earned, spent, store sales, earned and spent per week (`h3` headings under the `h2`), top earners.
 - **clubs and events**: clubs with a `dead` or `alive` chip, events by sign-ups.
 - **bot**: runs, failures and commands used.
-- **relations**: a `Segmented` of replies, mentions and voice over a ranked table of the top 25
-  pairs (no node-link graph: that waits for the design system). Each name is a flat button that
-  opens the member in the inspect panel below, which also takes a pasted id and shows sent,
-  received, ties, busiest UTC hour and the closest members (`ActivityRank`).
+- **relations**: a `Segmented` of replies, mentions and voice, then a `graph | table` switch over
+  the same pairs (see [Relations graph](#relations-graph)). The table ranks the top 25 pairs. Each
+  name is a flat button that opens the member in the inspect panel below, which also takes a pasted
+  id and shows sent, received, ties, busiest UTC hour and the closest members (`ActivityRank`).
 - **data**: see below.
 
 Weekly series are labelled from their explicit UTC `start` (`weekLabels(start, n)`, bucket `i`
@@ -102,9 +105,53 @@ starts at `start + i * 7 days`), and the axis keeps four of them (`axisLabels`).
 written by hand as `1 Feb 2027` by the shared `formatUtcDate` (`activity/format.ts`), since some ICU
 builds write `Sept`.
 
-**Voice is never shown as zeros.** The relations voice table is replaced by
+**Voice is never shown as zeros.** The relations voice table or graph (and the view switch) is replaced by
 `Voice stats unlock on 1 Feb 2027.` from `GET /api/activity/user/voice-status` until voice is
 ready; with no voice logged at all the line has no date.
+
+## Relations graph
+
+The graph view draws the pairs with the design system's NodeGraph component (`fx-graph`, its
+README is the contract; the CSS is in `haiiro-bundle.css`). It is admin only, because it names
+members: nothing under `president/`, `user/` or `wrapped/` imports it (a test checks).
+
+- **The switch.** `graph | table` is a `Segmented` under the kind control. With no choice made it
+  opens on the graph from 3 pairs up and on the table below that (`defaultView`). The choice lives
+  in component state only (nothing in storage) and holds across kinds and periods. Empty periods
+  show the narrator line, never an empty stage.
+- **Layout** (`graph/layout.ts`, pure, tested). Deterministic: the same rows and width give the same
+  positions (a fixed seed, no `Math.random`, no dependencies). The busiest member starts in the
+  centre with their ties on a ring around them, everyone else on an outer ring next to their
+  strongest tie; 300 force iterations refine that off screen; then members are placed busiest first
+  on the **4px grid**, each moved to the nearest free cell when its tile or label (counted at its
+  widest, 10 cells) would come within 4px of one already placed. Everything stays 16px inside the
+  stage; when the members do not fit, the stage grows taller and placement runs again.
+- **Caps.** At most 60 members and 200 ties (the route returns at most 50 pairs). Pairs are taken
+  strongest first; one that would bring in a 61st member is skipped. When pairs are left out a
+  narrator line under the stage says `showing the strongest N of M pairs.`
+- **Classes.** Edge weight `w1`…`w4` from the quartiles of the drawn weights (equal weights share a
+  class, a quiet period still has a top step). Tile size `s1`/`s2`/`s3` from the member's total
+  over the drawn ties: lower half, upper half, top fifth (the legend says so). Tint `t1`…`t4` from
+  an FNV-1a hash of the member id, so a member keeps their tint across kinds and periods.
+- **Names.** Node labels come from the shared name cache (`useKnownNames` in `names.tsx`, the same
+  batched `/api/usernames` request as `UserName`): lowercase, cut to 10 cells with `…` (a wide
+  glyph takes two). While a name loads the label is `···`; a member the server cannot resolve is
+  `unknown member`. Ids are never shown. The full name is in the side panel and in the button's
+  accessible name.
+- **Stage width.** The graph measures its window and lays out for the room left beside the side
+  panel (below it under 720px). Under 480px it shows the table with a line saying why.
+- **Keyboard.** The nodes are real buttons in reading order with one tab stop (roving `tabindex`):
+  Tab enters the graph, arrow keys move to the nearest member in that direction, Enter or Space
+  selects (again to clear), Escape clears. Focus or hover lights a member's neighbourhood.
+- **Accessibility.** The stage is `role="group"` with an `aria-label` summing it up (relation,
+  people, ties, strongest tie) and `aria-describedby` on the side panel, which is `aria-live="polite"`:
+  the strongest ties with nothing selected, the selected member's total, tie count, tier and
+  closest ties otherwise, plus an `inspect` button that opens the inspect panel. The table is the
+  full text alternative.
+- **Motion.** Dimming uses the component's classes only: `.dim` at once (the CSS steps the dither
+  over 3 frames in 300ms), `.lift` for 300ms on nodes leaving the dim, edges swap to `.dim` after
+  200ms (frame 3). Timers only toggle classes and are cancelled when the focus changes. Under
+  `prefers-reduced-motion` (`useReducedMotion`) the graph gets `.still`: every change is instant.
 
 ## Data tab
 
