@@ -59,6 +59,18 @@ export function useNames(ids: (string | null | undefined)[]): (id: string) => st
   return (id: string) => cache.get(id) ?? id;
 }
 
+/**
+ * Like {@link useNames}, through the same batched cache, but the lookup answers null while a name
+ * is not known yet instead of the raw id, so a caller can show a neutral placeholder. When the server
+ * could not resolve a member it answers the id itself; that value is passed through as is.
+ *
+ * @param ids - The ids to resolve.
+ */
+export function useKnownNames(ids: (string | null | undefined)[]): (id: string) => string | null {
+  useNames(ids);
+  return (id: string) => cache.get(id) ?? null;
+}
+
 /** Render a user's display name (falls back to the id while loading). */
 export function UserName({ id }: { id: string }) {
   const name = useNames([id]);
