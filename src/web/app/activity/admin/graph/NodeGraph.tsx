@@ -2,21 +2,23 @@
  * The React wrapper of the haiiro `NodeGraph` component (`fx-graph`): square member nodes as real
  * buttons on a dithered stage, straight crisp edges in four weights, a side panel inspecting the
  * selected member, and the legend. Presentation only: positions, sizes, tints and weights come from
- * {@link layoutGraph}. The dim runs through the component's classes (`dim`, `lift`, edges `.dim` on
- * frame 3) with timers only to toggle them; under reduced motion `.still` makes every change instant.
+ * {@link layoutGraph}.
+ *
+ * The dim is stepped from JS, not CSS: the dashboard's kill switch (`asuka.css`) turns every CSS
+ * animation off, so each change runs through the component's still frame classes (`fr1` `fr2` `fr3`,
+ * then the settled `dim`; lifting out goes `fr2` `fr1` then clear) on {@link useStepped}, 100ms a
+ * frame, and edges turn dashed on frame 3 ({@link dimLook}, {@link edgeDashed}). Under reduced motion
+ * every change is instant and `.still` is set.
  *
  * @module
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { InkButton, cx } from "../../../ui/index.ts";
-import { useReducedMotion } from "../../../ui/motion.ts";
+import { useReducedMotion, useStepped } from "../../../ui/motion.ts";
 import { SIZE_WORDS, type GraphLayout, type SizeClass } from "./layout.ts";
+import { FRAME_MS, LAST_STEP, dimLook, edgeDashed, graphReducer, tabStop, type GraphAction } from "./state.ts";
 import { arrowDirection, graphAriaLabel, litSet, nearestInDirection, readingOrder, shortLabel, tiesOf } from "./view.ts";
 
-/** How long a node keeps `.lift` after leaving the dim (3 frames of 100ms). */
-const LIFT_MS = 300;
-/** When the edges of a dimmed neighbourhood go dashed: frame 3 of the dim. */
-const EDGE_MS = 200;
 /** Rows of the side panel's lists. */
 const PANEL_TIES = 6;
 const PANEL_PAIRS = 8;
@@ -48,11 +50,24 @@ function nameText(nameOf: (id: string) => string | null, id: string): string | n
   return n == null ? null : n === id ? "unknown member" : n;
 }
 
+/** One dim change being stepped: who was dimmed before, who is now, and the focus on each side. */
+interface DimRun {
+  key: number;
+  from: ReadonlySet<string>;
+  to: ReadonlySet<string>;
+  toKey: string;
+  fromFocus: string | null;
+  toFocus: string | null;
+  done: boolean;
+}
+
 /**
  * The relations graph. Every node is a `button` with `aria-pressed` and the member's full name as
- * its accessible name; one tab stop (roving `tabindex`), arrows move to the nearest member that way,
- * Enter or Space selects, Escape clears. The side panel lists the strongest ties (nothing selected)
- * or the selected member's totals and closest ties, and announces changes politely.
+ * its accessible name; one tab stop (roving `tabindex`: the selected member, else the last focused,
+ * else the first), arrows move to the nearest member that way, Enter or Space selects (again to
+ * clear), Escape clears, a tap on the stage background clears. Touch never hovers. The side panel
+ * lists the strongest ties (nothing selected) or the selected member's totals and closest ties, and
+ * announces changes politely.
  *
  * @param props - See {@link NodeGraphProps}.
  */
@@ -61,58 +76,52 @@ export function NodeGraph({ layout, nameOf, word, formatWeight, selected: select
   const sideId = useId();
   const [ownSelected, setOwnSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [active, setActive] = useState<string | null>(null);
+  const [lastFocused, setLastFocused] = useState<string | null>(null);
   const refs = useRef(new Map<string, HTMLButtonElement | null>());
+  const lastPointer = useRef<string>("mouse");
 
   const { nodes, edges, width, height } = layout;
   const order = useMemo(() => readingOrder(nodes), [nodes]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const wanted = selectedProp !== undefined ? selectedProp : ownSelected;
   const selected = wanted != null && byId.has(wanted) ? wanted : null;
-  const select = (id: string | null) => {
-    if (onSelect) onSelect(id);
-    else setOwnSelected(id);
-  };
   const hov = hovered != null && byId.has(hovered) ? hovered : null;
+  const dispatch = (a: GraphAction) => {
+    const next = graphReducer({ selected, hovered: hov }, a);
+    if (next.selected !== selected) {
+      if (onSelect) onSelect(next.selected);
+      else setOwnSelected(next.selected);
+    }
+    if (next.hovered !== hov) setHovered(next.hovered);
+  };
   const focus = selected ?? hov;
   const lit = useMemo(() => litSet(edges, focus), [edges, focus]);
-  const dimmed = (id: string) => lit != null && !lit.has(id);
+  const dimNow = useMemo(() => new Set(nodes.filter((n) => lit != null && !lit.has(n.id)).map((n) => n.id)), [nodes, lit]);
+  const dimKey = [...dimNow].join(",");
 
-  // lift-out: nodes leaving the dim keep `.lift` for 300ms; a new focus cancels the pending timer
-  const [lifting, setLifting] = useState<ReadonlySet<string>>(new Set());
-  const prevDim = useRef<Set<string>>(new Set());
+  // each change of the dimmed set starts a run of 4 steps (0, 100, 200, 300 ms); a new change restarts it
+  const [run, setRun] = useState<DimRun>(() => ({ key: 0, from: dimNow, to: dimNow, toKey: dimKey, fromFocus: focus, toFocus: focus, done: true }));
+  if (run.toKey !== dimKey || run.toFocus !== focus) {
+    setRun({ key: run.key + 1, from: run.to, to: dimNow, toKey: dimKey, fromFocus: run.toFocus, toFocus: focus, done: false });
+  }
+  const frame = useStepped(LAST_STEP + 1, FRAME_MS, !run.done && !reduced, run.key);
+  const step = run.done || reduced ? LAST_STEP : frame;
   useEffect(() => {
-    const now = new Set(nodes.filter((n) => lit != null && !lit.has(n.id)).map((n) => n.id));
-    const lifted = [...prevDim.current].filter((id) => !now.has(id) && byId.has(id));
-    prevDim.current = now;
-    if (reduced || lifted.length === 0) {
-      setLifting((s) => (s.size === 0 ? s : new Set()));
-      return;
-    }
-    setLifting(new Set(lifted));
-    const t = setTimeout(() => setLifting(new Set()), LIFT_MS);
-    return () => clearTimeout(t);
-  }, [lit, nodes, byId, reduced]);
+    if (!run.done && (reduced || frame === LAST_STEP)) setRun((r) => (r.key === run.key ? { ...r, done: true } : r));
+  }, [frame, reduced, run.done, run.key]);
+  const touches = (e: { a: string; b: string }, id: string | null) => id != null && (e.a === id || e.b === id);
+  const dashed = (e: { a: string; b: string }) =>
+    edgeDashed(focus != null && !touches(e, focus), run.fromFocus != null && !touches(e, run.fromFocus), step, reduced);
 
-  // edges: those tied to the new focus return at once; the rest go dashed on frame 3 (or at once when still)
-  const [lateFocus, setLateFocus] = useState<string | null>(null);
-  useEffect(() => {
-    if (focus == null || reduced) {
-      setLateFocus(focus);
-      return;
-    }
-    const t = setTimeout(() => setLateFocus(focus), EDGE_MS);
-    return () => clearTimeout(t);
-  }, [focus, reduced]);
-  const edgeFocus = reduced ? focus : lateFocus;
-  const touches = (e: { a: string; b: string }, id: string) => e.a === id || e.b === id;
-  const edgeDim = (e: { a: string; b: string }) => focus != null && edgeFocus != null && !touches(e, focus) && !touches(e, edgeFocus);
-
-  const stop = active != null && byId.has(active) ? active : (order[0]?.id ?? null);
+  const stop = tabStop(
+    order.map((n) => n.id),
+    selected,
+    lastFocused,
+  );
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, id: string) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      select(null);
+      dispatch({ type: "escape" });
       return;
     }
     const dir = arrowDirection(e.key);
@@ -120,7 +129,7 @@ export function NodeGraph({ layout, nameOf, word, formatWeight, selected: select
     e.preventDefault();
     const next = nearestInDirection(nodes, id, dir);
     if (next) {
-      setActive(next);
+      setLastFocused(next);
       refs.current.get(next)?.focus();
     }
   };
@@ -140,17 +149,26 @@ export function NodeGraph({ layout, nameOf, word, formatWeight, selected: select
   return (
     <div className={cx("fx-graph", reduced && "still")}>
       <div className="fx-graph-body">
-        <div className="fx-graph-stage" role="group" aria-label={ariaLabel} aria-describedby={sideId} style={{ height }}>
+        <div
+          className="fx-graph-stage"
+          role="group"
+          aria-label={ariaLabel}
+          aria-describedby={sideId}
+          style={{ height }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) dispatch({ type: "background" });
+          }}
+        >
           <svg className="fx-graph-edges" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
             {drawOrder.map((e) => {
               const a = byId.get(e.a)!;
               const b = byId.get(e.b)!;
-              return <line key={`${e.a}-${e.b}`} className={cx("fx-edge", `w${e.w}`, edgeDim(e) && "dim")} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
+              return <line key={`${e.a}-${e.b}`} className={cx("fx-edge", `w${e.w}`, dashed(e) && "dim")} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
             })}
           </svg>
           {order.map((n) => {
             const full = name(n.id);
-            const isDim = dimmed(n.id);
+            const look = dimLook(run.from.has(n.id), run.to.has(n.id), step, reduced);
             return (
               <button
                 key={n.id}
@@ -158,27 +176,25 @@ export function NodeGraph({ layout, nameOf, word, formatWeight, selected: select
                   refs.current.set(n.id, el);
                 }}
                 type="button"
-                className={cx(
-                  "fx-node",
-                  `s${n.size}`,
-                  `t${n.tint}`,
-                  n.id === selected && "sel",
-                  n.id === hov && "hov",
-                  isDim && "dim",
-                  !isDim && lifting.has(n.id) && "lift",
-                )}
+                className={cx("fx-node", `s${n.size}`, `t${n.tint}`, n.id === selected && "sel", n.id === hov && "hov", look)}
                 style={{ left: n.x, top: n.y }}
                 tabIndex={n.id === stop ? 0 : -1}
                 aria-pressed={n.id === selected}
                 aria-label={`${full ?? "a member, name loading"}, ${formatWeight(n.total)} ${word}, ${n.ties} ${n.ties === 1 ? "tie" : "ties"}`}
-                onMouseEnter={() => setHovered(n.id)}
-                onMouseLeave={() => setHovered(null)}
-                onFocus={() => {
-                  setActive(n.id);
-                  setHovered(n.id);
+                onPointerDown={(e) => {
+                  lastPointer.current = e.pointerType;
                 }}
-                onBlur={() => setHovered(null)}
-                onClick={() => select(selected === n.id ? null : n.id)}
+                onPointerEnter={(e) => dispatch({ type: "enter", id: n.id, pointer: e.pointerType })}
+                onPointerLeave={() => dispatch({ type: "leave", id: n.id })}
+                onFocus={() => {
+                  setLastFocused(n.id);
+                  dispatch({ type: "focus", id: n.id, viaTouch: lastPointer.current === "touch" });
+                }}
+                onBlur={() => {
+                  lastPointer.current = "mouse";
+                  dispatch({ type: "blur" });
+                }}
+                onClick={() => dispatch({ type: "tap", id: n.id })}
                 onKeyDown={(e) => onKey(e, n.id)}
               >
                 <span className="fx-node-tile" />
@@ -215,7 +231,7 @@ export function NodeGraph({ layout, nameOf, word, formatWeight, selected: select
                 ))}
               </ol>
               <div className="fx-graph-rule" />
-              <p className="kv_label m-0">select a member to inspect them</p>
+              <p className="text-subtle m-0">select a member to inspect them.</p>
             </>
           )}
         </aside>

@@ -86,6 +86,10 @@ describe("NodeGraph markup", () => {
     const tied = new Set(layout.edges.filter((e) => e.a === hub.id || e.b === hub.id).flatMap((e) => [e.a, e.b]));
     const dimCount = (html.match(/class="fx-node [^"]*\bdim\b/g) ?? []).length;
     expect(dimCount).toBe(layout.nodes.length - tied.size);
+    // the one tab stop is the selected node
+    expect(html).toMatch(/class="fx-node s\d t\d sel"[^>]*tabindex="0"/);
+    // no CSS animation classes: the settled dim, never .lift
+    expect(html).not.toContain(" lift");
   });
 });
 
@@ -110,6 +114,23 @@ describe("RelationsBody", () => {
     const few = renderToStaticMarkup(createElement(RelationsBody, { ...props, kind: "replies", rows: pairs.slice(0, 2) }));
     expect(few).not.toContain("fx-graph");
     expect(few).toContain("<table");
+  });
+
+  test("no drawable pairs: the table, never an empty stage, even when the graph was picked", () => {
+    const rows = [
+      { a: "1", b: "1", weight: 4 },
+      { a: "2", b: "3", weight: 0 },
+      { a: "4", b: "5", weight: 0 },
+    ];
+    const html = renderToStaticMarkup(createElement(RelationsBody, { ...props, view: "graph", kind: "replies", rows }));
+    expect(html).not.toContain("fx-graph");
+    expect(html).toContain("<table");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>graph<\/button>/);
+  });
+
+  test("the hint under the ties is a lowercase narrator line, not an uppercase label", () => {
+    const html = render(named);
+    expect(html).toContain('<p class="text-subtle m-0">select a member to inspect them.</p>');
   });
 
   test("ready voice draws the graph in hours", () => {
